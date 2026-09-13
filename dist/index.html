@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>project alpha · 空间用量</title>
+  <meta name="description" content="按容器和所属用户查看宿主机磁盘用量。">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script>
+</head>
+<body>
+<section id="authPanel" class="auth-panel" hidden>
+  <a class="brand" href="/">project <b>alpha</b><span class="alpha-mark" aria-hidden="true">α</span></a>
+  <h1 id="authTitle">登录 project alpha</h1><p id="authHint">查看这台机器的容器与用户磁盘用量。</p>
+  <form id="authForm"><label>账号<input id="authUsername" autocomplete="username" required minlength="3" maxlength="48" pattern="[A-Za-z0-9_.-]+"></label><label>密码<input id="authPassword" type="password" autocomplete="current-password" required maxlength="256"></label><p id="authError" role="alert"></p><button id="authSubmit" class="primary" type="submit">登录</button></form>
+</section>
+<main id="console" class="app-shell" hidden>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="project alpha 首页">project <b>alpha</b><span class="alpha-mark" aria-hidden="true">α</span></a>
+    <span class="nav-label">工作台</span>
+    <nav class="platform-nav" aria-label="平台导航">
+      <button class="active" data-page="overview"><span aria-hidden="true">▦</span>空间用量</button>
+      <button data-page="history"><span aria-hidden="true">◷</span>扫描记录</button>
+      <button data-page="scan-settings" data-admin><span aria-hidden="true">☷</span>扫描配置</button>
+      <button data-page="settings"><span aria-hidden="true">⚙</span>设置</button>
+    </nav>
+    <div class="sidebar-bottom"><span class="nav-label">当前账号</span><div id="sessionControls" hidden><span id="sessionUser"></span><div class="session-actions"><button id="logoutButton">退出</button></div></div><p>单机容器监控 <span>/ 磁盘</span></p></div>
+  </aside>
+  <div class="main-content">
+    <header class="heading"><div><div class="eyebrow" id="pageEyebrow">SPACE USAGE</div><h1 id="pageTitle">空间用量</h1><p id="hostInfo">读取扫描记录中…</p></div><div class="actions" id="scanActions"><button id="latestResult" hidden>返回最新结果</button><button id="refresh">刷新</button><button id="startScan" class="primary" data-admin>开始扫描</button></div></header>
+    <div id="message" role="status" aria-live="polite" hidden></div>
+    <section id="taskMonitor" class="task-monitor" aria-label="扫描进度" hidden>
+      <div class="task-heading"><div><span class="task-indicator" aria-hidden="true"></span><h2 id="taskStatus">暂无扫描任务</h2><span id="taskPhase" class="task-phase" role="status"></span></div><button id="cancelScan" data-admin hidden>取消扫描</button></div>
+      <div class="task-current"><strong id="taskTarget" role="status"></strong><span id="taskContainers"></span></div>
+      <div class="task-capacity"><span><span id="taskCountLabel">已扫描</span> <strong id="taskScanned">0 B</strong><span id="taskCapacity"></span></span><strong id="taskPercent"></strong></div>
+      <div id="taskMeter" class="task-meter" role="progressbar" aria-label="已扫描空间占全盘容量" aria-valuemin="0" aria-valuemax="100"><span id="taskUsedFill" class="task-used-fill"></span><span id="taskFill" class="task-fill"></span></div>
+      <div class="task-details"><p id="taskProgress"></p><p id="taskCapacityNote"></p></div>
+      <p id="taskPath" class="mono"></p>
+    </section>
+    <section id="page-overview" class="platform-page">
+      <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
+      <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先发现这台机器上的容器</h2><p id="firstScanHint">在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
+      <div id="resultContent" hidden>
+        <section id="storageOverview" class="panel storage-overview" aria-label="磁盘空间分布"></section>
+        <section class="stats" aria-label="空间用量概览">
+          <article><span>容器</span><strong id="containerCount">—</strong><small id="runningCount">—</small></article>
+          <article><span>容器独占用量</span><strong id="exclusiveTotal">—</strong><small>仅被一个容器引用的数据</small></article>
+          <article><span>容器共享数据</span><strong id="sharedTotal">—</strong><small>多个容器引用，全机只计一次</small></article>
+          <article><span>待归属容器</span><button id="unassignedFilter" class="stat-button" aria-label="查看待归属容器">—</button><small id="unassignedHint">在容器详情中设置所属用户</small></article>
+        </section>
+        <p id="coverageNotice" class="coverage-notice" hidden></p>
+        <div class="usage-workspace">
+          <section class="owners-panel panel" aria-labelledby="ownersTitle">
+            <div class="panel-heading"><div><h2 id="ownersTitle">用户用量</h2><p>按归属用量，从高到低</p></div><button id="clearOwner" class="text-button" hidden>全部</button></div>
+            <p class="owner-explanation">同一用户的共享数据只计一次；跨用户共享单列。点击用户查看其容器。</p>
+            <div id="ownerRanking" class="owner-ranking"></div>
+            <div class="shared-summary"><span>跨用户 / 待归属共享</span><strong id="crossOwnerTotal">—</strong><small>未分摊到任何用户的归属用量</small></div>
+          </section>
+          <section class="containers-panel panel" aria-labelledby="containersTitle">
+            <div class="panel-heading"><div><h2 id="containersTitle">全部容器 <span id="filteredCount" class="count-label"></span></h2><p id="containerSubtitle">点击容器，探索内部空间</p></div><div class="view-switch" role="group" aria-label="容器显示方式"><button data-container-view="chart" aria-pressed="true">占用排行</button><button data-container-view="table" aria-pressed="false">表格明细</button></div></div>
+            <div class="table-toolbar"><label class="search-field"><span class="sr-only">搜索容器、用户或镜像</span><input id="search" type="search" placeholder="搜索容器、用户或镜像"></label><label><span class="sr-only">容器状态</span><select id="stateFilter"><option value="all">全部状态</option><option value="running">运行中</option><option value="stopped">非运行中</option></select></label><label><span class="sr-only">排序</span><select id="sortOrder"><option value="total-desc">引用总量 ↓</option><option value="exclusive-desc">独占用量 ↓</option><option value="exclusive-asc">独占用量 ↑</option><option value="shared-desc">共享引用 ↓</option><option value="writable-desc">可写层实际占用 ↓</option><option value="logical-desc">可写层逻辑大小 ↓</option><option value="name">容器名称</option></select></label></div>
+            <div id="containerChart" class="container-chart"></div>
+            <div id="containerTable" class="table-scroll" hidden><table class="container-table"><thead><tr><th scope="col">容器</th><th scope="col">所属用户</th><th scope="col">状态</th><th scope="col" class="numeric">可写层实际占用</th><th scope="col" class="numeric">独占用量</th><th scope="col" class="numeric">共享引用</th><th scope="col"><span class="sr-only">操作</span></th></tr></thead><tbody id="tableBody"></tbody></table></div>
+            <div class="table-footer"><p id="tableFoot"></p><div class="pagination"><button id="previousPage" aria-label="上一页">←</button><span id="pageNumber"></span><button id="nextPage" aria-label="下一页">→</button></div></div>
+            <p class="table-note">可写层已计入独占或共享用量，无需再次相加；Docker 逻辑大小单独列出。独占用量包括可写层、独占挂载和日志。共享引用不计入独占用量，也不能跨行相加。</p>
+          </section>
+        </div>
+        <details class="accounting-disclosure"><summary>整盘占用对账 <span>文件系统扫描覆盖与统计口径</span></summary><section id="diskAccounting" class="panel disk-accounting" aria-label="整盘占用对账"></section></details>
+        <details id="warnings" class="scan-notes"><summary id="warningSummary">扫描范围与说明</summary><div id="scopeSummary"></div><ul id="warningList"></ul></details>
+      </div>
+    </section>
+<section id="page-history" class="platform-page management-panel" hidden><div class="section-heading"><div><h2>扫描任务与历史</h2><p>任务记录保存在服务器。选择已完成的任务查看当时的存储状态；管理员可删除已结束的记录。</p></div><button id="reloadHistory">刷新记录</button></div><div class="table-scroll"><table class="jobs-table"><thead><tr><th>时间 / 发起人</th><th>状态</th><th>实际占用</th><th>操作</th></tr></thead><tbody id="jobsBody"></tbody></table></div><button id="moreHistory" hidden>加载更早记录</button><section id="jobDetails" class="job-details" hidden></section></section>
+<section id="page-scan-settings" class="platform-page management-panel" hidden><div class="section-heading"><div><h2>扫描配置</h2><p>保存后用于下一次扫描；正在运行的任务保留启动时的配置。</p></div><button id="reloadSettings">重新载入</button></div><form id="settingsForm" class="settings-form">
+<div class="form-grid"><label>附加宿主机目录 <small>每行一个绝对路径</small><textarea id="cfgRoots" rows="4" placeholder="/srv
+/data"></textarea></label><label>排除目录 <small>每行一个绝对路径</small><textarea id="cfgExcludes" rows="4" placeholder="/data/scratch"></textarea></label></div>
+<div class="form-grid"><label class="checkbox-label"><input id="cfgDocker" type="checkbox">自动发现 Docker 容器与挂载</label><label class="checkbox-label"><input id="cfgDockerRoot" type="checkbox">扫描完整 Docker 数据目录（包括镜像与缓存）</label></div>
+<div class="form-grid"><label>扫描方式<select id="cfgScanBackend"><option value="auto">自动（普通用户使用只读辅助容器）</option><option value="docker">Docker 只读辅助容器</option><option value="host">宿主机直接扫描</option></select><small>辅助容器使用已有 Docker 权限读取目录，无需 sudo 密码。</small></label></div>
+<div class="form-grid"><label>扫描模式<select id="cfgScanMode"><option value="normal">normal · 常规</option><option value="fast">fast · 快速</option></select><small>normal 最多使用 4 核并发；fast 尽可能使用可用 CPU 核心，会增加 CPU 占用。实际速度取决于磁盘和目录结构，保存后对新任务生效。</small></label></div>
+<div class="form-grid three"><label>明细深度<input id="cfgDepth" type="number" min="0" max="32" required></label><label>明细节点预算<input id="cfgNodes" type="number" min="100" max="100000" required></label><label>Docker 操作超时（秒）<input id="cfgTimeout" type="number" min="5" max="3600" required></label><label>容器所属用户标签<input id="cfgOwnerLabel" maxlength="128" required></label><label>定时扫描间隔（分钟）<input id="cfgInterval" type="number" min="0" max="10080" required><small>0 为关闭，启用时至少 5 分钟</small></label></div>
+<p class="form-note">限制明细深度不会减少统计总量。平台数据目录自动排除。首次启用定时扫描会启动一次扫描，此后在上次任务结束后按间隔执行。</p><div class="form-actions"><button id="saveSettings" class="primary" type="submit">保存扫描配置</button><span id="settingsStatus" role="status"></span></div></form></section>
+<section id="page-settings" class="platform-page" hidden>
+  <nav class="settings-nav" aria-label="设置分类">
+    <button id="settingsAccountsTab" aria-controls="settings-accounts" aria-current="page">账号管理</button>
+    <button id="settingsModelTab" aria-controls="settings-model" data-admin>API Key 与模型</button>
+  </nav>
+  <div id="settings-accounts" class="settings-stack">
+    <section class="management-panel"><div class="section-heading"><div><h2>当前账号</h2><p>查看登录身份，管理账号密码。</p></div><button id="passwordButton">修改密码</button></div><div class="account-summary"><strong id="settingsUsername"></strong><span id="settingsRole" class="pill"></span></div></section>
+<section class="management-panel" data-admin><div class="section-heading"><div><h2>平台账号</h2><p>管理员可配置并发起任务；只读账号可查看空间用量与扫描记录。账号权限覆盖本平台管理的整台宿主机。</p></div></div>
+<form id="createUserForm" class="user-form"><label>新账号<input id="newUsername" required minlength="3" maxlength="48" pattern="[A-Za-z0-9_.-]+" autocomplete="off"></label><label>初始密码<input id="newPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label><label>角色<select id="newRole"><option value="viewer">只读</option><option value="admin">管理员</option></select></label><button class="primary" type="submit">创建账号</button></form>
+<div class="table-scroll"><table><thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></div><div class="section-heading"><h2>最近操作记录</h2><button id="reloadAudit">刷新记录</button></div><div id="auditList" class="audit-list"></div></section>
+  </div>
+  <section id="settings-model" class="management-panel" hidden>
+    <div class="section-heading"><div><h2>API Key 与模型</h2><p>配置模型服务连接，供各功能页的智能分析使用。</p></div></div>
+    <form id="agentSettingsForm" class="settings-form">
+      <p id="agentSettingsError" class="error-text" role="alert"></p>
+      <div class="form-grid"><label>接口类型<select id="agentProtocol"><option value="responses">Responses</option><option value="completions">Chat Completions</option></select></label><label>模型名称<input id="agentModel" maxlength="200" required placeholder="填写服务支持的模型 ID"></label></div>
+      <label>Endpoint<input id="agentEndpoint" type="url" required placeholder="https://api.openai.com/v1"><small>支持 API 基础地址或完整接口地址，也支持本地 OpenAI 兼容服务。</small></label>
+      <label>API Key<input id="agentKey" type="password" maxlength="8192" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="agentKeyState">Key 只在服务器保存，不会回传到浏览器。</small></label>
+      <div class="form-grid three"><label>每轮最多工具轮次<input id="agentRounds" type="number" min="1" max="30" value="12" required></label><label>模型请求超时（秒）<input id="agentTimeout" type="number" min="10" max="600" value="180" required></label><label class="checkbox-label"><input id="agentClearKey" type="checkbox">清除已保存的 Key</label></div>
+      <p class="form-note">分析会把问题、目录路径和统计结果发送至所配置的模型服务。统计工具只读取文件元数据。</p>
+      <div class="form-actions"><button class="primary" id="agentSaveSettings" type="submit">保存模型配置</button><button id="agentReloadSettings" type="button">重新载入</button><span id="agentSettingsStatus" role="status"></span></div>
+    </form>
+  </section>
+</section>
+    <footer><span>project alpha</span><span>数据以最近一次完成的扫描为准</span></footer>
+  </div>
+</main>
+<dialog id="resultLoadingDialog" class="result-loading-dialog" aria-labelledby="resultLoadingTitle" aria-describedby="resultLoadingHint">
+  <div class="result-loading-heading"><span class="eyebrow">SCAN RESULT</span><h2 id="resultLoadingTitle">正在打开扫描结果</h2><p id="resultLoadingJob" class="mono"></p></div>
+  <div class="result-loading-current"><strong id="resultLoadingPhase" role="status">读取扫描结果</strong><span id="resultLoadingStep"></span></div>
+  <div id="resultLoadingMeter" class="task-meter result-loading-meter" role="progressbar" aria-label="当前解析阶段进度" aria-valuemin="0" aria-valuemax="100"><span id="resultLoadingFill" class="task-fill"></span></div>
+  <div class="result-loading-counts"><span id="resultLoadingCount"></span><strong id="resultLoadingPercent"></strong></div>
+  <p id="resultLoadingDetail"></p><p id="resultLoadingPath" class="mono"></p>
+  <ol id="resultLoadingStages" class="result-loading-stages"></ol>
+  <p id="resultLoadingHint" class="form-note">取消后保留当前查看的结果，扫描记录仍可重新打开。</p>
+  <div class="form-actions"><button id="cancelResultLoading" type="button" autofocus>取消读取</button></div>
+</dialog>
+<dialog id="containerDialog" class="container-dialog" aria-labelledby="detailTitle"><div class="dialog-heading"><div><span class="eyebrow">STORAGE EXPLORER / 存储分析</span><h2 id="detailTitle">容器详情</h2></div><button id="closeContainer" aria-label="关闭容器详情">✕</button></div><div id="detail"></div></dialog>
+<dialog id="deleteJobDialog" aria-labelledby="deleteJobTitle" aria-describedby="deleteJobHint"><h2 id="deleteJobTitle">删除扫描记录？</h2><p id="deleteJobSummary" class="form-note"></p><p id="deleteJobHint" class="form-note"></p><p class="form-note">仅清理平台保存的扫描数据，不会删除宿主机文件或容器。</p><p id="deleteJobError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closeDeleteJob" autofocus>取消</button><button type="button" id="confirmDeleteJob" class="danger">确认删除</button></div></dialog>
+<dialog id="ownerDialog"><form id="ownerForm"><h2>设置容器所属用户</h2><p id="ownerContainer" class="mono"></p><label>所属用户<input id="ownerInput" maxlength="100" placeholder="留空则使用容器标签"></label><p class="form-note">保存平台内的归属映射，用于所有扫描结果的展示。</p><div class="form-actions"><button type="button" id="closeOwner">取消</button><button type="submit" class="primary">保存归属</button></div></form></dialog>
+<dialog id="passwordDialog"><form id="passwordForm"><h2>修改登录密码</h2><label>原密码<input id="oldPassword" type="password" autocomplete="current-password" required maxlength="256"></label><label>新密码<input id="changedPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label><p class="form-note">修改后所有设备的登录会话失效，需要使用新密码重新登录。</p><p id="passwordError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closePassword">取消</button><button type="submit" class="primary">修改密码</button></div></form></dialog>
+</body>
+</html>

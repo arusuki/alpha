@@ -1,0 +1,20 @@
+# Replace hostname/certificate paths. Add --allowed-host disk.example.internal
+# and --secure-cookie to the systemd ExecStart when serving through HTTPS.
+server {
+    listen 443 ssl;
+    server_name disk.example.internal;
+    ssl_certificate /etc/nginx/certs/disk.example.internal.crt;
+    ssl_certificate_key /etc/nginx/certs/disk.example.internal.key;
+    client_max_body_size 64k;
+    client_body_timeout 15s;
+    client_header_timeout 15s;
+
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_read_timeout 30s;
+        proxy_send_timeout 15s;
+    }
+}

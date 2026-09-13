@@ -1,0 +1,26 @@
+[Unit]
+Description=project alpha container usage monitor
+After=network.target docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/project-alpha
+ExecStart=/opt/project-alpha/bin/project-alpha --data-dir /var/lib/project-alpha --host 127.0.0.1 --port 8765
+# Root permits reading container upper layers and user directories on the host.
+# A service account with equivalent read permissions and Docker access can be used.
+User=root
+Group=root
+UMask=0077
+StateDirectory=project-alpha
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target
