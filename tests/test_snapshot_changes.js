@@ -5,7 +5,7 @@ const Usage = require('../dist/usage.js');
 const node = (path, allocated, children = [], extra = {}) => ({path,name:path.split('/').pop(),kind:'directory',allocated,apparent:allocated,files:1,errors:0,children,...extra});
 const unrelated = node('/unrelated',4096);
 const folded = node('/data/cache',8192,[],{omitted_entries:20});
-const base = SnapshotData.validate({schema_version:2,scan:{omitted_references:0},job_id:'a'.repeat(32),revision:0,containers:[],resources:[],filesystems:[],warnings:[],tree:node('@root',16384,[node('/data',12288,[folded]),unrelated],{kind:'root'})});
+const base = SnapshotData.validate({schema_version:3,scan:{omitted_references:0},job_id:'a'.repeat(32),revision:0,containers:[],resources:[],filesystems:[],warnings:[],tree:node('@root',16384,[node('/data',12288,[folded]),unrelated],{kind:'root'})});
 const metadata = {...base,revision:1,updated_at:'2026-09-13T12:00:00Z'};
 delete metadata.tree;
 const scalars = n => { const {children,...row}=n; return row; };

@@ -105,8 +105,8 @@ func TestDatabaseUsesHotQueryIndexes(t *testing.T) {
 	}
 	defer db.SQL.Close()
 	for query, index := range map[string]string{
-		"SELECT id FROM jobs WHERE status='completed' AND trigger NOT IN ('agent-detail','incremental') ORDER BY finished_at DESC LIMIT 1": "idx_jobs_latest",
-		"SELECT path FROM snapshot_changes WHERE job_id='job' AND revision>1":                                                              "idx_snapshot_changes_revision",
+		"SELECT id FROM jobs WHERE status='completed' AND trigger<>'incremental' ORDER BY finished_at DESC LIMIT 1": "idx_jobs_latest",
+		"SELECT path FROM snapshot_changes WHERE job_id='job' AND revision>1":                                       "idx_snapshot_changes_revision",
 	} {
 		plan, err := platform.Rows(db.SQL, "EXPLAIN QUERY PLAN "+query)
 		if err != nil {

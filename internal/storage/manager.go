@@ -20,7 +20,6 @@ import (
 )
 
 type Manager struct {
-	Agent     *AgentManager
 	db        *Store
 	mu        sync.Mutex
 	lockfile  *os.File
@@ -63,11 +62,6 @@ func NewManager(db *Store) (*Manager, error) {
 		lock.Close()
 		return nil, err
 	}
-	m.Agent, err = newAgentManager(db, m)
-	if err != nil {
-		lock.Close()
-		return nil, err
-	}
 	go m.loop()
 	return m, nil
 }
@@ -87,7 +81,6 @@ func (m *Manager) startLocked(actor, trigger string) (object, error) {
 // Analysis uses the same isolated worker, cancellation and single-scan lock.
 type scanPlan struct {
 	Config
-	AnalysisPath    string `json:"analysis_path,omitempty"`
 	BaseJobID       string `json:"base_job_id,omitempty"`
 	BaseRevision    int64  `json:"base_revision,omitempty"`
 	IncrementalPath string `json:"incremental_path,omitempty"`
@@ -298,7 +291,7 @@ func (m *Manager) tick() error {
 		return err
 	}
 	var last sql.NullFloat64
-	if err = m.db.SQL.QueryRow("SELECT max(coalesce(finished_at,created_at)) FROM jobs WHERE trigger NOT IN ('agent-detail','incremental')").Scan(&last); err != nil {
+	if err = m.db.SQL.QueryRow("SELECT max(coalesce(finished_at,created_at)) FROM jobs WHERE trigger<>'incremental'").Scan(&last); err != nil {
 		return err
 	}
 	if !last.Valid || platform.Now()-last.Float64 >= float64(s.Value.IntervalMinutes*60) {
@@ -316,9 +309,6 @@ func (m *Manager) loop() {
 		case <-m.stop:
 			return
 		case <-ticker.C:
-			if err := m.Agent.flushCompletion(); err != nil {
-				log.Printf("Agent completion: %v; will retry", err)
-			}
 			if err := m.tick(); err != nil {
 				log.Printf("Scan manager: %v", err)
 			}
@@ -327,9 +317,6 @@ func (m *Manager) loop() {
 }
 func (m *Manager) Close() {
 	m.closeOnce.Do(func() {
-		if m.Agent != nil {
-			m.Agent.Close()
-		}
 		close(m.stop)
 		<-m.stopped
 		m.mu.Lock()
@@ -417,8 +404,6 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 				return db.publishDirectory(ctx, id, plan, next, lastProgress, false)
 			})
 		}
-	} else if plan.AnalysisPath != "" {
-		result, err = buildDetailSnapshot(ctx, c, plan.AnalysisPath, progress)
 	} else {
 		result, err = buildSnapshot(ctx, c, progress)
 	}

@@ -1,4 +1,4 @@
-package storage
+package agent
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ type modelReply struct {
 }
 
 type agentProvider struct {
-	Config AgentConfig
+	Config Config
 }
 
 // Keep endpoint and credentials inside this adapter; neither is exposed to tools.

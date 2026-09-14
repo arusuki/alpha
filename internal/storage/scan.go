@@ -541,24 +541,24 @@ func (s *Scanner) filesystems() []object {
 	return result
 }
 
-const snapshotVersion = 2
+const snapshotVersion = 3
 
 type Snapshot struct {
-	Accounting    []InodeRecord `json:"incremental_accounting,omitempty"`
-	Revision      int64         `json:"revision"`
-	UpdatedAt     string        `json:"updated_at,omitempty"`
-	Analysis      *FileAnalysis `json:"analysis,omitempty"`
-	SchemaVersion int           `json:"schema_version"`
-	Host          string        `json:"host"`
-	FinishedAt    string        `json:"finished_at"`
-	Docker        object        `json:"docker"`
-	Tree          *Node         `json:"tree"`
-	Resources     []Resource    `json:"resources"`
-	Containers    []Container   `json:"containers"`
-	Filesystems   []object      `json:"filesystems"`
-	Warnings      []Warning     `json:"warnings"`
-	Scan          object        `json:"scan"`
-	JobID         string        `json:"job_id,omitempty"`
+	Accounting        []InodeRecord                `json:"incremental_accounting,omitempty"`
+	Revision          int64                        `json:"revision"`
+	UpdatedAt         string                       `json:"updated_at,omitempty"`
+	DirectoryAnalyses map[string]DirectoryAnalysis `json:"directory_analyses,omitempty"`
+	SchemaVersion     int                          `json:"schema_version"`
+	Host              string                       `json:"host"`
+	FinishedAt        string                       `json:"finished_at"`
+	Docker            object                       `json:"docker"`
+	Tree              *Node                        `json:"tree"`
+	Resources         []Resource                   `json:"resources"`
+	Containers        []Container                  `json:"containers"`
+	Filesystems       []object                     `json:"filesystems"`
+	Warnings          []Warning                    `json:"warnings"`
+	Scan              object                       `json:"scan"`
+	JobID             string                       `json:"job_id,omitempty"`
 }
 
 func buildSnapshot(ctx context.Context, c Config, progress func(object) error) (*Snapshot, error) {

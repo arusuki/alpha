@@ -41,30 +41,12 @@ func (m *Manager) Delete(id, actor string) (object, error) {
 				return httpapi.NewError(500, "扫描记录标识无效")
 			}
 			deleted = append(deleted, jobID)
-			var analyzing int
-			if err := tx.QueryRow(`SELECT count(*) FROM agent_sessions s
-			 WHERE status IN ('queued','scanning','running','cancelling') AND
-			 (snapshot_id=? OR active_job_id=? OR EXISTS
-			 (SELECT 1 FROM agent_details d WHERE d.session_id=s.id AND d.job_id=?))`, jobID, jobID, jobID).Scan(&analyzing); err != nil {
-				return err
-			}
-			if analyzing > 0 {
-				return httpapi.NewError(409, "该记录正在用于 Agent 分析，请等待分析结束或停止分析后再删除")
-			}
-		}
-		for _, jobID := range deleted {
-			for _, statement := range []string{
-				"DELETE FROM agent_details WHERE job_id=?",
-				"UPDATE agent_sessions SET snapshot_id=NULL WHERE snapshot_id=?",
-				"UPDATE agent_sessions SET active_job_id=NULL WHERE active_job_id=?",
-			} {
-				if _, err := tx.Exec(statement, jobID); err != nil {
-					return err
-				}
-			}
 		}
 		for _, jobID := range deleted {
 			if _, err := tx.Exec("DELETE FROM jobs WHERE id=?", jobID); err != nil {
+				if platform.IsConstraint(err) {
+					return httpapi.NewError(409, "该记录正在被引用，请结束相关分析后再删除")
+				}
 				return err
 			}
 		}

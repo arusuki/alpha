@@ -18,7 +18,7 @@ import (
 )
 
 // DatabaseVersion identifies the combined platform and module schema.
-const DatabaseVersion = 8
+const DatabaseVersion = 9
 
 //go:embed schema.sql
 var schema string

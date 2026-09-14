@@ -12,14 +12,13 @@ import (
 )
 
 // Handler exposes storage routes through the authenticated platform server.
-type Handler struct {
-	DB      *Store
-	Manager *Manager
+type Handler struct{ *Service }
+
+func NewHandler(db *Store, manager *Manager) *Handler {
+	return &Handler{Service: NewService(db, manager)}
 }
 
-func NewHandler(db *Store, manager *Manager) *Handler { return &Handler{DB: db, Manager: manager} }
-
-var jobRoute = regexp.MustCompile(`^/api/jobs/([a-f0-9]{32})(/cancel|/snapshot|/expand|/changes|/events)?$`)
+var jobRoute = regexp.MustCompile(`^/api/jobs/([a-f0-9]{32})(/cancel|/snapshot|/expand|/changes|/events|/overview|/containers|/owners|/container|/directory)?$`)
 
 func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
 	route, method := r.URL.Path, r.Method
@@ -29,12 +28,6 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	failure := func(err error) (int, any, error) { return 0, nil, err }
 	if route == "/api/settings" && !admin {
 		return failure(httpapi.NewError(403, "此操作需要管理员权限"))
-	}
-	if isAgentRoute(route) {
-		if !admin {
-			return failure(httpapi.NewError(403, "Agent 分析需要管理员权限"))
-		}
-		return s.agentDispatch(w, r, user.ID, user.Username)
 	}
 	if method == "GET" && route == "/api/state" {
 		jobs, err := db.jobs(platform.Now() + 1)
@@ -104,6 +97,25 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if match := jobRoute.FindStringSubmatch(route); match != nil {
 		id, action := match[1], match[2]
+		if method == "GET" && (action == "/overview" || action == "/containers" || action == "/owners" || action == "/container" || action == "/directory") {
+			fields := map[string]json.RawMessage{}
+			for key, values := range r.URL.Query() {
+				if len(values) != 1 {
+					return failure(httpapi.NewError(400, "查询参数不能重复"))
+				}
+				if key == "offset" || key == "limit" {
+					n, err := strconv.Atoi(values[0])
+					if err != nil {
+						return failure(httpapi.NewError(400, "分页参数无效"))
+					}
+					fields[key] = json.RawMessage(strconv.Itoa(n))
+				} else {
+					fields[key], _ = json.Marshal(values[0])
+				}
+			}
+			result, err := s.Service.Query(id, action[1:], fields)
+			return 200, result, err
+		}
 		if method == "DELETE" && action == "" {
 			result, err := s.Manager.Delete(id, user.Username)
 			return 200, result, err
@@ -127,7 +139,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 					return failure(httpapi.NewError(400, "每次分析深度必须为 1–3 层"))
 				}
 			}
-			job, err := s.Manager.StartIncremental(user.Username, id, httpapi.FieldString(value, "path"), revision, depth)
+			job, err := s.Service.Explore(user.Username, id, httpapi.FieldString(value, "path"), revision, depth)
 			return 202, job, err
 		}
 		if method == "POST" && action == "/cancel" {
@@ -142,7 +154,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			return 200, job, err
 		}
 		if method == "GET" && action == "/snapshot" {
-			snapshot, err := s.snapshot(id)
+			snapshot, err := s.Snapshot(id)
 			return 200, snapshot, err
 		}
 		if method == "GET" && action == "/changes" {
@@ -154,7 +166,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			if err != nil || revision < 0 {
 				return failure(httpapi.NewError(400, "扫描记录版本无效"))
 			}
-			changes, err := s.snapshotChanges(id, revision)
+			changes, err := s.Changes(id, revision)
 			return 200, changes, err
 		}
 	}
@@ -166,7 +178,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if id == nil {
 			return failure(httpapi.NewError(404, "还没有完成的扫描，请先在平台发起扫描"))
 		}
-		snapshot, err := s.snapshot(*id)
+		snapshot, err := s.Snapshot(*id)
 		return 200, snapshot, err
 	}
 	if method == "PUT" && route == "/api/owners" {
@@ -185,40 +197,4 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return 200, object{"owners": owners}, err
 	}
 	return failure(httpapi.NewError(404, "接口不存在"))
-}
-func (s *Handler) snapshot(id string) (object, error) {
-	snapshot, err := s.DB.readSnapshot(id)
-	if err != nil {
-		return nil, err
-	}
-	var result object
-	snapshot.Accounting = nil
-	if json.Unmarshal([]byte(httpapi.JSONText(snapshot)), &result) != nil || result == nil {
-		return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
-	}
-	return s.publicSnapshot(result, id, snapshot.Revision)
-}
-func (s *Handler) publicSnapshot(result object, id string, revision int64) (object, error) {
-	owners, err := s.DB.owners()
-	if err != nil {
-		return nil, err
-	}
-	containers, ok := result["containers"].([]any)
-	if !ok {
-		return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
-	}
-	for _, v := range containers {
-		c, ok := v.(map[string]any)
-		if !ok {
-			return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
-		}
-		c["label_owner"] = c["owner"]
-		if owner, ok := owners[httpapi.String(c["id"])]; ok {
-			c["owner"] = owner
-		}
-	}
-	delete(result, "incremental_accounting")
-	result["revision"] = revision
-	result["job_id"] = id
-	return result, nil
 }

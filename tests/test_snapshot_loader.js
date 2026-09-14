@@ -76,7 +76,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
   cancelled.abort();await assert.rejects(cancelPromise,e=>e.name==='AbortError');assert(workers[1].terminated);
   stallDownload=false;releaseDownload();
   source='{broken';await assert.rejects(read({signal:new AbortController().signal,onProgress(){}}),/JSON/);
-  for (const version of [1,3]) {
+  for (const version of [1,2,4]) {
     source=JSON.stringify({...data,schema_version:version});
     await assert.rejects(read({signal:new AbortController().signal,onProgress(){}}),/快照/);
   }

@@ -20,7 +20,7 @@ func (s *Handler) streamSnapshot(w http.ResponseWriter, r *http.Request, id stri
 	if err != nil || revision < 0 {
 		return 0, nil, httpapi.NewError(400, "请提供当前扫描记录版本")
 	}
-	changes, err := s.snapshotChanges(id, revision)
+	changes, err := s.Changes(id, revision)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -61,7 +61,7 @@ func (s *Handler) streamSnapshot(w http.ResponseWriter, r *http.Request, id stri
 			return 0, nil, nil
 		}
 		if head > revision {
-			changes, err = s.snapshotChanges(id, revision)
+			changes, err = s.Changes(id, revision)
 			if err != nil {
 				return 0, nil, nil
 			}

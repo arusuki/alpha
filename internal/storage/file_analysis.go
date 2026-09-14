@@ -2,7 +2,6 @@ package storage
 
 import (
 	"container/heap"
-	"context"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -103,20 +102,9 @@ func (a *FileAnalysis) finish() {
 	a.Modified = append([]FileGroup{}, a.age[:]...)
 	a.TimeBasis = "文件 mtime 距扫描时刻的 90/180 天分桶；ctime 为最后状态变更，不是创建时间；这些时间不能证明最近读取或是否可删除。仅统计已读取且 inode 去重后的普通文件。"
 }
-func buildDetailSnapshot(ctx context.Context, c Config, path string, progress func(object) error) (*Snapshot, error) {
-	progress = mergeScanProgress(progress)
-	path, err := validateDetailPath(path, c, "")
-	if err != nil {
-		return nil, err
-	}
-	physical, err := InspectDirectories(ctx, c, DirectoryInspection{Paths: []string{path}, AnalyzeFiles: true}, progress)
-	if err != nil {
-		return nil, err
-	}
-	if progress != nil {
-		if err := progress(object{"phase": "saving", "path": "扫描完成，正在保存结果"}); err != nil {
-			return nil, err
-		}
-	}
-	return &Snapshot{Accounting: physical.Accounting, SchemaVersion: snapshotVersion, FinishedAt: time.Now().UTC().Format(time.RFC3339Nano), Tree: physical.Tree, Docker: object{}, Resources: []Resource{{Path: path, Kinds: []string{"analysis"}, Containers: []string{}}}, Containers: []Container{}, Filesystems: physical.Filesystems, Warnings: physical.Warnings, Analysis: physical.Analysis, Scan: object{"scope": "agent-directory", "backend": physical.Backend, "visited_entries": physical.Visited, "omitted_references": physical.OmittedReferences, "error_count": physical.ErrorCount, "excludes": physical.Excludes}}, nil
+
+// DirectoryAnalysis describes file metadata from one completed local observation.
+type DirectoryAnalysis struct {
+	ObservedAt string        `json:"observed_at"`
+	Analysis   *FileAnalysis `json:"analysis"`
 }

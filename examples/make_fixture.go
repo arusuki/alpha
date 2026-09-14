@@ -66,7 +66,7 @@ func main() {
 	tree := directory("@root", []object{shared, directory("/var/lib/docker", append(uppers, logs))})
 	tree["kind"] = "root"
 	tree["name"] = "已扫描存储"
-	data := object{"schema_version": 2, "revision": 0, "host": "gpu-node-01 · 示例", "finished_at": "2026-09-13T02:18:36+08:00", "docker": object{"driver": "overlay2", "version": "示例", "root": "/var/lib/docker"}, "tree": tree, "containers": containers, "resources": resources, "filesystems": []object{{"device": "demo", "mount": "/srv", "fs": "xfs", "total": int64(2048) * gib, "used": int64(1384) * gib, "available": int64(664) * gib, "reserved": 0, "scanned": tree["allocated"], "unexplained": int64(1384)*gib - tree["allocated"].(int64)}}, "warnings": []object{}, "scan": object{"max_depth": 5, "max_nodes": 50000, "error_count": 0, "omitted_references": 0, "backend": "host", "excludes": []string{}}}
+	data := object{"schema_version": 3, "revision": 0, "host": "gpu-node-01 · 示例", "finished_at": "2026-09-13T02:18:36+08:00", "docker": object{"driver": "overlay2", "version": "示例", "root": "/var/lib/docker"}, "tree": tree, "containers": containers, "resources": resources, "filesystems": []object{{"device": "demo", "mount": "/srv", "fs": "xfs", "total": int64(2048) * gib, "used": int64(1384) * gib, "available": int64(664) * gib, "reserved": 0, "scanned": tree["allocated"], "unexplained": int64(1384)*gib - tree["allocated"].(int64)}}, "warnings": []object{}, "scan": object{"max_depth": 5, "max_nodes": 50000, "error_count": 0, "omitted_references": 0, "backend": "host", "excludes": []string{}}}
 	raw, err := json.Marshal(data)
 	if err != nil {
 		log.Fatal(err)

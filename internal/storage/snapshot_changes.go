@@ -9,12 +9,12 @@ import (
 	"project-alpha/internal/platform"
 )
 
-func (s *Handler) snapshotChanges(id string, baseRevision int64) (object, error) {
+func (s *Service) Changes(id string, baseRevision int64) (object, error) {
 	if patch, err := s.storedSnapshotChanges(id, baseRevision); err != sql.ErrNoRows {
 		return patch, err
 	}
 	// A baseline has no directory updates yet.
-	snapshot, err := s.snapshot(id)
+	snapshot, err := s.Snapshot(id)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func snapshotChangePaths(q platform.Queryer, id string, baseRevision int64) (map
 
 // Read only changed branches for SSE/polling. Unrelated nodes and private inode
 // records never need to be loaded or serialized to produce a directory patch.
-func (s *Handler) storedSnapshotChanges(id string, baseRevision int64) (object, error) {
+func (s *Service) storedSnapshotChanges(id string, baseRevision int64) (object, error) {
 	tx, err := s.DB.SQL.Begin()
 	if err != nil {
 		return nil, err

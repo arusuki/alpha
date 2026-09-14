@@ -1,6 +1,7 @@
-package storage
+package agent
 
 import (
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -10,22 +11,46 @@ import (
 	"project-alpha/internal/platform"
 )
 
-var agentSessionRoute = regexp.MustCompile(`^/api/agent/sessions/([a-f0-9]{32})(/messages|/cancel)?$`)
+type Handler struct {
+	DB      *Store
+	Manager *Manager
+}
 
-func (s *Handler) agentDispatch(w http.ResponseWriter, r *http.Request, userID, actor string) (int, any, error) {
+func NewHandler(db *Store, manager *Manager) *Handler { return &Handler{db, manager} }
+
+var agentSessionRoute = regexp.MustCompile(`^/api/agent/sessions/([a-f0-9]{32})(/messages|/cancel)?$`)
+var recordIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
+
+func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if user.Role != "admin" {
+		return 0, nil, httpapi.NewError(403, "Agent 分析需要管理员权限")
+	}
+	userID, actor := user.ID, user.Username
 	fail := func(err error) (int, any, error) { return 0, nil, err }
-	a := s.Manager.Agent
+	a := s.Manager
+	if r.URL.Path == "/api/agent/reports" && r.Method == "POST" {
+		body, err := httpapi.RequestBody(w, r)
+		if err != nil {
+			return fail(err)
+		}
+		var source reportSource
+		if len(body) != 2 || body["snapshot_id"] == nil || body["revision"] == nil || string(body["revision"]) == "null" || json.Unmarshal([]byte(httpapi.JSONText(body)), &source) != nil || !recordIDPattern.MatchString(source.SnapshotID) || source.Revision < 0 {
+			return fail(httpapi.NewError(400, "需要有效的 snapshot_id 和非负整数 revision"))
+		}
+		session, err := a.start("", userID, actor, diskReportRequest, &source)
+		return 202, session, err
+	}
 	if r.URL.Path == "/api/agent/settings" {
 		if r.Method == "GET" {
 			c, revision, err := s.DB.agentConfig()
-			return 200, publicAgentConfig(c, revision), err
+			return 200, publicConfig(c, revision), err
 		}
 		if r.Method == "PUT" {
 			body, err := httpapi.RequestBody(w, r)
 			if err != nil {
 				return fail(err)
 			}
-			value, err := s.DB.saveAgentConfig(body, actor)
+			value, err := s.DB.saveConfig(body, actor)
 			return 200, value, err
 		}
 	}
@@ -42,7 +67,7 @@ func (s *Handler) agentDispatch(w http.ResponseWriter, r *http.Request, userID, 
 			if len(body) != 1 {
 				return fail(httpapi.NewError(400, "仅接受 message 参数"))
 			}
-			session, err := a.start("", userID, actor, httpapi.FieldString(body, "message"))
+			session, err := a.start("", userID, actor, httpapi.FieldString(body, "message"), nil)
 			return 202, session, err
 		}
 	}
@@ -69,11 +94,11 @@ func (s *Handler) agentDispatch(w http.ResponseWriter, r *http.Request, userID, 
 				messages = messages[:200]
 			}
 			if len(messages) > 0 {
-				after = numberInt64(messages[len(messages)-1]["id"])
+				after = messages[len(messages)-1]["id"].(int64)
 			}
 			var job any
 			if jobID := httpapi.String(session["active_job_id"]); jobID != "" {
-				job, err = s.DB.job(jobID)
+				job, err = a.records.Job(jobID)
 				if err != nil {
 					return fail(err)
 				}
@@ -89,7 +114,7 @@ func (s *Handler) agentDispatch(w http.ResponseWriter, r *http.Request, userID, 
 				if len(body) != 1 {
 					return fail(httpapi.NewError(400, "仅接受 message 参数"))
 				}
-				session, err := a.start(id, userID, actor, httpapi.FieldString(body, "message"))
+				session, err := a.start(id, userID, actor, httpapi.FieldString(body, "message"), nil)
 				return 202, session, err
 			}
 			if action == "/cancel" {
@@ -101,4 +126,4 @@ func (s *Handler) agentDispatch(w http.ResponseWriter, r *http.Request, userID, 
 	return fail(httpapi.NewError(404, "Agent 接口不存在"))
 }
 
-func isAgentRoute(path string) bool { return strings.HasPrefix(path, "/api/agent/") }
+func IsRoute(path string) bool { return strings.HasPrefix(path, "/api/agent/") }

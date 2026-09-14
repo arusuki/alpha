@@ -11,7 +11,7 @@ import (
 	"project-alpha/internal/platform"
 )
 
-// Store persists storage settings, jobs, snapshots and analysis sessions.
+// Store persists storage settings, jobs and snapshots.
 type Store struct{ *platform.Database }
 
 func NewStore(db *platform.Database) *Store { return &Store{Database: db} }
@@ -27,8 +27,7 @@ func Initialize(tx *sql.Tx) error {
 	if _, err := tx.Exec("INSERT INTO settings(id,value) VALUES(1,?)", httpapi.JSONText(defaultConfig())); err != nil {
 		return err
 	}
-	_, err := tx.Exec("INSERT INTO agent_settings(id,value) VALUES(1,?)", httpapi.JSONText(defaultAgentConfig()))
-	return err
+	return nil
 }
 
 type Settings struct {
@@ -113,7 +112,7 @@ func (d *Store) directoryJobs() ([]object, error) {
 }
 func (d *Store) latest() (*string, error) {
 	var id string
-	err := d.SQL.QueryRow("SELECT id FROM jobs WHERE status='completed' AND trigger NOT IN ('agent-detail','incremental') ORDER BY finished_at DESC LIMIT 1").Scan(&id)
+	err := d.SQL.QueryRow("SELECT id FROM jobs WHERE status='completed' AND trigger<>'incremental' ORDER BY finished_at DESC LIMIT 1").Scan(&id)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

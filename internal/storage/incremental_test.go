@@ -284,7 +284,7 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	if err != nil || latest == nil || *latest != id {
 		t.Fatal("incremental task replaced latest baseline")
 	}
-	agent, err := p.m.Agent.loadSnapshot(id)
+	agent, err := p.api.Service.ReadSnapshot(id)
 	if err != nil || agent.Revision != numberInt64(updated["revision"]) || float64(agent.Tree.Allocated) != history["allocated"] {
 		t.Fatalf("agent saw stale head: %v", err)
 	}

@@ -162,7 +162,7 @@ func TestDirectoryProcessCleanupPreservesPublishedResults(t *testing.T) {
 			if err != nil || stored.Revision != 1 || len(snapshotNodes(stored.Tree)[target].Children) == 0 {
 				t.Fatalf("process cleanup destroyed committed details: %v", err)
 			}
-			if _, err := p.api.snapshotChanges(id, 0); err != nil {
+			if _, err := p.api.Changes(id, 0); err != nil {
 				t.Fatal(err)
 			}
 			p.m.command = originalCommand

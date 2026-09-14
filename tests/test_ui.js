@@ -24,7 +24,7 @@ run('clearFilters();stateFilter="stopped";renderContainers()');assert(element('t
 run('clearFilters();query="pytorch";sortOrder="exclusive-asc";renderContainers()');assert(element('tableBody').innerHTML.indexOf('chen-inference')<element('tableBody').innerHTML.indexOf('yuuka-train'));
 run('clearFilters();select("container",snapshot.containers[0])');assert(element('containerDialog').open);assert(element('storageSources').innerHTML.includes('/models'));assert(element('detail').innerHTML.includes('Docker 逻辑大小'));
 run('snapshot.containers[0].owner="lin";rebuildUsage()');assert(Math.abs(run('usage.owners.get("lin").bytes')-(96+48+348)*1024**3)<=4);assert(!element('ownerRanking').innerHTML.includes('yuuka</span>'));
-assert.throws(()=>run('load({schema_version:3},"bad")'));
+assert.throws(()=>run('load({schema_version:4},"bad")'));
 assert.throws(()=>run('validate({...sample,tree:{...sample.tree,allocated:-1}})'));
 run('clearFilters();sample.containers[0].name="<img src=x onerror=alert(1)>";load(sample,"test")');assert(!element('tableBody').innerHTML.includes('<img'));assert(element('tableBody').innerHTML.includes('&lt;img'));
 run('snapshot.containers[0].upper_path=null;snapshot.containers[0].writable_layer={allocated:null,apparent:null,status:"unavailable",permission_denied:false};rebuildUsage();select("container",snapshot.containers[0])');assert(element('detail').innerHTML.includes('未知'));assert(element('detail').innerHTML.includes('部分统计'));

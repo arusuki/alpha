@@ -13,6 +13,7 @@ import (
 	"time"
 
 	web "project-alpha/dist"
+	"project-alpha/internal/agent"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/storage"
 )
@@ -64,7 +65,7 @@ func Run(ctx context.Context, args []string) error {
 	if *port < 0 || *port > 65535 {
 		return fmt.Errorf("invalid port")
 	}
-	db, err := platform.OpenDatabase(directory, storage.Initialize)
+	db, err := platform.OpenDatabase(directory, Initialize)
 	if err != nil {
 		return err
 	}
@@ -75,11 +76,19 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer manager.Close()
+	storageHandler := storage.NewHandler(store, manager)
+	agentStore := agent.NewStore(db)
+	agentManager, err := agent.NewManager(agentStore, storageHandler.Service)
+	if err != nil {
+		return err
+	}
+	defer agentManager.Close()
+	modules := Modules{Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager)}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: platform.NewServer(db, storage.NewHandler(store, manager), web.Assets, hosts, *secure), ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
+	server := &http.Server{Handler: platform.NewServer(db, modules, web.Assets, hosts, *secure), ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
 	done := make(chan struct{})
 	defer close(done)
 	shutdownDone := make(chan struct{})

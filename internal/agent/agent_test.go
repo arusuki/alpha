@@ -1,4 +1,4 @@
-package storage
+package agent
 
 import (
 	"context"
@@ -7,9 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,14 +38,7 @@ func waitAgentSession(t *testing.T, p *testPlatform, id string) object {
 func configureTestAgent(t *testing.T, p *testPlatform, protocol, endpoint string) {
 	t.Helper()
 	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "max_rounds": 4, "timeout_seconds": 10}}, nil)
-	// Keep integration scans inside fixtures; production uses fullScanConfig.
-	p.m.Agent.fullPlan = func(c Config) Config {
-		c.Root = []string{p.storage}
-		c.MaxDepth = 1
-		c.MaxNodes = 100
-		c.IncludeDockerRoot = false
-		return c
-	}
+
 }
 
 func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
@@ -79,17 +73,17 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 					if !strings.Contains(httpapi.JSONText(body), "全盘观察") || !strings.Contains(httpapi.JSONText(body), "list_containers") {
 						t.Error("missing overview or tools")
 					}
-					arguments := httpapi.JSONText(object{"path": dir, "refresh": false})
+					arguments := httpapi.JSONText(object{"path": dir, "revision": 0, "depth": 3})
 					if protocol == "completions" {
-						httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": nil, "tool_calls": []object{{"id": "call_one", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}, {"id": "call_two", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}}}, "finish_reason": "tool_calls"}}})
+						httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": nil, "tool_calls": []object{{"id": "call_one", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}, {"id": "call_two", "type": "function", "function": object{"name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}}}, "finish_reason": "tool_calls"}}})
 					} else {
-						httpapi.WriteJSON(w, 200, object{"status": "completed", "output": []object{{"id": "rs_test", "type": "reasoning", "summary": []object{}, "encrypted_content": "opaque-reasoning"}, {"type": "function_call", "id": "fc_one", "call_id": "call_one", "name": "scan_directory", "arguments": arguments}, {"type": "function_call", "id": "fc_two", "call_id": "call_two", "name": "scan_directory", "arguments": arguments}}})
+						httpapi.WriteJSON(w, 200, object{"status": "completed", "output": []object{{"id": "rs_test", "type": "reasoning", "summary": []object{}, "encrypted_content": "opaque-reasoning"}, {"type": "function_call", "id": "fc_one", "call_id": "call_one", "name": "scan_directory", "arguments": arguments}, {"type": "function_call", "id": "fc_two", "call_id": "call_two", "name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}})
 					}
 					return
 				}
 				if n == 2 {
 					encoded := httpapi.JSONText(body)
-					for _, needle := range []string{"largest_files", "train.parquet", "cached", "call_one", "call_two"} {
+					for _, needle := range []string{"largest_files", "train.parquet", "revision", "call_one", "call_two"} {
 						if !strings.Contains(encoded, needle) {
 							t.Errorf("tool results missing %s", needle)
 						}
@@ -126,11 +120,13 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 				t.Fatal("final answer not persisted")
 			}
 			var details int
-			p.db.SQL.QueryRow("SELECT count(*) FROM jobs WHERE trigger='agent-detail'").Scan(&details)
+			p.db.SQL.QueryRow("SELECT count(*) FROM jobs WHERE trigger='incremental'").Scan(&details)
 			if details != 1 {
 				t.Fatalf("identical detail request scanned %d times", details)
 			}
-			latest, _ := p.db.latest()
+			latestResult := p.expect(200, "GET", "/api/state", nil, nil)
+			latestID, _ := latestResult["latest_id"].(string)
+			latest := &latestID
 			if latest == nil || *latest != session["snapshot_id"] {
 				t.Fatal("detail replaced overview")
 			}
@@ -144,6 +140,39 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			if full != 1 || calls.Load() != 3 {
 				t.Fatalf("followup rescanned: %d / %d", full, calls.Load())
 			}
+			// Tool exploration must be visible through every Web record reader.
+			recordID := session["snapshot_id"].(string)
+			web := p.expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
+			if web["revision"].(float64) <= 0 || !strings.Contains(httpapi.JSONText(web["analysis"]), "train.parquet") {
+				t.Fatalf("tool result missing from web: %v", web)
+			}
+			// A subsequent manual exploration must be visible in this same session.
+			mustWrite(t, filepath.Join(dir, "manual.jsonl"), make([]byte, 8192))
+			manual := p.expect(202, "POST", "/api/jobs/"+recordID+"/expand", object{"path": dir, "revision": web["revision"], "depth": 1}, nil)
+			if done := waitJob(t, p.records, manual["id"].(string)); done["status"] != "completed" {
+				t.Fatalf("manual exploration failed: %v", done)
+			}
+			var uid string
+			if err := p.db.SQL.QueryRow("SELECT user_id FROM agent_sessions WHERE id=?", id).Scan(&uid); err != nil {
+				t.Fatal(err)
+			}
+			tool := &agentTools{agent: p.agent, sessionID: id, userID: uid, actor: "administrator", recordID: recordID}
+			result, err := tool.call(context.Background(), "get_directory", httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30}))
+			if err != nil || !strings.Contains(httpapi.JSONText(result), "manual.jsonl") {
+				t.Fatalf("tool missed manual update: %v %v", result, err)
+			}
+			fresh := p.expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
+			var normalized object
+			if err := json.Unmarshal([]byte(httpapi.JSONText(result)), &normalized); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(normalized, fresh) {
+				t.Fatal("tool and web returned different records")
+			}
+			if _, err = tool.call(context.Background(), "scan_directory", httpapi.JSONText(object{"path": dir, "revision": web["revision"], "depth": 1})); err == nil {
+				t.Fatal("tool accepted stale revision")
+			}
+
 		})
 	}
 }
@@ -160,7 +189,7 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	}
 	p.expect(409, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
 	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 2, "value": object{"api_key": "", "model": "updated-model"}}, nil)
-	c, _, _ := p.db.agentConfig()
+	c, _, _ := p.agent.db.agentConfig()
 	if c.APIKey != "keep-this-private" {
 		t.Fatal("blank key erased saved key")
 	}
@@ -168,7 +197,7 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, _, _ := other.agentConfig()
+	saved, _, _ := NewStore(other).agentConfig()
 	other.SQL.Close()
 	if saved.APIKey != c.APIKey {
 		t.Fatal("key not persisted")
@@ -177,7 +206,7 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 		p.expect(400, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"endpoint": endpoint}}, nil)
 	}
 	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"clear_api_key": true}}, nil)
-	c, _, _ = p.db.agentConfig()
+	c, _, _ = p.agent.db.agentConfig()
 	if c.APIKey != "" {
 		t.Fatal("explicit key clear failed")
 	}
@@ -203,7 +232,7 @@ func TestAgentCancellationAndSessionIsolation(t *testing.T) {
 		<-r.Context().Done()
 		close(disconnected)
 	}))
-	defer func() { p.m.Agent.Close(); mock.Close() }()
+	defer func() { p.agent.Close(); mock.Close() }()
 	configureTestAgent(t, p, "responses", mock.URL)
 	start := p.expect(202, "POST", "/api/agent/sessions", object{"message": "test cancellation"}, nil)
 	id := httpapi.String(start["id"])
@@ -234,7 +263,7 @@ func TestAgentCancellationAndSessionIsolation(t *testing.T) {
 func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 	for _, protocol := range []string{"responses", "completions"} {
 		for _, endpoint := range []string{"https://example.com", "https://example.com/v1/", "https://example.com/v1/chat/completions", "https://example.com/v1/responses"} {
-			c := defaultAgentConfig()
+			c := defaultConfig()
 			c.Protocol = protocol
 			c.Endpoint = endpoint
 			got, err := c.endpointURL()
@@ -252,7 +281,7 @@ func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 		body   string
 	}{{401, `{"error":"secret-key-value"}`}, {200, `{"choices":[]}`}, {200, `{"choices":[{"message":null}]}`}, {200, `{"choices":[{"message":{"content":"partial"},"finish_reason":"length"}]}`}, {200, `{"choices":[{"message":{"tool_calls":[{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}},{"id":"a","type":"function","function":{"name":"x","arguments":"{}"}}]}}]}`}} {
 		mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(test.status); fmt.Fprint(w, test.body) }))
-		c := defaultAgentConfig()
+		c := defaultConfig()
 		c.Protocol = "completions"
 		c.Endpoint = mock.URL
 		c.APIKey = "secret-key-value"
@@ -267,99 +296,12 @@ func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 	defer target.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, target.URL, 307) }))
 	defer redirect.Close()
-	c := defaultAgentConfig()
+	c := defaultConfig()
 	c.Endpoint = redirect.URL
 	c.APIKey = "secret"
 	_, err := (agentProvider{Config: c}).complete(context.Background(), nil, true)
 	if err == nil || redirected.Load() {
 		t.Fatal("followed model redirect with credentials")
-	}
-}
-
-func TestDetailScanMetadataAndGuard(t *testing.T) {
-	dir := t.TempDir()
-	file := filepath.Join(dir, "old.parquet")
-	mustWrite(t, file, make([]byte, 8192))
-	old := time.Now().Add(-200 * 24 * time.Hour)
-	os.Chtimes(file, old, old)
-	os.Link(file, filepath.Join(dir, "alias.parquet"))
-	mustWrite(t, filepath.Join(dir, "new.jsonl"), make([]byte, 16384))
-	c := defaultConfig()
-	c.NoDocker = true
-	c.Root = []string{dir}
-	c.MaxDepth = 0
-	c.MaxNodes = 100
-	s, err := buildDetailSnapshot(context.Background(), c, dir, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if s.Analysis == nil || len(s.Analysis.Largest) != 2 || s.Analysis.Modified[2].Files != 1 || s.Analysis.Largest[0].Apparent != 16384 {
-		t.Fatalf("incorrect metadata: %+v", s.Analysis)
-	}
-	if len(s.Analysis.Types) != 2 || s.Analysis.Modified[0].Files != 1 {
-		t.Fatal("hardlink counted twice or age wrong")
-	}
-	c.Exclude = []string{filepath.Join(dir, "excluded")}
-	os.MkdirAll(c.Exclude[0], 0700)
-	os.Symlink(c.Exclude[0], filepath.Join(dir, "escape"))
-	for _, path := range []string{"relative", "/proc/1", "/sys", "/dev", "/run", "/var/lib/docker/overlay2/layer/merged", filepath.Join(dir, "escape")} {
-		if _, err := validateDetailPath(path, c, ""); err == nil {
-			t.Fatalf("accepted forbidden path %s", path)
-		}
-	}
-	c = fullScanConfig(defaultConfig())
-	if !c.IncludeDockerRoot || !containsString(c.Root, "/") {
-		t.Fatal("production baseline is not full disk")
-	}
-}
-func containsString(a []string, s string) bool {
-	for _, v := range a {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-func TestAgentUsageMatchesFrontend(t *testing.T) {
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node unavailable")
-	}
-	raw, err := os.ReadFile("../../tests/fixtures/snapshot.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var s Snapshot
-	if err = json.Unmarshal(raw, &s); err != nil {
-		t.Fatal(err)
-	}
-	u := buildUsage(&s)
-	code := `const U=require('./dist/usage.js'),s=require('./tests/fixtures/snapshot.json'),u=U.build(s);console.log(JSON.stringify({exclusive:u.exclusive,shared:u.shared,crossOwner:u.crossOwner,unrelated:u.unrelated,containers:[...u.containers].map(([id,r])=>({id,exclusive:r.exclusive,shared:r.shared,known:r.known,partial:r.partial}))}));`
-	command := exec.Command("node", "-e", code)
-	command.Dir = "../.."
-	out, err := command.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var js struct {
-		Exclusive, Shared, CrossOwner, Unrelated int64
-		Containers                               []struct {
-			ID                string
-			Exclusive, Shared int64
-			Known, Partial    bool
-		}
-	}
-	if err = json.Unmarshal(out, &js); err != nil {
-		t.Fatal(err)
-	}
-	if u.Exclusive != js.Exclusive || u.Shared != js.Shared || u.CrossOwner != js.CrossOwner || u.Unrelated != js.Unrelated {
-		t.Fatalf("accounting differs: %+v / %s", u, out)
-	}
-	for _, expected := range js.Containers {
-		r := u.Containers[expected.ID]
-		if r == nil || r.Exclusive != expected.Exclusive || r.Shared != expected.Shared || r.Known != expected.Known || r.Partial != expected.Partial {
-			t.Fatalf("container differs: %+v / %+v", r, expected)
-		}
 	}
 }
 
@@ -381,12 +323,12 @@ func TestAgentRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewManager(db)
+	m, err := NewManager(NewStore(db), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer m.Close()
-	s, err := m.Agent.session("session", "owner")
+	s, err := m.session("session", "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +350,7 @@ func TestAgentFullScanFailureNeverCallsModel(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called.Store(true) }))
 	defer mock.Close()
 	configureTestAgent(t, p, "responses", mock.URL)
-	p.m.command = func(string, string) *exec.Cmd { return exec.Command("false") }
+	p.records.failStart = true
 	s := p.expect(202, "POST", "/api/agent/sessions", object{"message": "scan first"}, nil)
 	r := waitAgentSession(t, p, httpapi.String(s["id"]))
 	session := r["session"].(map[string]any)
@@ -459,7 +401,7 @@ func TestAgentMessagePaginationBoundary(t *testing.T) {
 	}
 	for count := 0; count <= 201; count++ {
 		if count > 0 {
-			if err := p.m.Agent.message(id, "assistant", fmt.Sprint(count), ""); err != nil {
+			if err := p.agent.message(id, "assistant", fmt.Sprint(count), ""); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -472,7 +414,7 @@ func TestAgentMessagePaginationBoundary(t *testing.T) {
 			t.Fatalf("count=%d page=%v", count, page)
 		}
 		if count == 201 {
-			next := p.expect(200, "GET", fmt.Sprintf("/api/agent/sessions/%s?after=%d", id, numberInt64(page["next_after"])), nil, nil)
+			next := p.expect(200, "GET", fmt.Sprintf("/api/agent/sessions/%s?after=%d", id, int64(page["next_after"].(float64))), nil, nil)
 			tail := next["messages"].([]any)
 			if len(tail) != 1 || tail[0].(map[string]any)["content"] != "201" || next["has_more"] != false {
 				t.Fatalf("bad last page: %v", next)
@@ -496,7 +438,7 @@ func TestAgentRetriesFailedCompletionWithoutClientPolling(t *testing.T) {
 	configureTestAgent(t, p, "completions", mock.URL)
 	session := p.expect(202, "POST", "/api/agent/sessions", object{"message": "分析磁盘"}, nil)
 	id := session["id"].(string)
-	a := p.m.Agent
+	a := p.agent
 	deadline := time.Now().Add(20 * time.Second)
 	pending := false
 	for time.Now().Before(deadline) {
@@ -514,7 +456,7 @@ func TestAgentRetriesFailedCompletionWithoutClientPolling(t *testing.T) {
 	if !pending {
 		t.Fatal("completion failure was not retained")
 	}
-	if _, err := a.start(id, session["user_id"].(string), "administrator", "继续"); err == nil {
+	if _, err := a.start(id, session["user_id"].(string), "administrator", "继续", nil); err == nil {
 		t.Fatal("allowed followup before completion persisted")
 	}
 	if _, err := p.db.SQL.Exec("DROP TRIGGER fail_agent_completion"); err != nil {

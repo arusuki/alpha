@@ -174,7 +174,7 @@ func TestDirectoryCancellationRetainsPublishedObservation(t *testing.T) {
 	if _, err := p.db.SQL.Exec("UPDATE jobs SET status='cancelled' WHERE id=?", worker); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.api.snapshotChanges(id, 0); err != nil {
+	if _, err := p.api.Changes(id, 0); err != nil {
 		t.Fatal("cancelled worker broke published revision history", err)
 	}
 }

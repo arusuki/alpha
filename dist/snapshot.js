@@ -2,7 +2,7 @@
 // Shared by the UI and the background snapshot worker.
 const SnapshotData = (() => {
   function validate(data, report = () => {}) {
-    if (!data || data.schema_version !== 2 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照。');
+    if (!data || data.schema_version !== 3 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照。');
     if (!data.scan || !Number.isSafeInteger(data.scan.omitted_references) || data.scan.omitted_references < 0 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw Error('扫描统计或版本格式无效。');
     report({stage:'validate',done:0,total:null,unit:'节点',detail:'校验目录树结构与空间汇总'});
     const stack = [[data.tree, 0]], paths = new Set(), ids = new Set();

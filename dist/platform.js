@@ -2,8 +2,8 @@
 const platform = {user:null,csrf:'',setup:false,page:'overview',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,deletedIDs:new Set(),deleteTarget:null,deleting:false};
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
-const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描','agent-detail':'Agent 目录细查',incremental:'目录扫描'};
-const actionNames = {'scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
+const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
+const actionNames = {'scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.start':'启动 Agent 分析','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
 const dateTime = value => value ? new Date(value*1000).toLocaleString('zh-CN') : '—';
 async function api(path,options={}) {
   const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,headers:{'Content-Type':'application/json','X-CSRF-Token':platform.csrf,...options.headers}});
@@ -19,6 +19,7 @@ function showAuth(setup,error='') {
   if(platform.resultLoad)platform.resultLoad.controller.abort();
   if(platform.changesLoad)platform.changesLoad.controller.abort();
   window.SettingsUI.reset();
+  window.AgentUI?.reset();
   clearTimeout(platform.poll);platform.generation++;platform.user=null;platform.csrf='';platform.setup=setup;
   $('console').hidden=true;$('sessionControls').hidden=true;$('authPanel').hidden=false;
   for (const id of ['containerDialog','ownerDialog','passwordDialog','deleteJobDialog']) if ($(id).open) $(id).close();
@@ -35,6 +36,7 @@ async function enter(session) {
   platform.changesError=null;
   platform.skippedAutoLoad=null;platform.expandStarting=null;platform.expandError=null;
   window.SettingsUI.reset();
+  window.AgentUI?.reset();
   platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
   $('authPanel').hidden=true;$('console').hidden=false;$('sessionControls').hidden=false;
   $('sessionUser').textContent=`${session.user.username} · ${session.user.role==='admin'?'管理员':'只读'}`;
@@ -50,6 +52,7 @@ function schedulePoll() {
   if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},platform.active?1000:2000);
 }
 function controls() {
+  window.AgentUI?.controls();
   $('startScan').disabled=!!platform.active || platform.starting;
   $('startScan').textContent=platform.starting?'正在创建任务…':platform.active?'扫描进行中':'开始扫描';
   $('cancelScan').hidden=!platform.active || platform.user.role!=='admin';

@@ -50,7 +50,7 @@ func (m *Manager) StartIncremental(actor, id, path string, revision int64, depth
 	if err != nil {
 		return nil, err
 	}
-	if job["trigger"] == "agent-detail" || job["trigger"] == "incremental" {
+	if job["trigger"] == "incremental" {
 		return nil, httpapi.NewError(400, "请在原扫描记录上继续分析")
 	}
 	base, err := m.db.readSnapshot(id)
@@ -70,7 +70,6 @@ func (m *Manager) StartIncremental(actor, id, path string, revision int64, depth
 	if _, err = validateDetailPath(path, plan.Config, m.db.Directory); err != nil {
 		return nil, httpapi.NewError(400, err.Error())
 	}
-	plan.AnalysisPath = ""
 	plan.BaseJobID = id
 	plan.BaseRevision = revision
 	plan.IncrementalPath = path

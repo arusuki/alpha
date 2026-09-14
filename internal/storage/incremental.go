@@ -87,7 +87,7 @@ func expandDirectory(ctx context.Context, base *Snapshot, c Config, path string,
 	if backend, _ := base.Scan["backend"].(string); backend == "docker" {
 		c.ScanBackend, c.NoDocker = "docker", false
 	}
-	inspection := DirectoryInspection{Paths: []string{path}, StreamDirectory: publish != nil}
+	inspection := DirectoryInspection{Paths: []string{path}, AnalyzeFiles: true, StreamDirectory: publish != nil}
 	baseNodes := snapshotNodes(base.Tree)
 	for _, n := range baseNodes {
 		if !within(n.Path, path) && within(n.Reference, path) {
@@ -241,6 +241,18 @@ func mergeDirectoryResult(base *Snapshot, physical *physicalScan, path string, c
 	result.Scan["lazy_accounting_limited"] = limited
 	result.Scan["last_incremental"] = object{"path": path, "backend": physical.Backend, "visited_entries": physical.Visited, "allocated_delta": result.Tree.Allocated - base.Tree.Allocated, "complete": complete}
 	result.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	result.DirectoryAnalyses = maps.Clone(base.DirectoryAnalyses)
+	if result.DirectoryAnalyses == nil {
+		result.DirectoryAnalyses = map[string]DirectoryAnalysis{}
+	}
+	for previous := range result.DirectoryAnalyses {
+		if within(previous, path) || within(path, previous) {
+			delete(result.DirectoryAnalyses, previous)
+		}
+	}
+	if complete && physical.Analysis != nil {
+		result.DirectoryAnalyses[path] = DirectoryAnalysis{ObservedAt: result.UpdatedAt, Analysis: physical.Analysis}
+	}
 	if err := validateIncrementalNodes(nodes); err != nil {
 		return nil, err
 	}

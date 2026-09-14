@@ -5,7 +5,7 @@
   <title>project alpha · 空间用量</title>
   <meta name="description" content="按容器和所属用户查看宿主机磁盘用量。">
   <link rel="stylesheet" href="/style.css">
-  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script>
+  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
 </head>
 <body>
 <section id="authPanel" class="auth-panel" hidden>
@@ -38,6 +38,10 @@
     </section>
     <section id="page-overview" class="platform-page">
       <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
+      <section class="agent-entry panel" data-admin aria-label="Agent 辅助分析">
+        <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>定位重点容器，区分挂载与可写层，整理数据资产、时间分布和清理候选。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
+        <div class="agent-entry-actions"><button id="generateReport" class="primary" disabled>生成空间报告</button><button id="viewReports">查看分析记录</button></div>
+      </section>
       <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先发现这台机器上的容器</h2><p id="firstScanHint">在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
       <div id="resultContent" hidden>
         <section id="storageOverview" class="panel storage-overview" aria-label="磁盘空间分布"></section>
@@ -113,6 +117,21 @@
   <ol id="resultLoadingStages" class="result-loading-stages"></ol>
   <p id="resultLoadingHint" class="form-note">取消后保留当前查看的结果，扫描记录仍可重新打开。</p>
   <div class="form-actions"><button id="cancelResultLoading" type="button" autofocus>取消读取</button></div>
+</dialog>
+<dialog id="agentDialog" class="agent-dialog" aria-labelledby="agentTitle">
+  <div class="dialog-heading"><div><span class="eyebrow">AGENT ANALYSIS</span><h2 id="agentTitle">空间消耗总报告</h2></div><button id="closeAgent" aria-label="关闭分析报告">✕</button></div>
+  <div class="agent-toolbar"><label>分析记录<select id="agentHistory"><option value="">暂无分析记录</option></select></label><button id="reloadReports">刷新记录</button><button id="downloadReport" disabled>导出 Markdown</button><button id="agentModelSettings">模型设置</button></div>
+  <p id="agentReportSource" class="form-note"></p>
+  <div class="agent-status-line"><strong id="agentRunStatus" role="status" aria-live="polite">准备分析</strong><button id="stopAgent" hidden>停止分析</button></div>
+  <p id="agentError" class="error-text" role="alert"></p>
+  <p id="agentEmpty" class="agent-empty">在空间用量页点击“生成空间报告”，Agent 会先定位占用大头，再按需补查目录，生成报告。分析在后台进行，可随时关闭此窗口。</p>
+  <div id="agentReports" class="agent-reports"></div>
+  <details id="agentActivity" class="agent-activity" hidden><summary>查看分析过程与证据 <span id="agentActivityCount"></span></summary><div id="agentActivityLog"></div></details>
+  <form id="agentFollowup" class="agent-followup" hidden>
+    <label for="agentQuestion">继续排查</label><textarea id="agentQuestion" rows="2" maxlength="4000" placeholder="例如：继续查看最大的可写层中有哪些数据集" required></textarea>
+    <div class="agent-suggestions"><button type="button" data-agent-question="继续梳理可写层的数据集和模型，按大小降序列出；明确已覆盖范围与未知项。">数据集与模型</button><button type="button" data-agent-question="补查重点数据资产的文件日期，按 90 天以内、90–180 天、180 天及以上 mtime 分组，各组内按实际占用降序；不要把 mtime 或 ctime 当创建时间。">按时间整理</button><button type="button" data-agent-question="整理可重建缓存、日志和编辑器检查点候选，列出负责人、精确路径、候选占用、证据和需要核实的条件，不执行清理。">清理候选清单</button></div>
+    <div class="form-actions"><button id="sendAgentQuestion" type="submit" class="primary">继续分析</button><small>只读取文件元数据；问题、路径及统计会发送至所配置的模型服务。</small></div>
+  </form>
 </dialog>
 <dialog id="containerDialog" class="container-dialog" aria-labelledby="detailTitle"><div class="dialog-heading"><div><span class="eyebrow">STORAGE EXPLORER / 存储分析</span><h2 id="detailTitle">容器详情</h2></div><button id="closeContainer" aria-label="关闭容器详情">✕</button></div><div id="detail"></div></dialog>
 <dialog id="deleteJobDialog" aria-labelledby="deleteJobTitle" aria-describedby="deleteJobHint"><h2 id="deleteJobTitle">删除扫描记录？</h2><p id="deleteJobSummary" class="form-note"></p><p id="deleteJobHint" class="form-note"></p><p class="form-note">仅清理平台保存的扫描数据，不会删除宿主机文件或容器。</p><p id="deleteJobError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closeDeleteJob" autofocus>取消</button><button type="button" id="confirmDeleteJob" class="danger">确认删除</button></div></dialog>

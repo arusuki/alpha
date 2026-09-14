@@ -1,4 +1,4 @@
-package storage
+package agent
 
 import (
 	"database/sql"
@@ -10,7 +10,7 @@ import (
 	"project-alpha/internal/platform"
 )
 
-type AgentConfig struct {
+type Config struct {
 	Protocol       string `json:"protocol"`
 	Endpoint       string `json:"endpoint"`
 	Model          string `json:"model"`
@@ -19,11 +19,11 @@ type AgentConfig struct {
 	TimeoutSeconds int    `json:"timeout_seconds"`
 }
 
-func defaultAgentConfig() AgentConfig {
-	return AgentConfig{Protocol: "responses", Endpoint: "https://api.openai.com/v1", MaxRounds: 12, TimeoutSeconds: 180}
+func defaultConfig() Config {
+	return Config{Protocol: "responses", Endpoint: "https://api.openai.com/v1", MaxRounds: 12, TimeoutSeconds: 180}
 }
 
-func (c AgentConfig) endpointURL() (string, error) {
+func (c Config) endpointURL() (string, error) {
 	if c.Protocol != "responses" && c.Protocol != "completions" {
 		return "", httpapi.NewError(400, "接口必须为 responses 或 completions")
 	}
@@ -49,7 +49,7 @@ func (c AgentConfig) endpointURL() (string, error) {
 	return u.String(), nil
 }
 
-func (c AgentConfig) validate() error {
+func (c Config) validate() error {
 	if _, err := c.endpointURL(); err != nil {
 		return err
 	}
@@ -62,10 +62,10 @@ func (c AgentConfig) validate() error {
 	return nil
 }
 
-func (d *Store) agentConfig() (AgentConfig, int64, error) {
+func (d *Store) agentConfig() (Config, int64, error) {
 	var raw string
 	var revision int64
-	var c AgentConfig
+	var c Config
 	err := d.SQL.QueryRow("SELECT value,revision FROM agent_settings WHERE id=1").Scan(&raw, &revision)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &c)
@@ -73,11 +73,11 @@ func (d *Store) agentConfig() (AgentConfig, int64, error) {
 	return c, revision, err
 }
 
-func publicAgentConfig(c AgentConfig, revision int64) object {
+func publicConfig(c Config, revision int64) object {
 	return object{"revision": revision, "value": object{"protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "max_rounds": c.MaxRounds, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != ""}}
 }
 
-func (d *Store) saveAgentConfig(fields map[string]json.RawMessage, actor string) (object, error) {
+func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (object, error) {
 	for k := range fields {
 		if k != "revision" && k != "value" {
 			return nil, httpapi.NewError(400, "未知配置字段")
@@ -155,5 +155,5 @@ func (d *Store) saveAgentConfig(fields map[string]json.RawMessage, actor string)
 	if err != nil {
 		return nil, err
 	}
-	return publicAgentConfig(c, revision+1), nil
+	return publicConfig(c, revision+1), nil
 }
