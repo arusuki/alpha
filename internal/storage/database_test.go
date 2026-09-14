@@ -117,3 +117,29 @@ func TestDatabaseUsesHotQueryIndexes(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotBranchUsesParentLookup(t *testing.T) {
+	db, err := openDatabase(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	// Both publication and SSE/polling must seek children by job and parent,
+	// rather than rescan the entire record for every node in the branch.
+	for _, suffix := range []string{
+		" SELECT path FROM branch",
+		" SELECT n.path,n.parent,n.value FROM snapshot_nodes n JOIN branch b ON n.path=b.path WHERE n.job_id=? ORDER BY n.parent,n.position",
+	} {
+		args := []any{"job", "/tmp", "job"}
+		if strings.Contains(suffix, "?") {
+			args = append(args, "job")
+		}
+		plan, err := platform.Rows(db.SQL, "EXPLAIN QUERY PLAN "+snapshotBranchCTE+suffix, args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := httpapi.JSONText(plan); !strings.Contains(text, "snapshot_node_parents (job_id=? AND parent=?)") {
+			t.Fatalf("recursive traversal does not seek by parent: %s", text)
+		}
+	}
+}

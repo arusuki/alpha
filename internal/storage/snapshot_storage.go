@@ -8,9 +8,12 @@ import (
 	"project-alpha/internal/httpapi"
 )
 
+// Keep the recursive frontier outside the node lookup. An ordinary JOIN lets
+// SQLite scan every node in the record for each descendant, holding up both
+// publication and changes reads (and cancellation waiting for their locks).
 const snapshotBranchCTE = `WITH RECURSIVE branch(path) AS (
  SELECT path FROM snapshot_nodes WHERE job_id=? AND path=?
- UNION ALL SELECT n.path FROM snapshot_nodes n JOIN branch b ON n.parent=b.path WHERE n.job_id=?
+ UNION ALL SELECT n.path FROM branch b CROSS JOIN snapshot_nodes n WHERE n.job_id=? AND n.parent=b.path
  )`
 
 // Update current nodes and ancestor totals atomically with the public revision.
