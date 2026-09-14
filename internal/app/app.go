@@ -15,6 +15,7 @@ import (
 	web "project-alpha/dist"
 	"project-alpha/internal/agent"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/process"
 	"project-alpha/internal/storage"
 )
 
@@ -38,6 +39,9 @@ func Run(ctx context.Context, args []string) error {
 	}
 	if len(args) > 0 && args[0] == "scan" {
 		return storage.ScanCLI(ctx, args[1:])
+	}
+	if len(args) > 0 && args[0] == "process" {
+		return process.RunCLI(ctx, args[1:])
 	}
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]

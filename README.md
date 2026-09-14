@@ -9,6 +9,7 @@
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
 - `internal/agent`：模型配置与凭据、Responses/Chat Completions 适配、分析会话、工具定义与编排，以及独立 API 和数据表。
+- `internal/process`：订阅 Tetragon 进程事件，维护并按容器导出活动进程森林。
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
 - `dist`：网页资源及 Go 嵌入声明；`tests`：前端回归和共享测试数据。Go 测试与所属包放在一起。
 
@@ -18,7 +19,7 @@ Web 的快照、变更读取和目录探索，以及 Agent 的查询工具，共
 
 ## 启动
 
-要求 Linux、Go 1.24+ 和 GCC；Docker 扫描需要本机 Docker CLI 及 daemon 访问权限。
+要求 Linux、Go 1.26+ 和 GCC；Docker 扫描需要本机 Docker CLI 及 daemon 访问权限。
 
 ```bash
 go build -o bin/project-alpha ./cmd/project-alpha
@@ -49,6 +50,24 @@ SQLite 保存账号、配置和任务；扫描结果保存在 `data/results/`。
 ```
 
 CLI 与 API 使用同一套配置校验：`max_depth` 为 0–32，`max_nodes` 为 100–100000，`docker_timeout` 为 5–3600 秒；扫描及排除目录必须为绝对路径。
+
+## 容器进程监控
+
+`process` 子命令订阅 Tetragon 的进程事件，维护每个容器的活动进程森林并导出 JSON，供前端展示容器内正在运行的进程及其命令行。
+
+```bash
+./bin/project-alpha process --duration 30s --output process-forest.json
+```
+
+需要本机运行 Tetragon agent，并具备访问 `/var/run/tetragon/tetragon.sock` 的权限，默认路径可用 `--socket` 修改。采集开始时先读取 Tetragon 进程缓存，因此采集前就已运行的进程也会出现在森林中；之后按 exec/exit 事件增删节点，进程退出后其子进程上移到最近的存活祖先。输出按容器分组，容器标识使用 Tetragon 记录的容器 ID（Docker 下为 15 位前缀）；`--host` 可一并导出没有容器标识的主机进程。
+
+没有 Tetragon 时，可用 `tetra getevents -o json` 导出的事件离线回放：
+
+```bash
+./bin/project-alpha process --events-file events.jsonl --output process-forest.json
+```
+
+`tests/fixtures/tetragon-events.jsonl` 是随仓库提供的回放样例，通过 `go run ./examples/process-events` 重新生成。
 
 ## 部署
 
