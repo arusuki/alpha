@@ -55,8 +55,9 @@ type physicalScan struct {
 	Backend           string            `json:"backend"`
 }
 type helperEvent struct {
-	Progress object        `json:"progress,omitempty"`
-	Result   *physicalScan `json:"result,omitempty"`
+	Progress        object        `json:"progress,omitempty"`
+	DirectoryUpdate *Node         `json:"directory_update,omitempty"`
+	Result          *physicalScan `json:"result,omitempty"`
 }
 
 // Empty controls are heartbeats. Only the receiver of the complete result may
@@ -209,7 +210,18 @@ func ServeScanHelper(ctx context.Context, input io.Reader, output io.Writer) err
 	received := make(chan struct{})
 	go watchHelperInput(ctx, decoder, cancel, helperHeartbeatTimeout, received)
 	encoder := json.NewEncoder(output)
-	progress := func(v object) error { return encoder.Encode(helperEvent{Progress: v}) }
+	progress := func(v object) error {
+		event := helperEvent{Progress: v}
+		if value, ok := v["directory_update"]; ok {
+			var valid bool
+			event.DirectoryUpdate, valid = value.(*Node)
+			if !valid || event.DirectoryUpdate == nil {
+				return fmt.Errorf("invalid directory update")
+			}
+			delete(v, "directory_update")
+		}
+		return encoder.Encode(event)
+	}
 	// The helper itself adds an overlay mount after host-side discovery. Read
 	// mountinfo again inside the chroot so its merged view is excluded too.
 	request.Mounts = append(request.Mounts, mountTable()...)
@@ -413,6 +425,16 @@ func scanViaDocker(ctx context.Context, request helperRequest, progress func(obj
 		var event helperEvent
 		if decodeErr = decoder.Decode(&event); decodeErr != nil {
 			break
+		}
+		// Decode directory trees directly into Nodes. Passing them through
+		// map[string]any would allocate every field and then require another
+		// JSON encode/decode before each incremental publication.
+		if event.DirectoryUpdate != nil {
+			if event.Progress == nil {
+				decodeErr = fmt.Errorf("helper directory update has no progress")
+				break
+			}
+			event.Progress["directory_update"] = event.DirectoryUpdate
 		}
 		if event.Progress != nil {
 			started = true

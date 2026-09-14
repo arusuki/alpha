@@ -45,7 +45,7 @@
 | `list_owners` | `offset, limit` | 用户去重用量与跨用户共享 |
 | `get_container` | `container` | 按完整 ID 或精确名称查询存储来源 |
 | `get_directory` | `path, offset, limit` | 查询已保存的目录明细 |
-| `scan_directory` | `path, revision, depth` | 在原记录上增量探索；版本必须匹配，depth 为 1–3 层 |
+| `scan_directory` | `path, revision, depth` | 在原记录上增量探索；版本必须匹配，depth 为 1–32 层 |
 
 分页最多 50 项。探索路径须为当前记录中已有的物理目录绝对路径，未知路径需要从已记录的父目录逐层探索；排除平台数据、虚拟文件系统及 Docker merged 视图。增量探索复用基线的后端和排除设置，使用当前保存的扫描模式；与 Web 的目录探索共用 worker、锁、版本校验和发布流程。结果直接更新原记录，Web 的快照、轮询和 SSE 可读取同一版本。所有查询结果携带 `revision` 和 `updated_at`；遇到版本冲突时重新查询，再决定是否继续探索。
 

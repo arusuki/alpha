@@ -45,10 +45,12 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 	}
 	before := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
 	var observations []*Snapshot
+	var published *Snapshot
 	final, err := expandDirectory(context.Background(), base, c, target, nil, func(next *Snapshot) error {
-		if err := p.db.publishDirectory(context.Background(), worker, plan, next, object{}, false); err != nil {
+		if err := p.db.publishDirectory(context.Background(), worker, plan, next, object{}, false, published); err != nil {
 			return err
 		}
+		published = next
 		job, err := p.db.job(worker)
 		if err != nil {
 			return err
@@ -69,18 +71,19 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 		assertChangesReconstruct(t, before, changes, current)
 		before = current
 		observations = append(observations, stored)
-		// Force another measurable checkpoint on this tiny fixture.
+		// A slow consumer must not immediately force another checkpoint on
+		// this tiny fixture when the callback itself exceeds the interval.
 		time.Sleep(510 * time.Millisecond)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(observations) < 2 {
-		t.Fatal("no intermediate directory updates")
+	if len(observations) != 1 {
+		t.Fatalf("expected one intermediate update without repeated slow publication, got %d", len(observations))
 	}
 	first := snapshotNodes(observations[0].Tree)[target]
-	last := snapshotNodes(observations[len(observations)-1].Tree)[target]
+	last := snapshotNodes(final.Tree)[target]
 	residual := func(n *Node) int64 {
 		bytes := n.Allocated
 		for _, child := range n.Children {
@@ -91,7 +94,7 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 	if residual(first) <= residual(last) || len(first.Children) >= len(last.Children) {
 		t.Fatal("gray historical block did not split progressively")
 	}
-	if err := p.db.publishDirectory(context.Background(), worker, plan, final, object{}, true); err != nil {
+	if err := p.db.publishDirectory(context.Background(), worker, plan, final, object{}, true, published); err != nil {
 		t.Fatal(err)
 	}
 	stored, err := p.db.readSnapshot(id)
@@ -155,7 +158,7 @@ func TestDirectoryCancellationRetainsPublishedObservation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	_, err := expandDirectory(ctx, base, c, target, nil, func(next *Snapshot) error {
-		if err := p.db.publishDirectory(ctx, worker, plan, next, object{}, false); err != nil {
+		if err := p.db.publishDirectory(ctx, worker, plan, next, object{}, false, nil); err != nil {
 			return err
 		}
 		cancel()

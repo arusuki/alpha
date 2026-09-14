@@ -393,6 +393,7 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 		return err
 	}
 	var result *Snapshot
+	publisher := &directoryPublisher{db: db, id: id, plan: plan}
 	if plan.BaseJobID != "" {
 		var base *Snapshot
 		base, err = db.readSnapshot(plan.BaseJobID)
@@ -400,8 +401,11 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 			err = fmt.Errorf("扫描记录已更新，增量任务未执行")
 		}
 		if err == nil {
+			publisher, err = db.newDirectoryPublisher(id, plan, base)
+		}
+		if err == nil {
 			result, err = expandDirectory(ctx, base, c, plan.IncrementalPath, progress, func(next *Snapshot) error {
-				return db.publishDirectory(ctx, id, plan, next, lastProgress, false)
+				return publisher.publish(ctx, next, lastProgress, false)
 			})
 		}
 	} else {
@@ -424,7 +428,7 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 			lastProgress["record_allocated"] = result.Tree.Allocated
 		}
 		lastProgress["current_containers"] = []scanContainer{}
-		err = db.publishDirectory(ctx, id, plan, result, lastProgress, true)
+		err = publisher.publish(ctx, result, lastProgress, true)
 	}
 	if err != nil && !errors.Is(err, context.Canceled) {
 		message := err.Error()

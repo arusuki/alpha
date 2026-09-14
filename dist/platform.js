@@ -1,5 +1,5 @@
 'use strict';
-const platform = {user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,deletedIDs:new Set(),deleteTarget:null,deleting:false};
+const platform = {user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,expandDepth:3,deletedIDs:new Set(),deleteTarget:null,deleting:false};
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
 const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
@@ -459,7 +459,7 @@ async function expandLeaf(path) {
   const id=snapshot.job_id,generation=platform.generation,revision=snapshot.revision;
   platform.expandStarting=path;platform.expandError=null;controls();
   try {
-    const job=await api(`/api/jobs/${encodeURIComponent(id)}/expand`,{method:'POST',body:JSON.stringify({path,revision})});
+    const job=await api(`/api/jobs/${encodeURIComponent(id)}/expand`,{method:'POST',body:JSON.stringify({path,revision,depth:platform.expandDepth})});
     if(generation!==platform.generation)return;
     platform.active=job;platform.jobs=[job,...platform.jobs.filter(j=>j.id!==job.id)];
     message('正在扫描此目录，已读到的明细会实时更新。');

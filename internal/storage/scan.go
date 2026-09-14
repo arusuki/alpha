@@ -73,7 +73,11 @@ type Scanner struct {
 }
 
 func within(path, root string) bool {
-	return path == root || strings.HasPrefix(path, strings.TrimRight(root, "/")+"/")
+	if path == root {
+		return true
+	}
+	root = strings.TrimRight(root, "/")
+	return len(path) > len(root) && path[len(root)] == '/' && strings.HasPrefix(path, root)
 }
 
 var mountEscape = regexp.MustCompile(`\\([0-7]{3})`)
@@ -297,12 +301,12 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 	detailLimits := [4]int{0, 128, 512, 1024}
 	detailCounts := map[string][4]int{}
 	stack := []frame{first}
-	lastUpdate := time.Time{}
+	nextUpdate := time.Time{}
 	update := func() error {
-		if !s.StreamDirectory || s.Progress == nil || time.Since(lastUpdate) < 500*time.Millisecond {
+		if !s.StreamDirectory || s.Progress == nil || time.Now().Before(nextUpdate) {
 			return nil
 		}
-		lastUpdate = time.Now()
+		started := time.Now()
 		// Stack frames contain completed children. Fold the in-flight branch
 		// into a detached observation without modifying the scanner's totals.
 		var branch *Node
@@ -319,7 +323,13 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 			}
 			branch = n
 		}
-		return s.Progress(object{"phase": "directory", "path": stack[len(stack)-1].node.Path, "entries": s.Visited, "allocated": s.Allocated, "directory_update": branch})
+		err := s.Progress(object{"phase": "directory", "path": stack[len(stack)-1].node.Path, "entries": s.Visited, "allocated": s.Allocated, "directory_update": branch})
+		// Start the interval after publication. Large observations can take
+		// longer than the interval themselves; measuring from their start
+		// would publish again immediately and starve filesystem traversal.
+		// Reserve at least nine times the publication cost for useful work.
+		nextUpdate = time.Now().Add(max(500*time.Millisecond, 9*time.Since(started)))
+		return err
 	}
 	defer func() {
 		for _, f := range stack {

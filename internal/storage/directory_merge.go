@@ -43,24 +43,21 @@ func applyDirectoryReplacement(n *Node, path string, replacement *Node) *Node {
 }
 
 // Preserve uncertain outside references until their inode identity can be verified.
-func preserveSharedClaims(base *Snapshot, physical *physicalScan, path string) *Node {
-	old := snapshotNodes(base.Tree)
-	claims := map[string]bool{}
-	for _, n := range old {
-		if !within(n.Path, path) && n.Reference != "" && within(n.Reference, path) {
-			claims[n.Reference] = true
-		}
+func (m *directoryMerge) preserveSharedClaims(physical *physicalScan) *Node {
+	root := physical.Tree.Children[0]
+	if len(m.claims) == 0 && root.Errors == 0 {
+		return root
 	}
-	prior, observed := map[string]InodeRecord{}, map[string]InodeRecord{}
-	for _, r := range base.Accounting {
-		prior[r.Path] = r
-	}
+	old, claims, prior := m.baseNodes, m.claims, m.priorClaims
+	observed := make(map[string]InodeRecord, len(claims))
 	for _, r := range physical.Accounting {
-		observed[r.Path] = r
+		if claims[r.Path] {
+			observed[r.Path] = r
+		}
 	}
 	var visit func(*Node) *Node
 	visit = func(source *Node) *Node {
-		n := copyNode(source)
+		n := source
 		previous := old[n.Path]
 		before, after := prior[n.Path], observed[n.Path]
 		uncertain := claims[n.Path] && (before.Path == "" || before.Device != after.Device || before.Inode != after.Inode)
@@ -76,16 +73,25 @@ func preserveSharedClaims(base *Snapshot, physical *physicalScan, path string) *
 		}
 		for i, child := range n.Children {
 			replacement := visit(child)
+			if replacement == child {
+				continue
+			}
+			if n == source {
+				n = copyNode(source)
+			}
 			adjustDirectoryTotals(n, child, replacement)
 			n.Children[i] = replacement
 		}
-		if previous != nil {
+		if previous != nil && len(claims) > 0 {
 			present := map[string]bool{}
 			for _, child := range n.Children {
 				present[child.Path] = true
 			}
 			for _, child := range previous.Children {
 				if claims[child.Path] && !present[child.Path] {
+					if n == source {
+						n = copyNode(source)
+					}
 					kept := copyNode(child)
 					kept.SizeUnknown = true
 					kept.Reason = "此路径已消失，外部引用尚未核对；保留历史占用"

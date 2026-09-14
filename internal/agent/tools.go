@@ -29,7 +29,7 @@ func agentToolSpecs() []toolSpec {
 		{"list_owners", "按去重归属用量查询用户。shared 为跨用户引用，不能加进用户独占排行。", page()},
 		{"get_container", "查看一个容器的可写层、挂载、日志源及扫描状态，取得可用于下钻的物理路径。", object{"container": str("容器完整 ID 或精确名称")}},
 		{"get_directory", "从当前记录中按实际占用列出目录明细，包含 Web 和工具已发布的增量探索结果。不扫描；折叠或未记录时会明确提示。", directory},
-		{"scan_directory", "在当前记录上增量探索已有物理目录，更新原记录并返回新版本和文件统计；Web 页面同步可见。先读取目录取得 revision，仅在明细不足或需要刷新时调用。", object{"path": str("当前记录中已有的物理目录绝对路径"), "revision": object{"type": "integer", "minimum": 0, "description": "最近一次记录查询返回的 revision；冲突时重新读取"}, "depth": object{"type": "integer", "minimum": 1, "maximum": 3, "description": "本次保留的目录层数，1–3"}}},
+		{"scan_directory", "在当前记录上增量探索已有物理目录，更新原记录并返回新版本和文件统计；Web 页面同步可见。先读取目录取得 revision，仅在明细不足或需要刷新时调用。", object{"path": str("当前记录中已有的物理目录绝对路径"), "revision": object{"type": "integer", "minimum": 0, "description": "最近一次记录查询返回的 revision；冲突时重新读取"}, "depth": object{"type": "integer", "minimum": 1, "maximum": 32, "description": "本次保留的目录层数，1–32"}}},
 	}
 }
 func agentToolDefinitions(protocol string) []object {
@@ -98,7 +98,7 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 	}
 
 	if name == "scan_directory" {
-		if args.Revision < 0 || args.Depth < 1 || args.Depth > 3 {
+		if args.Revision < 0 || args.Depth < 1 || args.Depth > 32 {
 			return nil, fmt.Errorf("记录版本或探索深度无效")
 		}
 		if t.detailScans >= 6 {

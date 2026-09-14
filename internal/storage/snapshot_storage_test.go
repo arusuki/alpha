@@ -143,7 +143,7 @@ func TestDirectoryProcessCleanupPreservesPublishedResults(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := p.db.publishDirectory(context.Background(), worker, plan, partial, object{}, false); err != nil {
+			if err := p.db.publishDirectory(context.Background(), worker, plan, partial, object{}, false, nil); err != nil {
 				t.Fatal(err)
 			}
 			if cancelled {
@@ -190,7 +190,7 @@ func TestDirectoryPublicationRollbackKeepsPreviousNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.db.publishDirectory(context.Background(), worker, plan, result, object{}, false); err != nil {
+	if err := p.db.publishDirectory(context.Background(), worker, plan, result, object{}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	previous, _ := p.db.readSnapshot(id)
@@ -203,11 +203,68 @@ func TestDirectoryPublicationRollbackKeepsPreviousNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 	result.UpdatedAt = time.Now().String()
-	if err := p.db.publishDirectory(context.Background(), worker, plan, result, object{}, false); err == nil {
+	if err := p.db.publishDirectory(context.Background(), worker, plan, result, object{}, false, previous); err == nil {
 		t.Fatal("failed transaction was published")
 	}
 	stored, err := p.db.readSnapshot(id)
 	if err != nil || httpapi.JSONText(stored) != httpapi.JSONText(previous) {
 		t.Fatalf("failed publication modified saved nodes: %v", err)
+	}
+}
+
+func TestDirectoryPublicationSkipsUnchangedRows(t *testing.T) {
+	p := newTestPlatform(t)
+	base, c, target, _ := incrementalFixture(t)
+	c.MaxDepth = 8
+	id, worker := platform.RandomHex(16), platform.RandomHex(16)
+	plan := scanPlan{Config: c, BaseJobID: id, IncrementalPath: target}
+	if _, err := p.db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,config) VALUES(?,'completed','manual','test',1,?),(?,'running','incremental','test',2,?)", id, httpapi.JSONText(c), worker, httpapi.JSONText(plan)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := expandDirectory(context.Background(), base, c, target, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.db.publishDirectory(context.Background(), worker, plan, first, object{}, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	unchanged := filepath.Join(target, "a", "b", "c", "d", "e", "file.bin")
+	// BEFORE INSERT fires even for an UPSERT whose WHERE skips the update.
+	// This proves unchanged nodes avoid executing the statement altogether.
+	if _, err := p.db.SQL.Exec(`CREATE TRIGGER reject_unchanged_insert BEFORE INSERT ON snapshot_nodes
+ WHEN NEW.path='` + strings.ReplaceAll(unchanged, "'", "''") + `' BEGIN SELECT RAISE(ABORT,'executed SQL for unchanged node'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(target, "live.bin")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(target, "new.bin"), make([]byte, 32768))
+	second, err := expandDirectory(context.Background(), first, c, target, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshotNodes(first.Tree)[unchanged] == snapshotNodes(second.Tree)[unchanged] {
+		t.Fatal("fixture must rescan into new node objects")
+	}
+	if err := p.db.publishDirectory(context.Background(), worker, plan, second, object{}, false, first); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := p.db.readSnapshot(id)
+	if err != nil || httpapi.JSONText(stored.Tree) != httpapi.JSONText(second.Tree) {
+		t.Fatalf("delta write lost updated counters, deletion or child positions: %v", err)
+	}
+	if len(stored.Accounting) != len(second.Accounting) {
+		t.Fatal("delta write lost inode identities")
+	}
+	if err := p.db.validateIncrementalRequest(id, target, second.Revision); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{unchanged, target + "/missing", "relative", target + "/../other"} {
+		if err := p.db.validateIncrementalRequest(id, path, second.Revision); err == nil {
+			t.Fatalf("admission accepted invalid target: %s", path)
+		}
+	}
+	if err := p.db.validateIncrementalRequest(id, target, first.Revision); err == nil {
+		t.Fatal("admission accepted stale revision")
 	}
 }

@@ -131,6 +131,38 @@ func TestIncrementalGrowthShrinkAndRepeatedDetail(t *testing.T) {
 		}
 	}
 }
+
+func TestIncrementalDepthRetainsDetailInOneTraversal(t *testing.T) {
+	base, c, target, _ := incrementalFixture(t)
+	for _, depth := range []int{1, 3, 8, 32} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			c.MaxDepth = depth
+			result, err := expandDirectory(context.Background(), base, c, target, nil, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertSnapshotAccounting(t, result)
+			if result.Tree.Allocated != base.Tree.Allocated || result.Tree.Files != base.Tree.Files {
+				t.Fatal("display depth changed measured totals")
+			}
+			if got := numberInt64(result.Scan["last_incremental"].(object)["visited_entries"]); got != 8 {
+				t.Fatalf("depth %d traversed %d entries instead of measuring each entry once", depth, got)
+			}
+			nodes := snapshotNodes(result.Tree)
+			path := target
+			for i, name := range []string{"a", "b", "c", "d", "e", "file.bin"} {
+				path = filepath.Join(path, name)
+				if (nodes[path] != nil) != (i < depth) {
+					t.Fatalf("wrong retained depth at %s", path)
+				}
+			}
+			analysis := result.DirectoryAnalyses[target].Analysis
+			if analysis == nil || len(analysis.Largest) != 2 {
+				t.Fatal("one traversal did not include deep file analysis")
+			}
+		})
+	}
+}
 func TestIncrementalHardlinksDoNotExpandScope(t *testing.T) {
 	for _, newLink := range []bool{false, true} {
 		t.Run(map[bool]string{false: "existing", true: "new"}[newLink], func(t *testing.T) {
@@ -248,7 +280,7 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 		t.Fatal("private inode index leaked")
 	}
 	body := object{"path": dir, "revision": 0}
-	for _, depth := range []any{0, 4, nil, "2"} {
+	for _, depth := range []any{0, 33, nil, "2", 1.5, -1} {
 		p.expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": dir, "revision": 0, "depth": depth}, nil)
 	}
 	p.expect(403, "POST", "/api/jobs/"+id+"/expand", body, map[string]string{"X-CSRF-Token": "bad"})
@@ -310,7 +342,7 @@ func TestIncrementalCancelledPublicationLeavesHeadUntouched(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := scanPlan{BaseJobID: id, IncrementalPath: target}
-	if err = p.db.publishDirectory(context.Background(), eid, plan, result, object{}, true); !errors.Is(err, context.Canceled) {
+	if err = p.db.publishDirectory(context.Background(), eid, plan, result, object{}, true, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel publish: %v", err)
 	}
 	current, err := p.db.readSnapshot(id)
@@ -323,7 +355,7 @@ func TestIncrementalCancelledPublicationLeavesHeadUntouched(t *testing.T) {
 	// A stale optimistic version rolls back both job completion and the head.
 	p.db.SQL.Exec("UPDATE jobs SET status='running' WHERE id=?", eid)
 	plan.BaseRevision = 4
-	if err = p.db.publishDirectory(context.Background(), eid, plan, result, object{}, true); err == nil {
+	if err = p.db.publishDirectory(context.Background(), eid, plan, result, object{}, true, nil); err == nil {
 		t.Fatal("stale update published")
 	}
 	j, _ := p.db.job(eid)
@@ -386,15 +418,25 @@ func TestInspectDirectoriesReusesDockerHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	empty := httpapi.JSONText(helperEvent{Result: &physicalScan{Tree: &Node{Path: "@root", Kind: "root", Children: []*Node{}}, Backend: "docker", CanonicalPaths: map[string]string{}}})
-	frame := httpapi.JSONText(helperEvent{Result: expected})
+	frame := httpapi.JSONText(helperEvent{Progress: object{"phase": "directory", "entries": 2}, DirectoryUpdate: expected.Tree.Children[0]}) + "\n" + httpapi.JSONText(helperEvent{Result: expected})
 	safeFrame := strings.ReplaceAll(frame, "'", "'\"'\"'")
 	mustWrite(t, scriptPath, []byte(strings.Replace(string(script), empty, safeFrame, 1)))
-	input := DirectoryInspection{Paths: []string{dir}, RetainPaths: []string{filepath.Join(dir, "data.bin")}, Seed: []InodeRecord{{Device: 1, Inode: 2, Path: "/outside"}}}
-	actual, err := InspectDirectories(context.Background(), c, input, nil)
+	input := DirectoryInspection{StreamDirectory: true, Paths: []string{dir}, RetainPaths: []string{filepath.Join(dir, "data.bin")}, Seed: []InodeRecord{{Device: 1, Inode: 2, Path: "/outside"}}}
+	updates := 0
+	actual, err := InspectDirectories(context.Background(), c, input, func(v object) error {
+		if value := v["directory_update"]; value != nil {
+			node, ok := value.(*Node)
+			if !ok || httpapi.JSONText(node) != httpapi.JSONText(expected.Tree.Children[0]) {
+				t.Fatal("helper did not decode a typed directory observation")
+			}
+			updates++
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if actual.Backend != "docker" || actual.Accounting == nil || actual.Tree.Allocated != expected.Tree.Allocated {
+	if actual.Backend != "docker" || actual.Accounting == nil || actual.Tree.Allocated != expected.Tree.Allocated || updates != 1 {
 		t.Fatal("helper result not reused")
 	}
 	raw, err := os.ReadFile(filepath.Join(fixture, "request"))

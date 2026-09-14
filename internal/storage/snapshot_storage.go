@@ -1,11 +1,9 @@
 package storage
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
-
-	"project-alpha/internal/httpapi"
+	"maps"
 )
 
 // Keep the recursive frontier outside the node lookup. An ordinary JOIN lets
@@ -16,91 +14,19 @@ const snapshotBranchCTE = `WITH RECURSIVE branch(path) AS (
  UNION ALL SELECT n.path FROM branch b CROSS JOIN snapshot_nodes n WHERE n.job_id=? AND n.parent=b.path
  )`
 
-// Update current nodes and ancestor totals atomically with the public revision.
-func storeSnapshot(tx *sql.Tx, id, path string, result *Snapshot) error {
-	var exists int
-	if err := tx.QueryRow("SELECT count(*) FROM snapshot_records WHERE job_id=?", id).Scan(&exists); err != nil {
-		return err
+// Children are stored separately; changing a child does not rewrite siblings or
+// a directory row whose own counters stayed the same. A fresh scan can also
+// produce equal values at new addresses, which is common when refreshing.
+func sameStoredNode(a, b *Node) bool {
+	if a == b {
+		return true
 	}
-	metadata := *result
-	metadata.Tree = nil
-	identities := map[string]InodeRecord{}
-	for _, record := range result.Accounting {
-		identities[record.Path] = record
-	}
-	// Identity records belong to their node, so unchanged directories never
-	// cause their entire inode ledger to be serialized and written again.
-	metadata.Accounting = nil
-	if _, err := tx.Exec(`INSERT INTO snapshot_records(job_id,revision,root_path,metadata) VALUES(?,?,?,?)
- ON CONFLICT(job_id) DO UPDATE SET revision=excluded.revision,metadata=excluded.metadata`, id, result.Revision, result.Tree.Path, httpapi.JSONText(&metadata)); err != nil {
-		return err
-	}
-	write, err := tx.Prepare(`INSERT INTO snapshot_nodes(job_id,path,parent,position,value,identity) VALUES(?,?,?,?,?,?)
- ON CONFLICT(job_id,path) DO UPDATE SET parent=excluded.parent,position=excluded.position,value=excluded.value,identity=excluded.identity
- WHERE parent<>excluded.parent OR position<>excluded.position OR value<>excluded.value OR identity IS NOT excluded.identity`)
-	if err != nil {
-		return err
-	}
-	defer write.Close()
-	writeNode := func(n *Node, parent string, position int) error {
-		value := *n
-		value.Children = nil
-		var identity any
-		if record, ok := identities[n.Path]; ok {
-			identity = httpapi.JSONText(record)
-		}
-		_, err := write.Exec(id, n.Path, parent, position, httpapi.JSONText(&value), identity)
-		return err
-	}
-	old := map[string]bool{}
-	if exists != 0 {
-		rs, err := tx.Query(snapshotBranchCTE+` SELECT path FROM branch`, id, path, id)
-		if err != nil {
-			return err
-		}
-		for rs.Next() {
-			var p string
-			if err := rs.Scan(&p); err != nil {
-				rs.Close()
-				return err
-			}
-			old[p] = true
-		}
-		err = rs.Err()
-		rs.Close()
-		if err != nil {
-			return err
-		}
-		if !old[path] {
-			return fmt.Errorf("目录记录不存在：%s", path)
-		}
-	}
-	var visit func(*Node, string, int, bool) error
-	visit = func(n *Node, parent string, position int, branch bool) error {
-		branch = branch || n.Path == path
-		if !branch && n.Path != result.Tree.Path && !within(path, n.Path) {
-			return nil
-		}
-		if err := writeNode(n, parent, position); err != nil {
-			return err
-		}
-		delete(old, n.Path)
-		for i, child := range n.Children {
-			if err := visit(child, n.Path, i, branch); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if err := visit(result.Tree, "", 0, exists == 0); err != nil {
-		return err
-	}
-	for p := range old {
-		if _, err := tx.Exec("DELETE FROM snapshot_nodes WHERE job_id=? AND path=?", id, p); err != nil {
-			return err
-		}
-	}
-	return nil
+	return a != nil && b != nil && a.Scanning == b.Scanning && a.SizeUnknown == b.SizeUnknown &&
+		a.Name == b.Name && a.Path == b.Path && a.Kind == b.Kind &&
+		a.Allocated == b.Allocated && a.Apparent == b.Apparent && a.Files == b.Files && a.Errors == b.Errors &&
+		a.Omitted == b.Omitted && a.Reference == b.Reference && a.Reason == b.Reason &&
+		a.Excluded == b.Excluded && a.PermissionDenied == b.PermissionDenied && a.OmittedReferences == b.OmittedReferences &&
+		(a.DeviceAllocated == nil) == (b.DeviceAllocated == nil) && maps.Equal(a.DeviceAllocated, b.DeviceAllocated)
 }
 
 func (d *Store) storedSnapshot(id string) (*Snapshot, error) {

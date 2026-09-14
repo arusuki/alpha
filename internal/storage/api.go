@@ -136,7 +136,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			if len(value) == 3 {
 				raw, ok := value["depth"]
 				if !ok || string(raw) == "null" || json.Unmarshal(raw, &depth) != nil {
-					return failure(httpapi.NewError(400, "每次分析深度必须为 1–3 层"))
+					return failure(httpapi.NewError(400, "每次分析深度必须为 1–32 层"))
 				}
 			}
 			job, err := s.Service.Explore(user.Username, id, httpapi.FieldString(value, "path"), revision, depth)
