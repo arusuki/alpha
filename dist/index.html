@@ -2,32 +2,87 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>project alpha · 空间用量</title>
-  <meta name="description" content="按容器和所属用户查看宿主机磁盘用量。">
+  <title>project alpha · 总面板</title>
+  <meta name="description" content="在一个工作台管理宿主机存储、容器进程与 Agent。">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/workspace.css">
+  <link rel="stylesheet" href="/auth.css">
+  <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
+  <script src="/dashboard.js" defer></script><script src="/process.js" defer></script>
 </head>
 <body>
-<section id="authPanel" class="auth-panel" hidden>
-  <a class="brand" href="/">project <b>alpha</b><span class="alpha-mark" aria-hidden="true">α</span></a>
-  <h1 id="authTitle">登录 project alpha</h1><p id="authHint">查看这台机器的容器与用户磁盘用量。</p>
-  <form id="authForm"><label>账号<input id="authUsername" autocomplete="username" required minlength="3" maxlength="48" pattern="[A-Za-z0-9_.-]+"></label><label>密码<input id="authPassword" type="password" autocomplete="current-password" required maxlength="256"></label><p id="authError" role="alert"></p><button id="authSubmit" class="primary" type="submit">登录</button></form>
+<section id="authPanel" class="auth-panel" data-phase="ready" aria-label="project alpha 登录" hidden>
+  <header class="auth-header">
+    <a class="auth-wordmark" href="/" aria-label="project alpha 首页"><span class="auth-brand-dot" aria-hidden="true"></span>project <b>alpha</b><span class="auth-brand-slash" aria-hidden="true">/</span></a>
+    <span class="auth-header-note">A LITTLE CLARITY. A LOT OF CONTROL.</span>
+    <button id="authSkip" class="auth-skip" type="button" hidden>跳过动画 <span aria-hidden="true">↗</span></button>
+  </header>
+  <div class="auth-emblem" aria-hidden="true">
+    <div class="auth-orbit"></div>
+    <span class="auth-coordinate auth-coordinate-top">FIG. 01 — THE BEGINNING</span>
+    <span class="auth-cross auth-cross-top">+</span><span class="auth-cross auth-cross-bottom">+</span>
+    <svg class="auth-alpha" viewBox="0 0 620 500" fill="none">
+      <path id="authAlphaGuide" d="M 420 150 C 371 107 283 104 215 162 C 153 215 127 310 149 352 C 178 413 263 389 333 293 C 377 234 419 158 439 117 C 417 191 379 298 408 349 C 428 385 464 376 490 339"/>
+      <path id="authAlphaInk" class="auth-alpha-ink"/>
+      <circle id="authAlphaTip" class="auth-alpha-tip" r="5" cx="420" cy="150"/>
+    </svg>
+    <span class="auth-coordinate auth-coordinate-bottom">α &nbsp;/&nbsp; ALPHA</span>
+  </div>
+  <div class="auth-layout">
+    <div class="auth-story">
+      <span class="auth-kicker"><span></span> THE ART OF CLARITY</span>
+      <h2>一切，始于 <em>alpha.</em></h2>
+      <p>让复杂归于有序。<br>你的主机，从此一目了然。</p>
+      <div class="auth-modules"><span>存储</span><i>/</i><span>进程</span><i>/</i><span>智能分析</span></div>
+    </div>
+    <div id="authCard" class="auth-card">
+      <div class="auth-card-top"><span id="authEyebrow">YOUR WORKSPACE AWAITS</span><span aria-hidden="true">↗</span></div>
+      <h1 id="authTitle">欢迎回来。</h1>
+      <p id="authHint">登录，回到你的主机工作台。</p>
+      <form id="authForm">
+        <label for="authUsername"><span>账号 <small>USERNAME</small></span><input id="authUsername" autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="输入你的账号" required minlength="3" maxlength="48" pattern="[A-Za-z0-9_.-]+"></label>
+        <label for="authPassword"><span>密码 <small>PASSWORD</small></span><input id="authPassword" type="password" autocomplete="current-password" placeholder="输入你的密码" required maxlength="256" aria-describedby="authPasswordHint"></label>
+        <p id="authPasswordHint" class="auth-password-hint" hidden>请设置至少 12 位密码。</p>
+        <p id="authError" role="alert"></p>
+        <button id="authSubmit" class="primary" type="submit">进入工作台</button>
+      </form>
+      <div class="auth-card-foot"><svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="5" y="9" width="10" height="8" rx="2"/><path d="M7 9V6a3 3 0 0 1 6 0v3M10 12v2"/></svg><span>你的主机。你的空间。你的掌控。</span></div>
+    </div>
+  </div>
+  <div class="auth-intro-caption" aria-hidden="true"><span>EVERYTHING BEGINS WITH</span><strong>alpha.</strong></div>
+  <footer class="auth-footer"><span>PROJECT ALPHA <i>/</i> 主机工作台</span><button id="authReplay" class="auth-replay" type="button">重播开屏 <span aria-hidden="true">↺</span></button><span class="auth-footer-right">SIMPLICITY, BY DESIGN.</span></footer>
 </section>
 <main id="console" class="app-shell" hidden>
   <aside class="sidebar">
     <a class="brand" href="/" aria-label="project alpha 首页">project <b>alpha</b><span class="alpha-mark" aria-hidden="true">α</span></a>
-    <span class="nav-label">工作台</span>
+    <span class="nav-label">工作空间 <span class="nav-caption">WORKSPACE</span></span>
     <nav class="platform-nav" aria-label="平台导航">
-      <button class="active" data-page="overview"><span aria-hidden="true">▦</span>空间用量</button>
-      <button data-page="history"><span aria-hidden="true">◷</span>扫描记录</button>
-      <button data-page="scan-settings" data-admin><span aria-hidden="true">☷</span>扫描配置</button>
-      <button data-page="settings"><span aria-hidden="true">⚙</span>设置</button>
+      <button class="active" data-page="dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-dashboard"/></svg>总面板</button>
+      <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
+      <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
+      <button data-page="agent-settings" data-admin><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
+      <button class="account-nav" data-page="settings"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>账号管理</button>
     </nav>
-    <div class="sidebar-bottom"><span class="nav-label">当前账号</span><div id="sessionControls" hidden><span id="sessionUser"></span><div class="session-actions"><button id="logoutButton">退出</button></div></div><p>单机容器监控 <span>/ 磁盘</span></p></div>
+    <div class="sidebar-note"><span class="status-dot"></span><span>一个工作台，掌握整台主机<small>存储 · 进程 · 智能分析</small></span></div>
+    <div class="sidebar-bottom"><span class="nav-label">当前账号</span><div id="sessionControls" hidden><span id="sessionUser"></span><div class="session-actions"><button id="logoutButton">退出登录 ↗</button></div></div><p>project alpha <span>/ 主机工作台</span></p></div>
   </aside>
   <div class="main-content">
-    <header class="heading"><div><div class="eyebrow" id="pageEyebrow">SPACE USAGE</div><h1 id="pageTitle">空间用量</h1><p id="hostInfo">读取扫描记录中…</p></div><div class="actions" id="scanActions"><button id="latestResult" hidden>返回最新结果</button><button id="refresh">刷新</button><button id="startScan" class="primary" data-admin>开始扫描</button></div></header>
+    <div class="workspace-topbar"><span>工作空间 <span aria-hidden="true">/</span> <strong id="moduleCrumb">总面板</strong></span><span id="workspaceDate"></span></div>
+    <header class="heading"><div><div class="eyebrow" id="pageEyebrow">WORKSPACE OVERVIEW</div><h1 id="pageTitle" tabindex="-1">总面板</h1><p id="pageDescription">主机的每个侧面，都在这里。</p><p id="hostInfo" hidden>读取扫描记录中…</p></div><div class="actions" id="scanActions" hidden><button id="latestResult" hidden>返回最新结果</button><button id="refresh">刷新</button><button id="startScan" class="primary" data-admin>开始扫描</button></div><button id="dashboardRefresh">刷新状态 ↻</button></header>
     <div id="message" role="status" aria-live="polite" hidden></div>
+    <section id="page-dashboard" class="platform-page">
+      <div class="welcome-panel"><div class="welcome-copy"><span class="welcome-label"><span class="status-dot"></span> PROJECT ALPHA WORKSPACE</span><h2>你好，<span id="welcomeUser">管理员</span>。<br>让主机管理，更有条理。</h2><p>看清空间去向，追踪运行进程，<br>把复杂的分析交给 Agent。</p><button class="primary" data-page="overview">进入存储工作台 <span aria-hidden="true">↗</span></button></div><img class="workspace-art" src="/workspace-art.png" alt="由存储块、进程分支与智能分析组成的扁平插画" width="480" height="320"></div>
+      <div class="section-heading module-heading"><div><span class="eyebrow">YOUR MODULES</span><h2>选择一个模块，开始工作</h2></div><span class="section-caption">统一入口 · 各司其职</span></div>
+      <div class="module-grid">
+        <button class="module-card module-storage" data-page="overview"><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></span><span class="module-number">01 / STORAGE</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>存储</strong><span class="module-description">从整盘到目录，看清每一份空间占用。</span><span class="module-tags">空间用量 <i>·</i> 扫描记录 <i>·</i> 扫描配置</span><span class="module-card-bottom"><span id="dashboardStorageStatus">正在读取扫描状态</span><span>打开模块 →</span></span></button>
+        <button class="module-card module-process" data-page="processes"><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg></span><span class="module-number">02 / PROCESSES</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>进程管理</strong><span class="module-description">追踪容器里的进程，理清运行关系。</span><span class="module-tags">活动进程 <i>·</i> 父子关系 <i>·</i> 命令行</span><span class="module-card-bottom"><span>按需查看实时进程</span><span>打开模块 →</span></span></button>
+        <button class="module-card module-agent" data-page="agent-settings" data-admin><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg></span><span class="module-number">03 / AGENT</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>Agent 设置</strong><span class="module-description">连接你的模型，让分析成为日常助力。</span><span class="module-tags">模型服务 <i>·</i> API Key <i>·</i> 分析参数</span><span class="module-card-bottom"><span>统一管理分析能力</span><span>配置 Agent →</span></span></button>
+      </div>
+      <div class="dashboard-bottom"><section class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT ACTIVITY</span><h2>最近扫描</h2></div><button class="text-button" data-page="history">全部记录 ↗</button></div><div id="dashboardRecent" class="recent-list"><p class="dashboard-empty">正在读取记录…</p></div></section><section class="panel glance-panel"><span class="eyebrow">AT A GLANCE</span><h2>存储速览</h2><div class="glance-value"><strong id="dashboardAllocated">—</strong><span>最近完整扫描 · 实际占用</span></div><div class="glance-row"><span>当前扫描</span><strong id="dashboardTask">正在读取</strong></div><div class="glance-row"><span>扫描计划</span><strong id="dashboardSchedule">—</strong></div><p id="dashboardUpdated">扫描完成后，统计会出现在这里。</p></section></div>
+    </section>
+    <nav id="storageNav" class="module-tabs" aria-label="存储模块导航" hidden><button data-page="overview">空间用量</button><button data-page="history">扫描记录</button><button data-page="scan-settings" data-admin>扫描配置</button></nav>
+    <div id="storageMonitor" hidden>
     <section id="taskMonitor" class="task-monitor" aria-label="扫描进度" hidden>
       <div class="task-heading"><div><span class="task-indicator" aria-hidden="true"></span><h2 id="taskStatus">暂无扫描任务</h2><span id="taskPhase" class="task-phase" role="status"></span></div><button id="cancelScan" data-admin hidden>取消扫描</button></div>
       <div class="task-current"><strong id="taskTarget" role="status"></strong><span id="taskContainers"></span></div>
@@ -36,7 +91,8 @@
       <div class="task-details"><p id="taskProgress"></p><p id="taskCapacityNote"></p></div>
       <p id="taskPath" class="mono"></p>
     </section>
-    <section id="page-overview" class="platform-page">
+    </div>
+    <section id="page-overview" class="platform-page" hidden>
       <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
       <section class="agent-entry panel" data-admin aria-label="Agent 辅助分析">
         <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>定位重点容器，区分挂载与可写层，整理数据资产、时间分布和清理候选。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
@@ -82,17 +138,15 @@
 <div class="form-grid three"><label>明细深度<input id="cfgDepth" type="number" min="0" max="32" required></label><label>明细节点预算<input id="cfgNodes" type="number" min="100" max="100000" required></label><label>Docker 操作超时（秒）<input id="cfgTimeout" type="number" min="5" max="3600" required></label><label>容器所属用户标签<input id="cfgOwnerLabel" maxlength="128" required></label><label>定时扫描间隔（分钟）<input id="cfgInterval" type="number" min="0" max="10080" required><small>0 为关闭，启用时至少 5 分钟</small></label></div>
 <p class="form-note">限制明细深度不会减少统计总量。平台数据目录自动排除。首次启用定时扫描会启动一次扫描，此后在上次任务结束后按间隔执行。</p><div class="form-actions"><button id="saveSettings" class="primary" type="submit">保存扫描配置</button><span id="settingsStatus" role="status"></span></div></form></section>
 <section id="page-settings" class="platform-page" hidden>
-  <nav class="settings-nav" aria-label="设置分类">
-    <button id="settingsAccountsTab" aria-controls="settings-accounts" aria-current="page">账号管理</button>
-    <button id="settingsModelTab" aria-controls="settings-model" data-admin>API Key 与模型</button>
-  </nav>
   <div id="settings-accounts" class="settings-stack">
     <section class="management-panel"><div class="section-heading"><div><h2>当前账号</h2><p>查看登录身份，管理账号密码。</p></div><button id="passwordButton">修改密码</button></div><div class="account-summary"><strong id="settingsUsername"></strong><span id="settingsRole" class="pill"></span></div></section>
 <section class="management-panel" data-admin><div class="section-heading"><div><h2>平台账号</h2><p>管理员可配置并发起任务；只读账号可查看空间用量与扫描记录。账号权限覆盖本平台管理的整台宿主机。</p></div></div>
 <form id="createUserForm" class="user-form"><label>新账号<input id="newUsername" required minlength="3" maxlength="48" pattern="[A-Za-z0-9_.-]+" autocomplete="off"></label><label>初始密码<input id="newPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label><label>角色<select id="newRole"><option value="viewer">只读</option><option value="admin">管理员</option></select></label><button class="primary" type="submit">创建账号</button></form>
 <div class="table-scroll"><table><thead><tr><th>账号</th><th>角色</th><th>状态</th><th>操作</th></tr></thead><tbody id="usersBody"></tbody></table></div><div class="section-heading"><h2>最近操作记录</h2><button id="reloadAudit">刷新记录</button></div><div id="auditList" class="audit-list"></div></section>
   </div>
-  <section id="settings-model" class="management-panel" hidden>
+ </section>
+ <section id="page-agent-settings" class="platform-page" hidden>
+  <div class="agent-settings-layout"><section id="settings-model" class="management-panel">
     <div class="section-heading"><div><h2>API Key 与模型</h2><p>配置模型服务连接，供各功能页的智能分析使用。</p></div></div>
     <form id="agentSettingsForm" class="settings-form">
       <p id="agentSettingsError" class="error-text" role="alert"></p>
@@ -103,11 +157,25 @@
       <p class="form-note">分析会把问题、目录路径和统计结果发送至所配置的模型服务。统计工具只读取文件元数据。</p>
       <div class="form-actions"><button class="primary" id="agentSaveSettings" type="submit">保存模型配置</button><button id="agentReloadSettings" type="button">重新载入</button><span id="agentSettingsStatus" role="status"></span></div>
     </form>
-  </section>
+  </section><aside class="agent-guide"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg></span><span class="eyebrow">AN INTELLIGENT ASSISTANT</span><h2>让数据，给出线索。</h2><p>为 Agent 配置模型服务后，即可在存储模块生成空间报告、查看分析证据，并继续追问。</p><ol><li><span>01</span><div><strong>连接模型</strong><p>填写接口、模型和访问凭据。</p></div></li><li><span>02</span><div><strong>完成一次扫描</strong><p>为分析准备真实的空间数据。</p></div></li><li><span>03</span><div><strong>获取空间报告</strong><p>定位重点占用，梳理清理候选。</p></div></li></ol><button data-page="overview">前往存储分析 ↗</button></aside></div>
 </section>
-    <footer><span>project alpha</span><span>数据以最近一次完成的扫描为准</span></footer>
+ <section id="page-processes" class="platform-page" hidden>
+  <div class="process-status-panel"><div><span id="processConnection" class="connection-badge">等待连接</span><p id="processStatusHint" role="status">正在读取进程监控状态…</p></div><div class="process-status-actions"><label class="checkbox-label"><input id="processHost" type="checkbox">包含宿主机</label><button id="processRefresh">刷新进程 ↻</button></div></div>
+  <div class="process-metrics"><article><span>已观测容器</span><strong id="processContainerCount">—</strong></article><article><span>活动进程</span><strong id="processTotalCount">—</strong></article><article><span>最近采集</span><strong id="processCaptured">—</strong></article></div>
+  <div class="process-toolbar"><label class="search-field"><span class="sr-only">搜索进程、PID、命令或容器 ID</span><input id="processSearch" type="search" placeholder="搜索进程、PID、命令或容器 ID"></label><span>每 3 秒自动更新</span></div>
+  <div id="processEmpty" class="first-scan" hidden><div class="empty-symbol"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg></div><h2 id="processEmptyTitle">暂未观测到活动进程</h2><p id="processEmptyHint">连接进程监控后，容器与进程关系会显示在这里。</p><button id="processRetry">重新连接</button></div>
+  <div id="processWorkspace" class="process-workspace" hidden><aside class="panel process-containers"><div class="panel-heading"><h2>容器列表</h2><span id="processGroupCount" class="count-label"></span></div><div id="processContainers"></div></aside><section class="panel process-tree-panel"><div class="panel-heading"><div><span class="eyebrow">PROCESS TREE</span><h2 id="processTreeTitle">活动进程</h2><p id="processTreeHint"></p></div><button id="processExpand">展开全部</button></div><div class="table-scroll"><table class="process-table"><thead><tr><th>进程 / 命令行</th><th>PID</th><th>UID</th><th>启动时间</th></tr></thead><tbody id="processTree"></tbody></table></div><p id="processTreeFoot" class="table-note"></p></section></div>
+ </section>
+    <footer><span>project alpha <span class="footer-separator">/</span> 主机工作台</span><span>有序管理，从这里开始。</span></footer>
   </div>
 </main>
+<svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="icon-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="icon-storage" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M15 6.5h3M15 17.5h3"/></symbol>
+<symbol id="icon-process" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-5h14v5"/></symbol>
+<symbol id="icon-agent" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4m-2-2h4"/></symbol>
+<symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+</defs></svg>
 <dialog id="resultLoadingDialog" class="result-loading-dialog" aria-labelledby="resultLoadingTitle" aria-describedby="resultLoadingHint">
   <div class="result-loading-heading"><span class="eyebrow">SCAN RESULT</span><h2 id="resultLoadingTitle">正在打开扫描结果</h2><p id="resultLoadingJob" class="mono"></p></div>
   <div class="result-loading-current"><strong id="resultLoadingPhase" role="status">读取扫描结果</strong><span id="resultLoadingStep"></span></div>

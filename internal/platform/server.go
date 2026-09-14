@@ -61,7 +61,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, err)
 		return
 	}
-	assets := map[string]string{"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js", "/snapshot-loader.js": "snapshot-loader.js", "/snapshot-worker.js": "snapshot-worker.js", "/app.js": "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js", "/style.css": "style.css"}
+	assets := map[string]string{
+		"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js",
+		"/snapshot-loader.js": "snapshot-loader.js", "/snapshot-worker.js": "snapshot-worker.js",
+		"/app.js": "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
+		"/agent.js": "agent.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js",
+		"/style.css": "style.css", "/workspace.css": "workspace.css", "/workspace-art.png": "workspace-art.png",
+		"/auth.css": "auth.css", "/auth.js": "auth.js",
+	}
 	if filename, ok := assets[r.URL.Path]; r.Method == "GET" && ok {
 		body, err := s.Assets.ReadFile(filename)
 		if err != nil {

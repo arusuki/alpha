@@ -18,7 +18,7 @@ var currentRoot=Usage.build(sample).inspect(sample.containers[0].upper_path).nod
 var leafPath=currentRoot.path+'/cache';
 var entry=(path,bytes,extra={})=>({path,name:path.split('/').pop(),kind:'directory',allocated:bytes,apparent:bytes,files:1,errors:0,children:[],...extra});
 currentRoot.children=[entry(leafPath,1024,{omitted_entries:10}),entry(currentRoot.path+'/actual-file',512,{kind:'file'})];
-platform.user={id:'admin',username:'admin',role:'admin'};platform.csrf='csrf';platform.loaded=sample.job_id;platform.followLatest=false;
+platform.page='overview';platform.user={id:'admin',username:'admin',role:'admin'};platform.csrf='csrf';platform.loaded=sample.job_id;platform.followLatest=false;
 load(sample,'历史扫描结果');select('container',snapshot.containers[0]);
 var baseJob={id:sample.job_id,status:'completed',trigger:'manual',created_by:'admin',created_at:1,snapshot_revision:0,config:{},allocated:sample.tree.allocated};
 var state={jobs:[baseJob],directory_jobs:[],directory_jobs:[],latest_id:'b'.repeat(32),active:null,interval_minutes:0};

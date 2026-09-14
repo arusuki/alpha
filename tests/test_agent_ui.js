@@ -10,7 +10,7 @@ function element(id){
 const record='b'.repeat(32),id='a'.repeat(32),calls=[];
 let sessions=[],messages=[],hold=null,settings={model:'test',endpoint:'http://model.test'},failure=null,download=null;
 const session={id,title:'空间消耗总报告',status:'completed',snapshot_id:record,model:'test',created_at:1,updated_at:2};
-const sandbox={console,window:{},$:element,platform:{user:{role:'admin'},loaded:record,followLatest:true},snapshot:{revision:7,host:'host',finished_at:'2026-09-14'},document:{querySelectorAll:()=>[],createElement:()=>({click(){}})},URL:{createObjectURL(blob){download=blob;return 'blob:test';},revokeObjectURL(){}},Blob,setTimeout:()=>1,clearTimeout(){},dateTime:String,showPage(){},showSettingsSection(){},esc:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api:async(path,options={})=>{
+const sandbox={console,window:{},$:element,platform:{user:{role:'admin'},loaded:record,followLatest:true},snapshot:{revision:7,host:'host',finished_at:'2026-09-14'},document:{querySelectorAll:()=>[],createElement:()=>({click(){}})},URL:{createObjectURL(blob){download=blob;return 'blob:test';},revokeObjectURL(){}},Blob,setTimeout:()=>1,clearTimeout(){},dateTime:String,showPage(){},esc:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api:async(path,options={})=>{
   calls.push({path,options});if(hold&&hold.path===path)return new Promise(resolve=>{hold.resolve=resolve;});
   if(failure&&path===failure.path)throw Error(failure.message);
   if(path==='/api/agent/settings')return {value:settings};

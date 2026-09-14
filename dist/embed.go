@@ -3,5 +3,5 @@ package web
 
 import "embed"
 
-//go:embed index.html usage.js snapshot.js snapshot-loader.js snapshot-worker.js app.js platform.js settings.js agent.js style.css
+//go:embed index.html usage.js snapshot.js snapshot-loader.js snapshot-worker.js app.js platform.js settings.js agent.js dashboard.js process.js style.css workspace.css auth.css auth.js workspace-art.png
 var Assets embed.FS

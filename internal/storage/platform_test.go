@@ -215,7 +215,7 @@ func TestJobsHistoryAndPersistence(t *testing.T) {
 
 func TestSnapshotWorkerAssets(t *testing.T) {
 	p := newTestPlatform(t)
-	for _, path := range []string{"/snapshot.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js"} {
+	for _, path := range []string{"/snapshot.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js", "/dashboard.js", "/process.js", "/agent.js"} {
 		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 		w := httptest.NewRecorder()
 		p.s.ServeHTTP(w, r)
@@ -224,6 +224,14 @@ func TestSnapshotWorkerAssets(t *testing.T) {
 		}
 		if !strings.Contains(w.Body.String(), "use strict") {
 			t.Fatalf("unexpected script body: %s", path)
+		}
+	}
+	for path, contentType := range map[string]string{"/workspace.css": "text/css", "/workspace-art.png": "image/png"} {
+		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
+		w := httptest.NewRecorder()
+		p.s.ServeHTTP(w, r)
+		if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Type"), contentType) || w.Body.Len() == 0 {
+			t.Fatalf("workspace asset unavailable: %s: %d %v", path, w.Code, w.Header())
 		}
 	}
 }

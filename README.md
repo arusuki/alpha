@@ -1,6 +1,6 @@
 # project alpha
 
-单宿主机管理平台，当前提供存储管理模块。自动发现 Docker 容器，按容器和用户汇总存储占用，支持目录下钻、按需扫描、任务管理和 Agent 空间报告。后端使用 Go 和 SQLite，网页资源嵌入二进制。
+单宿主机管理平台，登录后从总面板进入存储、进程管理或 Agent 设置。自动发现 Docker 容器，按容器和用户汇总存储占用，支持目录下钻、按需扫描、任务管理和 Agent 空间报告。后端使用 Go 和 SQLite，网页资源嵌入二进制。
 
 ## 代码结构
 
@@ -26,9 +26,9 @@ go build -o bin/project-alpha ./cmd/project-alpha
 ./bin/project-alpha
 ```
 
-打开 <http://127.0.0.1:8765> 创建管理员，在网页配置扫描目录并开始扫描。只读账号可以查看整台主机的扫描结果。
+打开 <http://127.0.0.1:8765> 创建管理员，在存储模块的“扫描配置”中配置目录并开始扫描。只读账号可以查看整台主机的扫描结果。
 
-管理员配置“设置 → API Key 与模型”后，可在空间用量页点击“生成空间报告”。Agent 基于当前扫描记录排查重点容器、挂载与可写层，分类大数据资产并整理清理候选；支持查看证据、追问、停止和导出 Markdown。分析按需补查文件元数据，不执行清理。详见 [Agent 分析设计与接口](docs/agent.md)。
+管理员配置“Agent 设置 → API Key 与模型”后，可在空间用量页点击“生成空间报告”。Agent 基于当前扫描记录排查重点容器、挂载与可写层，分类大数据资产并整理清理候选；支持查看证据、追问、停止和导出 Markdown。分析按需补查文件元数据，不执行清理。详见 [Agent 分析设计与接口](docs/agent.md)。
 
 ## 配置与数据
 
@@ -111,7 +111,7 @@ go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
 ```
 
-浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py` 和 `python3 tests/test_agent_browser.py`，分别验证目录下钻及报告生成、追问、导出和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
+浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py`、`python3 tests/test_agent_browser.py`、`python3 tests/test_workspace_browser.py` 和 `python3 tests/test_auth_browser.py`，验证目录下钻、报告生成、追问、导出，以及登录开屏的逐笔绘制、跳过/重播、减少动态效果、总面板、模块导航、进程监控、权限和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
 
 测试数据位于 `tests/fixtures/snapshot.json`，通过 `go run ./examples --output tests/fixtures/snapshot.json` 重新生成。
 

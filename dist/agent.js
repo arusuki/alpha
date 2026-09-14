@@ -187,6 +187,6 @@ $('reloadReports').addEventListener('click',openAgentReports);
 $('agentHistory').addEventListener('change',()=>{const session=agentView.sessions.find(s=>s.id===$('agentHistory').value);if(session)selectAgentSession(session);});
 $('stopAgent').addEventListener('click',()=>postAgentAction('cancel',{}));
 $('downloadReport').addEventListener('click',downloadAgentReport);
-$('agentModelSettings').addEventListener('click',()=>{$('agentDialog').close();showPage('settings');showSettingsSection('model');});
+$('agentModelSettings').addEventListener('click',()=>{$('agentDialog').close();showPage('agent-settings');});
 $('agentFollowup').addEventListener('submit',e=>{e.preventDefault();const message=$('agentQuestion').value.trim();if(message&&!agentBusy(agentView.session)&&!agentView.reading&&agentView.session?.snapshot_id)postAgentAction('messages',{message});});
 document.querySelectorAll('[data-agent-question]').forEach(button=>button.addEventListener('click',()=>{$('agentQuestion').value=button.dataset.agentQuestion;$('agentQuestion').focus();}));

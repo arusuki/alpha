@@ -131,6 +131,7 @@ try:
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         page.goto('http://127.0.0.1:' + str(server.server_port))
+        page.locator('.platform-nav [data-page=overview]').click()
         page.wait_for_function('platform.loaded !== null')
         page.locator('#generateReport').click()
         page.wait_for_function('agentView.session?.status === "completed"')
@@ -154,6 +155,7 @@ try:
         page.locator('#viewReports').click()
         assert page.locator('#agentReports .agent-report').count() == 2
         page.reload()
+        page.locator('.platform-nav [data-page=overview]').click()
         page.wait_for_function('platform.loaded !== null')
         page.locator('#viewReports').click()
         page.wait_for_function('document.querySelectorAll(".agent-report").length === 2')

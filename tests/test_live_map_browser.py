@@ -76,7 +76,7 @@ server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=serv
 with sync_playwright() as p:
  browser=p.chromium.launch(headless=True,args=['--no-sandbox'],**({'executable_path':os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']} if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE') else {}))
  page=browser.new_page(viewport=dict(width=1440,height=1000));errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
- page.goto('http://127.0.0.1:'+str(server.server_port));page.wait_for_function('platform.loaded!==null')
+ page.goto('http://127.0.0.1:'+str(server.server_port));page.locator('.platform-nav [data-page=overview]').click();page.wait_for_function('platform.loaded!==null')
  assert page.locator('#taskStatus').inner_text()=='累计扫描结果'
  assert page.locator('#taskScanned').inner_text()=='60 GiB'
  assert '30 GiB' in page.locator('#taskCapacityNote').inner_text()

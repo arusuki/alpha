@@ -6,7 +6,7 @@ function element(id){
   if(!elements.has(id))elements.set(id,{id,value:'',hidden:false,checked:false,disabled:false,innerHTML:'',textContent:'',dataset:{},style:{},attributes:{},listeners:{},querySelector(){return {focus(){}};},classList:{values:new Set(),toggle(name,on){if(on)this.values.add(name);else this.values.delete(name);},remove(name){this.values.delete(name);}},setAttribute(name,value){this.attributes[name]=value;},removeAttribute(name){delete this.attributes[name];},addEventListener(type,fn){this.listeners[type]=fn;},reset(){},showModal(){this.open=true;},close(){this.open=false;}});
   return elements.get(id);
 }
-const pageIds=['overview','history','scan-settings','settings'];
+const pageIds=['overview','history','scan-settings','settings','dashboard','processes','agent-settings'];
 const pages=pageIds.map(p=>element('page-'+p));
 const nav=pageIds.map(p=>{const e=element('nav-'+p);e.dataset.page=p;return e;});
 const document={getElementById:element,addEventListener(){},querySelectorAll(selector){if(selector==='.platform-page')return pages;if(selector==='.platform-nav [data-page]')return nav;if(selector==='[data-admin]')return [element('startScan'),element('cancelScan'),nav[2]];return [];}};
@@ -41,6 +41,9 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
   run('showAuth(true)');assert(element('authTitle').textContent.includes('初始化'));assert(element('console').hidden);
   await run('enter({user:{id:"admin-id",username:"admin",role:"admin"},csrf:"test"})');
+  assert.equal(run('platform.page'),'dashboard');assert.equal(run('platform.loaded'),null);
+  assert(!run('calls.some(c=>c.path.endsWith("/snapshot"))'),'login must not download a snapshot');
+  run('showPage("overview")');await run('syncState()');if(run('platform.resultLoad'))await run('platform.resultLoad.promise');
   assert(!element('console').hidden);assert(!element('resultContent').hidden);assert.equal(run('platform.loaded'),'a'.repeat(32));
   assert(element('jobsBody').innerHTML.includes('已完成'));
   run('showPage("scan-settings")');await flush();assert.equal(element('cfgRoots').value,'/srv');
@@ -113,6 +116,7 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   run('ownerId=snapshot.containers[0].id');element('ownerInput').value='alice';
   element('ownerForm').listeners.submit({preventDefault(){}});await flush();
   assert(run('usage.owners.has("alice")'));assert(element('detail').innerHTML.includes('alice'));
+  run('showPage("overview")');await run('syncState()');
   await run('loadJob(job.id,true)');
   // Deletion requires an explicit confirmation and preserves results on failure.
   run('renderHistory()');assert(element('jobsBody').innerHTML.includes('data-delete-job'));
@@ -145,10 +149,11 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
   run(`responses['/api/state']={jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0}`);
   await run('syncState()');assert.equal(run('platform.history.length'),0,'stale polling must not restore deleted records');
   run('api=originalAPI;responses["/api/state"]={jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0}');await run('enter({user:{id:"admin-id",username:"admin",role:"admin"},csrf:"test"})');
+  run('showPage("overview")');await run('syncState()');if(run('platform.resultLoad'))await run('platform.resultLoad.promise');
   run('platform.user.role="viewer";renderHistory()');assert(!element('jobsBody').innerHTML.includes('data-delete-job'));
   run('platform.user.role="viewer";select("container",snapshot.containers[0]);showPage("overview");showPage("scan-settings")');assert.equal(run('platform.page'),'overview');assert(!element('detail').innerHTML.includes('data-edit-owner'));
-  run('showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'设置');
-  run('showPage("agent");showPage("accounts")');assert.equal(run('platform.page'),'settings');
+  run('showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'账号管理');
+  run('showPage("agent-settings");showPage("accounts")');assert.equal(run('platform.page'),'settings');
   run('showPage("overview")');assert(!element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'空间用量');
   run(`
     var previousSnapshot=snapshot,previousLoaded=platform.loaded;

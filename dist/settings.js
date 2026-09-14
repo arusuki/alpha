@@ -1,5 +1,5 @@
 'use strict';
-const settingsState={model:null,section:'accounts',epoch:0,loading:0,saving:false};
+const settingsState={model:null,epoch:0,loading:0,saving:false};
 function modelSettingsError(error){$('agentSettingsError').textContent=error ? error.message||String(error) : '';}
 function renderModelSettings(result){
   settingsState.model=result;const c=result.value;
@@ -20,32 +20,22 @@ async function loadModelSettings(){
   catch(error){if(epoch===settingsState.epoch)modelSettingsError(error);}
   finally{if(epoch===settingsState.epoch && sequence===settingsState.loading){settingsState.loading=0;modelSettingsControls();}}
 }
-function showSettingsSection(section){
-  if(!platform.user||!['accounts','model'].includes(section))return;
-  if(section==='model' && platform.user.role!=='admin')return;
-  settingsState.section=section;
-  $('settings-accounts').hidden=section!=='accounts';$('settings-model').hidden=section!=='model';
-  $('settingsAccountsTab').setAttribute('aria-current',section==='accounts'?'page':'false');
-  $('settingsModelTab').setAttribute('aria-current',section==='model'?'page':'false');
-  if(section==='model' && !settingsState.model && !settingsState.loading)loadModelSettings();
-  if(section==='accounts' && platform.user.role==='admin')loadAccounts().catch(error=>{if(platform.user)message(error.message);});
-}
 window.SettingsUI={
   reset(){
-    Object.assign(settingsState,{model:null,section:'accounts',epoch:settingsState.epoch+1,loading:0,saving:false});
+    Object.assign(settingsState,{model:null,epoch:settingsState.epoch+1,loading:0,saving:false});
     $('agentSettingsForm').reset();$('agentKey').value='';$('agentClearKey').checked=false;
     $('agentSettingsStatus').textContent='';$('agentKeyState').textContent='Key 只在服务器保存，不会回传到浏览器。';modelSettingsError('');modelSettingsControls();
     $('settingsUsername').textContent='';$('settingsRole').textContent='';$('usersBody').innerHTML='';$('auditList').innerHTML='';$('createUserForm').reset();
-    $('settings-model').hidden=true;
   },
   open(){
     if(!platform.user)return;
     $('settingsUsername').textContent=platform.user.username;$('settingsRole').textContent=platform.user.role==='admin'?'管理员':'只读';
-    showSettingsSection(settingsState.section);
+    if(platform.user.role==='admin')loadAccounts().catch(error=>{if(platform.user)message(error.message);});
+  },
+  openModel(){
+    if(platform.user?.role==='admin' && !settingsState.model && !settingsState.loading)loadModelSettings();
   }
 };
-$('settingsAccountsTab').addEventListener('click',()=>showSettingsSection('accounts'));
-$('settingsModelTab').addEventListener('click',()=>showSettingsSection('model'));
 $('agentReloadSettings').addEventListener('click',loadModelSettings);
 $('agentSettingsForm').addEventListener('submit',async e=>{
   e.preventDefault();if(!platform.user||platform.user.role!=='admin'||settingsState.saving||settingsState.loading)return;

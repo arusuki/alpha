@@ -1,5 +1,5 @@
 'use strict';
-const platform = {user:null,csrf:'',setup:false,page:'overview',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,deletedIDs:new Set(),deleteTarget:null,deleting:false};
+const platform = {user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,deletedIDs:new Set(),deleteTarget:null,deleting:false};
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
 const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
@@ -20,14 +20,18 @@ function showAuth(setup,error='') {
   if(platform.changesLoad)platform.changesLoad.controller.abort();
   window.SettingsUI.reset();
   window.AgentUI?.reset();
+  window.ProcessUI?.reset();
   clearTimeout(platform.poll);platform.generation++;platform.user=null;platform.csrf='';platform.setup=setup;
   $('console').hidden=true;$('sessionControls').hidden=true;$('authPanel').hidden=false;
   for (const id of ['containerDialog','ownerDialog','passwordDialog','deleteJobDialog']) if ($(id).open) $(id).close();
-  $('authTitle').textContent=setup?'初始化管理员':'登录 project alpha';
-  $('authHint').textContent=setup?'创建首个管理员账号，开始查看这台机器的空间用量。':'查看这台机器的容器与用户磁盘用量。';
-  $('authSubmit').textContent=setup?'创建管理员并进入平台':'登录';
+  $('authTitle').textContent=setup?'初始化管理员':'欢迎回来。';
+  $('authEyebrow').textContent=setup?'MAKE YOURSELF AT HOME':'YOUR WORKSPACE AWAITS';
+  $('authHint').textContent=setup?'创建首个管理员账号，开启你的主机工作台。':'登录，回到你的主机工作台。';
+  $('authSubmit').textContent=setup?'创建管理员并进入平台':'进入工作台';
   $('authPassword').minLength=setup?12:1;$('authPassword').autocomplete=setup?'new-password':'current-password';
+  $('authPasswordHint').hidden=!setup;
   $('authError').textContent=error;
+  window.AuthUI?.show({immediate:!!error});
 }
 async function enter(session) {
   stopSnapshotStream();
@@ -37,7 +41,9 @@ async function enter(session) {
   platform.skippedAutoLoad=null;platform.expandStarting=null;platform.expandError=null;
   window.SettingsUI.reset();
   window.AgentUI?.reset();
-  platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
+  window.ProcessUI?.reset();
+  platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
+  window.AuthUI?.hide();
   $('authPanel').hidden=true;$('console').hidden=false;$('sessionControls').hidden=false;
   $('sessionUser').textContent=`${session.user.username} · ${session.user.role==='admin'?'管理员':'只读'}`;
   document.querySelectorAll('[data-admin]').forEach(e=>e.hidden=session.user.role!=='admin');
@@ -45,7 +51,7 @@ async function enter(session) {
   $('sourceBadge').textContent='尚未扫描';
   $('hostInfo').textContent='尚未完成扫描 · 启用 Docker 自动发现后开始扫描';message('');
   $('firstScanHint').textContent=session.user.role==='admin'?'在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。':'管理员完成首次扫描后，这里会显示容器与用户的磁盘用量。';
-  showPage('overview');try{await syncState();}finally{schedulePoll();}
+  showPage('dashboard',false);window.history?.replaceState(null,'','#dashboard');try{await syncState();}finally{schedulePoll();}
 }
 function schedulePoll() {
   clearTimeout(platform.poll);
@@ -69,7 +75,10 @@ async function syncState() {
   const history=new Map(platform.history.filter(j=>j.trigger!=='incremental').map(j=>[j.id,j]));state.jobs.filter(j=>j.trigger!=='incremental').forEach(j=>history.set(j.id,j));
   platform.history=Array.from(history.values()).sort((a,b)=>b.created_at-a.created_at);
   if(state.jobs.length<50)platform.historyExhausted=true;
-  renderTask(state.interval_minutes);renderHistory();controls();
+  platform.interval=state.interval_minutes;
+  renderTask(state.interval_minutes);renderHistory();controls();window.DashboardUI?.render();
+  // Loading large snapshots is an explicit storage action, never a login side effect.
+  if(platform.page!=='overview')return;
   const loadedJob=platform.history.find(j=>j.id===platform.loaded);
   if(snapshot && platform.loaded && loadedJob && loadedJob.snapshot_revision > snapshot.revision && !platform.resultLoad && !platform.changesLoad && platform.skippedAutoLoad!==platform.loaded) {
     const updated=await loadSnapshotChanges();
@@ -295,18 +304,30 @@ function loadSnapshotChanges() {
 }
 $('cancelResultLoading').addEventListener('click',cancelResultLoading);
 $('resultLoadingDialog').addEventListener('cancel',e=>{e.preventDefault();cancelResultLoading();});
-function showPage(page) {
-  if(!['overview','history','scan-settings','settings'].includes(page))return;
-  if(page==='scan-settings' && platform.user.role!=='admin')return;
+function showPage(page,navigate=true) {
+  if(!platform.user || !['dashboard','overview','history','scan-settings','processes','agent-settings','settings'].includes(page))return;
+  if(['scan-settings','agent-settings'].includes(page) && platform.user.role!=='admin')return;
+  const changed=platform.page!==page;
   platform.page=page;
-  const headings={overview:['SPACE USAGE','空间用量'],history:['SCAN HISTORY','扫描记录'],'scan-settings':['SCAN SETTINGS','扫描配置'],settings:['SETTINGS','设置']};
+  const storage=['overview','history','scan-settings'].includes(page);
+  const headings={dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
   $('pageEyebrow').textContent=headings[page][0];$('pageTitle').textContent=headings[page][1];
+  $('pageDescription').textContent=headings[page][2];$('moduleCrumb').textContent=storage?'存储':headings[page][1];
+  document.title=`project alpha · ${headings[page][1]}`;
   document.querySelectorAll('.platform-page').forEach(el=>el.hidden=el.id!==`page-${page}`);
-  document.querySelectorAll('.platform-nav [data-page]').forEach(el=>{el.classList.toggle('active',el.dataset.page===page);el.setAttribute('aria-current',el.dataset.page===page?'page':'false');});
-  $('scanActions').hidden=page==='settings';$('hostInfo').hidden=page==='settings';
+  document.querySelectorAll('.platform-nav [data-page]').forEach(el=>{const active=el.dataset.page===(storage?'overview':page);el.classList.toggle('active',active);el.setAttribute('aria-current',active?'page':'false');});
+  document.querySelectorAll('#storageNav [data-page]').forEach(el=>el.setAttribute('aria-current',el.dataset.page===page?'page':'false'));
+  $('storageNav').hidden=!storage;$('storageMonitor').hidden=!['overview','history'].includes(page);
+  $('scanActions').hidden=!['overview','history'].includes(page);$('hostInfo').hidden=!storage;$('dashboardRefresh').hidden=page!=='dashboard';
+  if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$('pageTitle').focus?.({preventScroll:true});}
+  if(page==='overview' && changed)syncState().catch(e=>{if(platform.user)message(e.message);});
   if(page==='scan-settings' && !platform.config) loadSettings().catch(e=>message(e.message));
   if(page==='settings')window.SettingsUI.open();
+  if(page==='agent-settings')window.SettingsUI.openModel();
+  if(page==='dashboard')window.DashboardUI?.render();
+  if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
 }
+window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||'dashboard',false));
 function renderHistory() {
   $('jobsBody').innerHTML=platform.history.filter(j=>j.trigger!=='incremental').map(j=>`<tr class="${j.id===platform.loaded?'history-selected':''}"><td>${esc(dateTime(j.created_at))}<span class="sub">${esc(j.created_by)} · ${esc(triggerNames[j.trigger]||j.trigger)} · ${esc(j.id.slice(0,8))}${j.snapshot_revision ? ` · 明细版本 ${j.snapshot_revision}` : ''}</span></td><td><span class="pill status-${esc(j.status)}">${esc(statusNames[j.status]||j.status)}</span>${j.warnings?`<span class="sub">${j.warnings} 条扫描提示</span>`:''}</td><td class="amount">${fmt(j.allocated)}</td><td>${j.status==='completed'?`<button data-open-job="${esc(j.id)}">查看结果</button> `:''}<button data-job-detail="${esc(j.id)}">详情</button>${platform.user && platform.user.role==='admin'?` <button class="danger" data-delete-job="${esc(j.id)}" ${['queued','running','cancelling'].includes(j.status)?'disabled title="任务结束后可删除"':''}>删除</button>`:''}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">还没有扫描记录。任务开始后会自动保存在这里。</td></tr>';
   $('moreHistory').hidden=platform.historyExhausted || platform.history.length<50;
