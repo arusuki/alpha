@@ -112,10 +112,11 @@ type Stats struct {
 	Exit           int
 }
 
-// Collect bootstraps the builder from existing processes when the source
-// supports it, then applies live lifecycle events. Cancelling ctx ends a live
-// stream cleanly; a bootstrap failure is recorded but not fatal.
-func Collect(ctx context.Context, src Source, builder *Builder) (Stats, error) {
+// bootstrapInto fills the builder from the source's process cache. A source
+// that cannot list existing processes reports ErrNoBootstrap, which is not
+// fatal; any other failure is recorded on the stats so a stream-only collection
+// still runs.
+func bootstrapInto(ctx context.Context, src Source, builder *Builder) Stats {
 	var stats Stats
 	processes, err := src.Bootstrap(ctx)
 	switch {
@@ -127,17 +128,33 @@ func Collect(ctx context.Context, src Source, builder *Builder) (Stats, error) {
 		stats.Bootstrapped = len(processes)
 		builder.ObserveAll(processes)
 	}
-	err = src.Stream(ctx, func(resp *tetragon.GetEventsResponse) error {
+	return stats
+}
+
+// streamInto applies lifecycle events until the source ends the stream or
+// fails. The caller supplies how one event reaches the tree, so a resident
+// watcher can guard the builder while the CLI applies directly. A cancelled
+// context ends a live stream cleanly rather than as an error.
+func streamInto(ctx context.Context, src Source, apply func(*tetragon.GetEventsResponse), stats Stats) (Stats, error) {
+	err := src.Stream(ctx, func(resp *tetragon.GetEventsResponse) error {
 		if resp.GetProcessExec() != nil {
 			stats.Exec++
 		} else if resp.GetProcessExit() != nil {
 			stats.Exit++
 		}
-		builder.Apply(resp)
+		apply(resp)
 		return nil
 	})
 	if err != nil && ctx.Err() == nil {
 		return stats, err
 	}
 	return stats, nil
+}
+
+// Collect bootstraps the builder from existing processes when the source
+// supports it, then applies live lifecycle events. Cancelling ctx ends a live
+// stream cleanly; a bootstrap failure is recorded but not fatal.
+func Collect(ctx context.Context, src Source, builder *Builder) (Stats, error) {
+	stats := bootstrapInto(ctx, src, builder)
+	return streamInto(ctx, src, builder.Apply, stats)
 }

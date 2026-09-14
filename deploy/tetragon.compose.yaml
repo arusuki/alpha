@@ -11,6 +11,12 @@
 # Whatever runs project-alpha needs write access to that socket: mount
 # /var/run/tetragon into its container, or grant the systemd unit's user access
 # on the host. See deploy/project-alpha.service.
+#
+# The agent's process cache has a fixed capacity (--process-cache-size, default
+# 65536) and evicts entries when full, including processes that are still
+# running. The collector tolerates that by probing /proc before dropping a
+# process, and reports what it had to keep in status.alignment.evicted. Raise
+# --process-cache-size above if that count keeps growing.
 name: project-alpha-tetragon
 
 services:

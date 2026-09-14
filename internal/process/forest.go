@@ -62,6 +62,9 @@ type node struct {
 	start      time.Time
 	parent     *node
 	children   []*node
+	// absent counts consecutive reconciliations in which the source's process
+	// cache did not list this process.
+	absent int
 }
 
 // Builder maintains the active process forest. Events may arrive in any order:
@@ -70,10 +73,13 @@ type node struct {
 type Builder struct {
 	nodes   map[string]*node
 	pending map[string][]*node
+	// byPID indexes nodes by PID so an in-place exec can find the node it
+	// replaces without scanning the whole forest.
+	byPID map[uint32][]*node
 }
 
 func NewBuilder() *Builder {
-	return &Builder{nodes: map[string]*node{}, pending: map[string][]*node{}}
+	return &Builder{nodes: map[string]*node{}, pending: map[string][]*node{}, byPID: map[uint32][]*node{}}
 }
 
 // Len reports how many processes the builder currently considers active.
@@ -96,14 +102,32 @@ func (b *Builder) Apply(resp *tetragon.GetEventsResponse) {
 }
 
 // Observe records a process as running, creating its node on first sight.
+//
+// An in-place exec reports a new exec ID for the same PID and never reports an
+// exit for the image it replaced. Left alone that puts two nodes on one PID,
+// and a shared PID is exactly what the reconciliation prober cannot reason
+// about, so it protects neither. When the new process matches an existing node
+// on PID, container and start time, it is that task's next image and the node
+// is re-labelled in place rather than duplicated: the forest keeps one node per
+// running process and the live image keeps the prober's protection. Start time
+// is the discriminator against a PID the kernel handed to an unrelated process,
+// which begins later; an exec keeps it.
 func (b *Builder) Observe(p *tetragon.Process) {
 	if p == nil || p.GetExecId() == "" {
 		return
 	}
-	n, seen := b.nodes[p.GetExecId()]
+	id := p.GetExecId()
+	n, seen := b.nodes[id]
+	fresh := false
 	if !seen {
-		n = &node{execID: p.GetExecId()}
-		b.nodes[n.execID] = n
+		if old := b.superseded(p); old != nil {
+			b.relabel(old, id)
+			n = old
+		} else {
+			n = &node{execID: id}
+			b.nodes[id] = n
+			fresh = true
+		}
 	}
 	n.parentExec = p.GetParentExecId()
 	n.container = containerID(p)
@@ -115,11 +139,63 @@ func (b *Builder) Observe(p *tetragon.Process) {
 	if ts := p.GetStartTime(); ts != nil {
 		n.start = ts.AsTime()
 	}
-	if !seen {
+	if fresh {
 		// Both directions are keyed by exec IDs that only exist now.
+		b.byPID[n.pid] = append(b.byPID[n.pid], n)
 		b.adopt(n)
 		b.attach(n)
 	}
+}
+
+// superseded finds the node an arriving process replaces. That is a node on the
+// same PID in the same container whose start time matches within the prober's
+// tolerance: one task cannot change either across an exec, so a match means the
+// same task under a new image, while a start time outside the tolerance means
+// the PID was recycled by a different process. Without a start time on both
+// sides nothing can be concluded, and the caller keeps today's two-node result.
+func (b *Builder) superseded(p *tetragon.Process) *node {
+	pid := p.GetPid().GetValue()
+	container := containerID(p)
+	start := p.GetStartTime().AsTime()
+	for _, n := range b.byPID[pid] {
+		if n.container == container && sameStart(n.start, start) {
+			return n
+		}
+	}
+	return nil
+}
+
+// sameStart reports whether two start times describe one task. Missing times
+// are never a match: they carry no evidence the nodes are the same process.
+func sameStart(a, b time.Time) bool {
+	if a.IsZero() || b.IsZero() {
+		return false
+	}
+	delta := a.Sub(b)
+	if delta < 0 {
+		delta = -delta
+	}
+	return delta <= startTolerance
+}
+
+// relabel points an existing node at a new exec ID, so an in-place exec keeps
+// its place in the tree: the node stays its parent's child, its own children
+// stay attached, and a node parked waiting for this one keeps waiting under the
+// new ID. The PID is unchanged, so byPID still indexes the node correctly.
+func (b *Builder) relabel(old *node, id string) {
+	delete(b.nodes, old.execID)
+	if waiting := b.pending[old.execID]; len(waiting) > 0 {
+		for _, child := range waiting {
+			child.parentExec = id
+		}
+		b.pending[id] = append(b.pending[id], waiting...)
+		delete(b.pending, old.execID)
+	}
+	for _, child := range old.children {
+		child.parentExec = id
+	}
+	old.execID = id
+	b.nodes[id] = old
 }
 
 // ObserveAll records every process of a bootstrap listing.
@@ -135,11 +211,24 @@ func (b *Builder) ObserveExit(p *tetragon.Process) {
 	if p == nil {
 		return
 	}
-	n, active := b.nodes[p.GetExecId()]
+	b.remove(p.GetExecId())
+}
+
+// remove drops one process from the active forest. Its children move up to the
+// exited process' parent so the remaining tree stays connected.
+func (b *Builder) remove(execID string) {
+	n, active := b.nodes[execID]
 	if !active {
 		return
 	}
 	delete(b.nodes, n.execID)
+	if indexed := b.byPID[n.pid]; len(indexed) > 0 {
+		if indexed = removeNode(indexed, n); len(indexed) == 0 {
+			delete(b.byPID, n.pid)
+		} else {
+			b.byPID[n.pid] = indexed
+		}
+	}
 	// A process that exits before its parent was observed must also leave the
 	// waiting list, otherwise the parent would resurrect it on arrival.
 	if waiting := b.pending[n.parentExec]; len(waiting) > 0 {
@@ -159,6 +248,109 @@ func (b *Builder) ObserveExit(p *tetragon.Process) {
 	}
 	n.children = nil
 	n.parent = nil
+}
+
+// Drift measures how far the tracked forest is from the source's process cache
+// after a reconciliation.
+type Drift struct {
+	Matched int // present in both
+	Added   int // known to the cache, missing from the forest; now restored
+	Ghosts  int // absent from the cache, missing once; kept until confirmed again
+	Evicted int // absent from the cache but still running; kept, and never dropped
+	Removed int // absent from the cache twice in a row; dropped from the forest
+}
+
+// absentLimit is how many consecutive reconciliations must miss a process before
+// it is dropped. Two independent samples a reconciliation apart rule out a
+// transient: the agent's reference count can bounce back from zero, and a dump
+// captures only one instant of it. The limit is a fallback: it decides only when
+// no prober could confirm the process is still running.
+const absentLimit = 2
+
+// Reconcile aligns the tracked forest with a fresh listing of the source's
+// process cache, the only recovery path for events the agent itself dropped.
+//
+// Processes the cache knows but the forest lost are added back. Processes the
+// forest has but the cache does not are assumed to have exited without their
+// exit event reaching us, and are dropped once the miss repeats; until then
+// they are only counted.
+//
+// That assumption breaks when the agent evicts a running process from its
+// capacity-bounded cache. The cache cannot list an entry it dropped, so a
+// deletion here is permanent: no later reconciliation could restore it. prober
+// is the backstop for exactly that case, consulted only once a process is about
+// to be dropped. A probe confirming the process still runs keeps it, and it is
+// re-probed every reconciliation so a later genuine exit is still noticed. A nil
+// prober, or one that cannot tell, leaves the decision to the miss counter.
+// The probe is also withheld from a process that shares its PID with another
+// node, where it could not distinguish a running process from a PID the kernel
+// recycled to a different one.
+//
+// grace suppresses both the count and the drop for processes younger than it,
+// which are expected to be missing rather than genuinely gone. Without it a
+// busy host would churn through the tree on every reconciliation.
+func (b *Builder) Reconcile(live []*tetragon.Process, grace time.Duration, prober Prober) Drift {
+	var drift Drift
+	seen := make(map[string]bool, len(live))
+	for _, p := range live {
+		if p == nil || p.GetExecId() == "" {
+			continue
+		}
+		id := p.GetExecId()
+		seen[id] = true
+		_, known := b.nodes[id]
+		size := len(b.nodes)
+		b.Observe(p)
+		b.nodes[id].absent = 0
+		// A new exec ID for a process already tracked is an in-place exec whose
+		// event we lost and Observe re-labelled: the process was not missing, so
+		// it is matched rather than added.
+		if !known && len(b.nodes) > size {
+			drift.Added++
+		}
+	}
+	// A PID claimed by more than one node means the forest holds two images for
+	// one process. An in-place exec no longer causes that: Observe re-labels the
+	// node it replaces. What remains is a PID the kernel recycled while the old
+	// process never reported an exit, so only the newest node is running and the
+	// rest are exactly what the miss counter exists to clean up. The prober
+	// cannot tell them apart: they share the PID and their start times differ by
+	// less than a probe's tolerance. Withholding it there keeps the veto from
+	// turning a superseded image into a permanent phantom.
+	now := time.Now()
+	var doomed []*node
+	for id, n := range b.nodes {
+		if seen[id] {
+			continue
+		}
+		if !n.start.IsZero() && now.Sub(n.start) < grace {
+			continue
+		}
+		n.absent++
+		if n.absent < absentLimit {
+			drift.Ghosts++
+			continue
+		}
+		// byPID is read here rather than maintained as a separate count, and it
+		// still describes the forest as it was when the walk began, because
+		// removals are deferred to the end: dropping nodes inline would make a
+		// PID look unambiguous partway through, depending on which node the map
+		// happened to yield first. One node on the PID is what tells the prober
+		// the PID identifies the process it is asked about.
+		if prober != nil && len(b.byPID[n.pid]) == 1 && prober.Alive(n.pid, n.start) {
+			// The agent evicted a running process from its cache. Its exit event
+			// is the only thing that may remove it from now on.
+			drift.Evicted++
+			continue
+		}
+		doomed = append(doomed, n)
+	}
+	for _, n := range doomed {
+		b.remove(n.execID)
+		drift.Removed++
+	}
+	drift.Matched = len(seen) - drift.Added
+	return drift
 }
 
 // adopt attaches children that arrived before their parent was observed.
