@@ -1,0 +1,55 @@
+# Tetragon agent for the `project-alpha process` collector.
+#
+# Start with: docker compose -f deploy/tetragon.compose.yaml up -d
+#
+# The collector dials /var/run/tetragon/tetragon.sock, so the agent must export
+# its gRPC socket at that path instead of the image default (TCP on
+# localhost:54321, reachable only from inside the container). The port is
+# deliberately not published; project-alpha talks to the agent over the shared
+# socket directory.
+#
+# Whatever runs project-alpha needs write access to that socket: mount
+# /var/run/tetragon into its container, or grant the systemd unit's user access
+# on the host. See deploy/project-alpha.service.
+#
+# The agent's process cache has a fixed capacity (--process-cache-size, default
+# 65536) and evicts entries when full, including processes that are still
+# running. The collector tolerates that by probing /proc before dropping a
+# process, and reports what it had to keep in status.alignment.evicted. Raise
+# --process-cache-size above if that count keeps growing.
+name: project-alpha-tetragon
+
+services:
+  tetragon:
+    image: quay.io/cilium/tetragon:v1.7.0
+    container_name: tetragon
+    # Tetragon loads BPF programs and resolves container IDs from the host, so
+    # it shares the host PID and cgroup namespaces and runs privileged.
+    privileged: true
+    pid: host
+    cgroup: host
+    volumes:
+      # Tetragon reads the host BTF to generate its BPF programs.
+      - /sys/kernel/btf/vmlinux:/var/lib/tetragon/btf
+      # The gRPC socket is created in this directory and consumed by
+      # project-alpha.
+      - /var/run/tetragon:/var/run/tetragon
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        # The bind-mounted directory outlives the container, so a socket left
+        # by a previous run would satisfy the wait below before the new agent
+        # has created its own.
+        rm -f /var/run/tetragon/tetragon.sock
+        /usr/bin/tetragon --server-address unix:///var/run/tetragon/tetragon.sock &
+        tetragon_pid=$$!
+        # Forward the stop signal so tetragon can clean up its BPF state.
+        trap 'kill -TERM "$$tetragon_pid"' TERM INT
+        # Tetragon creates the socket as 0660 root:root. Widen it so the
+        # collector can connect; the tighter option is to share a group with
+        # the project-alpha account.
+        until [ -S /var/run/tetragon/tetragon.sock ]; do sleep 0.2; done
+        chmod 666 /var/run/tetragon/tetragon.sock
+        wait "$$tetragon_pid"

@@ -15,6 +15,7 @@ import (
 	web "project-alpha/dist"
 	"project-alpha/internal/agent"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/process"
 	"project-alpha/internal/storage"
 )
 
@@ -39,6 +40,9 @@ func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "scan" {
 		return storage.ScanCLI(ctx, args[1:])
 	}
+	if len(args) > 0 && args[0] == "process" {
+		return process.RunCLI(ctx, args[1:])
+	}
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
 	}
@@ -51,6 +55,7 @@ func Run(ctx context.Context, args []string) error {
 	host := p.String("host", "127.0.0.1", "Listen address")
 	port := p.Int("port", 8765, "HTTP port")
 	secure := p.Bool("secure-cookie", false, "Use Secure session cookies for HTTPS")
+	tetragonSocket := p.String("tetragon-socket", process.DefaultSocket, "Tetragon gRPC unix socket for container process monitoring")
 	var hosts stringFlags
 	p.Var(&hosts, "allowed-host", "Additional allowed hostname; repeatable")
 	if err := p.Parse(args); err != nil {
@@ -83,7 +88,16 @@ func Run(ctx context.Context, args []string) error {
 		return err
 	}
 	defer agentManager.Close()
-	modules := Modules{Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager)}
+	// A missing Tetragon agent only disables process monitoring; the rest of the
+	// service still starts.
+	var watcher *process.Watcher
+	if source, err := process.Dial(*tetragonSocket); err != nil {
+		log.Printf("未启用容器进程监控：%v", err)
+	} else {
+		watcher = process.NewWatcher(ctx, source)
+		defer watcher.Close()
+	}
+	modules := Modules{Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err
