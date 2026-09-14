@@ -65,7 +65,12 @@ SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.
   assert.equal(run('explorer.trail.length'),2);
   assert(element('directoryMap').innerHTML.includes('点击扫描并拆分'),'arriving at a folded leaf offers continuation');
   assert(!element('explorerContent').innerHTML.includes('data-expand-path'));
+  assert.equal(element('directoryDepth').value,'3','default retains several levels in one traversal');
+  assert.equal(element('directoryDepthControl').hidden,false);
+  element('directoryDepth').listeners.change({target:{value:'8'}});
+  assert.equal(run('platform.expandDepth'),8);
   run('platform.user.role="viewer";refreshDirectoryScan()');
+  assert.equal(element('directoryDepthControl').hidden,true);
   assert(!element('directorySelection').innerHTML.includes('data-expand-path'));assert(element('directoryStatus').innerHTML.includes('管理员'));
   run('platform.user.role="admin";refreshDirectoryScan();rejectStart=true');
   await run('expandLeaf(leafPath)');
@@ -75,7 +80,8 @@ SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.
   await run('expandLeaf(leafPath)');
   const call=run('calls.find(c=>c.path.endsWith("/expand"))');
   assert.equal(call.path,'/api/jobs/'+'a'.repeat(32)+'/expand');
-  assert.deepEqual(JSON.parse(call.options.body),{path:run('leafPath'),revision:0});
+  assert.deepEqual(JSON.parse(call.options.body),{path:run('leafPath'),revision:0,depth:8});
+  assert.equal(element('directoryDepth').disabled,true);
   assert(element('directoryStatus').innerHTML.includes('12 项已遍历'));
   assert(element('directoryStatus').innerHTML.includes('data-cancel-expansion'));
   const callCount=run('calls.length');await run('expandLeaf(leafPath)');assert.equal(run('calls.length'),callCount,'duplicate starts are suppressed');
@@ -97,6 +103,7 @@ SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.
   assert.equal(run('platform.followLatest'),false);
   assert.equal(run('snapshot.revision'),1);
   assert.equal(run('explorer.trail[explorer.trail.length-1].path'),run('leafPath'),'updated details preserve drilldown');
+  assert.equal(element('directoryDepth').value,'8','saved depth survives published detail refreshes');
   assert(element('containerDialog').open);
   assert(element('directoryMap').innerHTML.includes('deeper'));
   assert(!element('resultLoadingDialog').open,'incremental updates never open the full result loading dialog');

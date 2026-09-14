@@ -17,6 +17,9 @@ type WritableLayer struct {
 }
 
 func writableLayers(containers []Container, tree *Node) (object, []Warning) {
+	if len(containers) == 0 {
+		return object{"total": 0, "complete": 0, "partial": 0, "unknown": 0, "permission_denied": 0}, []Warning{}
+	}
 	nodes := map[string]*Node{}
 	references := []*Node{}
 	pending := []*Node{tree}
@@ -40,6 +43,10 @@ func writableLayers(containers []Container, tree *Node) (object, []Warning) {
 			}
 		}
 	}
+	return writableLayersFromIndex(containers, func(path string) *Node { return nodes[path] }, references, func(path string) bool { return deferred[path] })
+}
+
+func writableLayersFromIndex(containers []Container, nodeAt func(string) *Node, references []*Node, deferred func(string) bool) (object, []Warning) {
 	complete, partial, unknown, denied := 0, 0, 0, 0
 	warnings := []Warning{}
 	for i := range containers {
@@ -54,11 +61,11 @@ func writableLayers(containers []Container, tree *Node) (object, []Warning) {
 					break
 				}
 			}
-			n := nodes[*c.UpperPath]
+			n := nodeAt(*c.UpperPath)
 			if n == nil {
 				w.Reason = "可写层未被遍历；请检查扫描范围、排除目录和父目录读取权限"
 				for p := filepath.Dir(*c.UpperPath); ; p = filepath.Dir(p) {
-					if ancestor := nodes[p]; ancestor != nil && (ancestor.Reason != "" || ancestor.Kind == "excluded") {
+					if ancestor := nodeAt(p); ancestor != nil && (ancestor.Reason != "" || ancestor.Kind == "excluded") {
 						n = ancestor
 						break
 					}
@@ -78,10 +85,10 @@ func writableLayers(containers []Container, tree *Node) (object, []Warning) {
 					w.Status, w.Reason = "complete", ""
 					allocated, apparent := n.Allocated, n.Apparent
 					w.Allocated, w.Apparent = &allocated, &apparent
-					if n.Errors > 0 || n.Excluded > 0 || n.OmittedReferences > 0 || externalReference || deferred[n.Path] {
+					if n.Errors > 0 || n.Excluded > 0 || n.OmittedReferences > 0 || externalReference || deferred(n.Path) {
 						w.Status = "partial"
 						w.Reason = "仅列出已计入扫描的去重空间；存在读取异常、排除项或共享引用，不能视为完整的可写层用量"
-						if deferred[n.Path] {
+						if deferred(n.Path) {
 							w.Reason = "按层分析中；未读取的深层内容沿用历史统计，缺少明细的目录待继续分析"
 						}
 					}

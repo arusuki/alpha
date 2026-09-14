@@ -34,14 +34,21 @@ func snapshotNodes(tree *Node) map[string]*Node {
 	}
 	return nodes
 }
+func validateIncrementalPath(path string) error {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) || len(path) > 4096 {
+		return httpapi.NewError(400, "目录路径无效")
+	}
+	return nil
+}
+
 func validateIncrementalTarget(base *Snapshot, path string) error {
 	if base == nil || base.Tree == nil {
 		return httpapi.NewError(409, "该扫描记录不支持继续分析")
 	}
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsRune(path, 0) || len(path) > 4096 {
-		return httpapi.NewError(400, "目录路径无效")
+	if err := validateIncrementalPath(path); err != nil {
+		return err
 	}
-	n := snapshotNodes(base.Tree)[path]
+	n := findSnapshotNode(base.Tree, path)
 	if n == nil || n.Kind != "directory" {
 		return httpapi.NewError(400, "只能继续分析扫描记录中已有的物理目录")
 	}
@@ -50,13 +57,13 @@ func validateIncrementalTarget(base *Snapshot, path string) error {
 
 const (
 	incrementalDepth    = 1
-	maxIncrementalDepth = 3
+	maxIncrementalDepth = 32
 	maxSnapshotNodes    = 250000
 )
 
 func validateIncrementalDepth(depth int) error {
 	if depth < 1 || depth > maxIncrementalDepth {
-		return httpapi.NewError(400, "每次分析深度必须为 1–3 层")
+		return httpapi.NewError(400, "每次分析深度必须为 1–32 层")
 	}
 	return nil
 }
@@ -88,34 +95,32 @@ func expandDirectory(ctx context.Context, base *Snapshot, c Config, path string,
 		c.ScanBackend, c.NoDocker = "docker", false
 	}
 	inspection := DirectoryInspection{Paths: []string{path}, AnalyzeFiles: true, StreamDirectory: publish != nil}
-	baseNodes := snapshotNodes(base.Tree)
-	for _, n := range baseNodes {
-		if !within(n.Path, path) && within(n.Reference, path) {
-			inspection.RetainPaths = append(inspection.RetainPaths, n.Reference)
-		}
+	merger, err := newDirectoryMerge(base, path)
+	if err != nil {
+		return nil, err
 	}
-	for _, r := range base.Accounting {
-		if n := baseNodes[r.Path]; n != nil && n.Kind != "reference" && !within(r.Path, path) {
+	for path := range merger.claims {
+		inspection.RetainPaths = append(inspection.RetainPaths, path)
+	}
+	for _, r := range merger.outsideAccounting {
+		if n := merger.baseNodes[r.Path]; n != nil && n.Kind != "reference" {
 			inspection.Seed = append(inspection.Seed, r)
 		}
 	}
 	report := mergeScanProgress(progress)
 	revision := base.Revision
-	physical, err := InspectDirectories(ctx, c, inspection, func(v object) error {
+	physical, err := inspectWithPublication(ctx, c, inspection, func(v object) error {
 		if value := v["directory_update"]; value != nil {
 			node, ok := value.(*Node)
-			if !ok {
-				node = &Node{}
-				if err := json.Unmarshal([]byte(httpapi.JSONText(value)), node); err != nil {
-					return err
-				}
+			if !ok || node == nil {
+				return fmt.Errorf("目录更新格式无效")
 			}
 			delete(v, "directory_update")
 			if publish == nil || node.Path != path || node.Kind != "directory" {
 				return fmt.Errorf("目录更新与请求不一致")
 			}
 			partial := &physicalScan{Tree: &Node{Children: []*Node{node}}, Backend: c.ScanBackend, Visited: numberInt64(v["entries"])}
-			next, err := mergeDirectoryResult(base, partial, path, false)
+			next, err := merger.merge(partial, false)
 			if err != nil {
 				return err
 			}
@@ -141,7 +146,7 @@ func expandDirectory(ctx context.Context, base *Snapshot, c Config, path string,
 	if raw.Kind != "directory" || raw.Reason != "" {
 		return nil, fmt.Errorf("目录未完整读取：%s（%s）", path, raw.Reason)
 	}
-	result, err := mergeDirectoryResult(base, physical, path, true)
+	result, err := merger.merge(physical, true)
 	if err != nil {
 		return nil, err
 	}
@@ -152,35 +157,51 @@ func expandDirectory(ctx context.Context, base *Snapshot, c Config, path string,
 	return result, nil
 }
 
-func mergeDirectoryResult(base *Snapshot, physical *physicalScan, path string, complete bool) (*Snapshot, error) {
+func (m *directoryMerge) merge(physical *physicalScan, complete bool) (*Snapshot, error) {
+	base, path := m.base, m.path
 	result := *base
 	result.Containers = append([]Container{}, base.Containers...)
 	result.Scan = maps.Clone(base.Scan)
 	rawRoot := physical.Tree.Children[0]
 	if complete {
-		rawRoot = preserveSharedClaims(base, physical, path)
+		rawRoot = m.preserveSharedClaims(physical)
 	}
 	replacement := rawRoot
 	if !complete {
-		replacement = mergeDirectoryObservation(snapshotNodes(base.Tree)[path], rawRoot)
+		replacement = mergeDirectoryObservation(m.baseNodes[path], rawRoot)
 	}
 	result.Tree = applyDirectoryReplacement(result.Tree, path, replacement)
-	nodes := snapshotNodes(result.Tree)
-	if len(nodes) > maxSnapshotNodes {
+	nodes := snapshotNodes(replacement)
+	ancestors := directoryAncestors(result.Tree, path)
+	lookup := func(p string) *Node {
+		if n := ancestors[p]; n != nil {
+			return n
+		}
+		if within(p, path) {
+			return nodes[p]
+		}
+		return m.baseNodes[p]
+	}
+	nodeCount := m.outsideCount + len(nodes)
+	if nodeCount > maxSnapshotNodes {
 		return nil, fmt.Errorf("补充后超过 25 万明细节点，请发起新扫描")
 	}
-	records := []InodeRecord{}
-	for _, r := range base.Accounting {
-		if !complete || !within(r.Path, path) || (nodes[r.Path] != nil && nodes[r.Path].SizeUnknown) {
-			records = append(records, r)
+	result.Accounting = base.Accounting
+	if complete {
+		records := make([]InodeRecord, 0, len(m.outsideAccounting)+len(physical.Accounting))
+		records = append(records, m.outsideAccounting...)
+		for _, r := range m.insideAccounting {
+			if nodes[r.Path] != nil && nodes[r.Path].SizeUnknown {
+				records = append(records, r)
+			}
 		}
-	}
-	for _, r := range physical.Accounting {
-		if nodes[r.Path] != nil && !nodes[r.Path].SizeUnknown {
-			records = append(records, r)
+		for _, r := range physical.Accounting {
+			if nodes[r.Path] != nil && !nodes[r.Path].SizeUnknown {
+				records = append(records, r)
+			}
 		}
+		result.Accounting = records
 	}
-	result.Accounting = records
 	fsByDevice := map[string]object{}
 	for _, fs := range base.Filesystems {
 		fsByDevice[fmt.Sprint(fs["device"])] = maps.Clone(fs)
@@ -212,7 +233,10 @@ func mergeDirectoryResult(base *Snapshot, physical *physicalScan, path string, c
 		return fmt.Sprint(result.Filesystems[i]["device"]) < fmt.Sprint(result.Filesystems[j]["device"])
 	})
 	warnings := []Warning{}
-	observedNodes := snapshotNodes(rawRoot)
+	var observedNodes map[string]*Node
+	if len(result.Warnings) > 0 {
+		observedNodes = snapshotNodes(rawRoot)
+	}
 	for _, w := range result.Warnings {
 		if strings.HasPrefix(w.Message, "可写层：") {
 			continue
@@ -223,21 +247,29 @@ func mergeDirectoryResult(base *Snapshot, physical *physicalScan, path string, c
 		warnings = append(warnings, w)
 	}
 	warnings = append(warnings, physical.Warnings...)
-	layers, layerWarnings := writableLayers(result.Containers, result.Tree)
+	limited := !deviceKnown || result.Tree.OmittedReferences > 0 || m.outsideLimited
+	deferred := map[string]bool{}
+	references := append([]*Node{}, m.outsideReferences...)
+	for _, n := range nodes {
+		if n.Scanning || n.SizeUnknown {
+			limited = true
+			markDeferred(deferred, n.Path)
+		}
+		if n.Kind == "reference" {
+			references = append(references, n)
+		}
+	}
+	layers, layerWarnings := writableLayersFromIndex(result.Containers, lookup, references, func(p string) bool { return deferred[p] || m.outsideDeferred[p] })
 	result.Warnings = append(warnings, layerWarnings...)
 	if result.Scan == nil {
 		result.Scan = object{}
 	}
-	result.Scan["retained_nodes"] = len(nodes) - 1
+	result.Scan["retained_nodes"] = nodeCount - 1
 	result.Scan["omitted_references"] = result.Tree.OmittedReferences
 	result.Scan["error_count"] = result.Tree.Errors
 	result.Scan["excluded_entries"] = result.Tree.Excluded
 	result.Scan["permission_denied"] = result.Tree.PermissionDenied
 	result.Scan["writable_layers"] = layers
-	limited := !deviceKnown || result.Tree.OmittedReferences > 0
-	for _, n := range nodes {
-		limited = limited || n.Scanning || n.SizeUnknown
-	}
 	result.Scan["lazy_accounting_limited"] = limited
 	result.Scan["last_incremental"] = object{"path": path, "backend": physical.Backend, "visited_entries": physical.Visited, "allocated_delta": result.Tree.Allocated - base.Tree.Allocated, "complete": complete}
 	result.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -254,6 +286,9 @@ func mergeDirectoryResult(base *Snapshot, physical *physicalScan, path string, c
 		result.DirectoryAnalyses[path] = DirectoryAnalysis{ObservedAt: result.UpdatedAt, Analysis: physical.Analysis}
 	}
 	if err := validateIncrementalNodes(nodes); err != nil {
+		return nil, err
+	}
+	if err := validateIncrementalNodes(ancestors); err != nil {
 		return nil, err
 	}
 	return &result, nil

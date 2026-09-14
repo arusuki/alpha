@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/url"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -16,6 +17,11 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 	p := newTestPlatform(t)
 	p.login(true, "administrator", "A-test-password-123")
 	p.configure()
+	deep := filepath.Join(p.storage, "a", "b", "c", "d", "e", "f", "g", "h")
+	if err := os.MkdirAll(deep, 0700); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(deep, "deep.bin"), []byte("deep data"))
 	job := p.expect(202, "POST", "/api/jobs", nil, nil)
 	id := job["id"].(string)
 	if done := waitJob(t, p.db, id); done["status"] != "completed" {
@@ -43,11 +49,18 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 	}
 	initial := compare()
 	mustWrite(t, filepath.Join(p.storage, "new.parquet"), make([]byte, 32768))
-	expansion := p.expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 2}, nil)
+	expansion := p.expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 32}, nil)
+	if numberInt64(expansion["config"].(object)["max_depth"]) != 32 {
+		t.Fatal("requested depth did not reach worker plan")
+	}
 	if done := waitJob(t, p.db, expansion["id"].(string)); done["status"] != "completed" {
 		t.Fatalf("expansion failed: %v", done)
 	}
 	current := compare()
+	record, err := p.api.ReadSnapshot(id)
+	if err != nil || snapshotNodes(record.Tree)[filepath.Join(deep, "deep.bin")] == nil {
+		t.Fatalf("one API exploration did not retain deep descendants: %v", err)
+	}
 	if numberInt64(current["revision"]) <= numberInt64(initial["revision"]) || !strings.Contains(httpapi.JSONText(current["analysis"]), "new.parquet") {
 		t.Fatalf("stale query: %v", current)
 	}

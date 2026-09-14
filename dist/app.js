@@ -217,11 +217,17 @@ function renderExplorer() {
     ${node.errors || node.excluded_entries ? '<p class="explorer-notice">部分内容读取失败或已排除，保留已知占用。</p>' : ''}
     ${current.reference ? '<p class="explorer-notice">正在查看引用目标的明细。这份空间已在其他路径记账，不会重复计入空间用量。</p>' : ''}
     <div class="map-toolbar"><label><span class="sr-only">搜索图中区块</span><input id="mapSearch" type="search" placeholder="搜索图中区块" value="${esc(explorer.query)}"></label><div id="mapGroupNavigation"></div></div>
+    <div id="directoryDepthControl" class="directory-depth" hidden><label for="directoryDepth">单次探索深度</label><select id="directoryDepth" aria-describedby="directoryDepthHint">${Array.from({length:32},(_,i)=>`<option value="${i+1}">${i+1} 层</option>`).join('')}</select><small id="directoryDepthHint">一次保留多层明细，减少下钻时重复扫描。</small></div>
     <div class="map-surface"><div id="directoryMap" class="directory-map" aria-label="当前目录空间地图"></div><div id="directorySelection" class="map-inspector" hidden></div></div>
     <div id="mapUnmeasured" class="map-unmeasured"></div>
     <div id="directoryStatus" class="map-status" role="status" aria-live="polite"></div>
     <p class="map-note">点击目录进入 · 点击灰块扫描 · 点击“其他”展开小项。已知占用按面积显示；未知和零占用另标状态。</p>
     ${node.kind === 'root' ? '' : `<details class="physical-path"><summary>查看宿主机记账路径</summary><p class="mono">${esc(node.path)}</p>${source.path !== source.node.path ? `<p>此来源通过引用指向同一份数据：<span class="mono">${esc(source.path)}</span>。以上大小为目标的已统计范围，不新增空间。</p>` : ''}</details>`}`;
+  $('directoryDepth').value = String(platform.expandDepth || 3);
+  $('directoryDepth').addEventListener('change',e => {
+    const depth = Number(e.target.value);
+    if (Number.isInteger(depth) && depth >= 1 && depth <= 32) platform.expandDepth = depth;
+  });
   renderDirectoryMap(); refreshDirectoryScan();
   if (explorer.focus != null) showEntry(explorer.focus);
   $('mapSearch').addEventListener('input',e => { explorer.query = e.target.value; explorer.page = 0; explorer.unknownPage = 0; renderDirectoryMap(); });
@@ -274,6 +280,8 @@ function refreshDirectoryScan() {
   const readError = p.changesError && p.changesError.id === snapshot.job_id ? p.changesError.message : '';
   const error = p.expandError && p.expandError.job === snapshot.job_id && p.expandError.path === current ? p.expandError.message : failed ? job.error || '扫描已停止，已读取的明细已保留。' : '';
   const pending = explorer.entries.some(e=>e.pending);
+  $('directoryDepthControl').hidden = p.user.role !== 'admin' || !pending;
+  $('directoryDepth').disabled = !!(p.active || p.expandStarting || reading || readError);
   const text = busy ? `${job.status === 'cancelling' ? '正在停止扫描' : '正在扫描，区块实时更新'} · ${(progress.entries || 0).toLocaleString('zh-CN')} 项已遍历` : p.expandStarting === current ? '正在启动扫描…' : error ? `${error} 点击灰块重试。` : p.user.role !== 'admin' && pending ? '待分析区块需要管理员扫描。' : pending ? '点击灰块，读取并拆分这部分占用。' : '';
   $('directoryStatus').innerHTML = `<span>${esc(text)}</span>${busy && p.user.role === 'admin' ? `<button data-cancel-expansion="${esc(job.id)}" ${job.status === 'cancelling' ? 'disabled' : ''}>停止扫描</button>` : ''}${reading ? '<span>正在读取新增目录明细…</span>' : ''}${readError ? `<span class="error-text">${esc(readError)}</span><button data-retry-changes>重试读取明细</button>` : ''}`;
 }

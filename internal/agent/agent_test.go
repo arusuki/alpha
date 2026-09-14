@@ -73,7 +73,7 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 					if !strings.Contains(httpapi.JSONText(body), "全盘观察") || !strings.Contains(httpapi.JSONText(body), "list_containers") {
 						t.Error("missing overview or tools")
 					}
-					arguments := httpapi.JSONText(object{"path": dir, "revision": 0, "depth": 3})
+					arguments := httpapi.JSONText(object{"path": dir, "revision": 0, "depth": 8})
 					if protocol == "completions" {
 						httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": nil, "tool_calls": []object{{"id": "call_one", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}, {"id": "call_two", "type": "function", "function": object{"name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}}}, "finish_reason": "tool_calls"}}})
 					} else {

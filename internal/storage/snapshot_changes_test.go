@@ -174,7 +174,7 @@ func TestSnapshotChangesPublicMetadataAndRevisionValidation(t *testing.T) {
 	}
 	base.Revision = 1
 	if err := p.db.Transaction(func(tx *sql.Tx) error {
-		if err := storeSnapshot(tx, id, target, base); err != nil {
+		if err := storeSnapshot(tx, id, target, base, nil); err != nil {
 			return err
 		}
 		_, err := tx.Exec("INSERT INTO snapshot_changes(job_id,revision,path) VALUES(?,1,?)", id, target)

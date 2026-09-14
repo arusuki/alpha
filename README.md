@@ -15,7 +15,7 @@
 
 应用层装配平台、存储和 Agent 模块；平台完成会话与请求校验后，通过 `platform.Module` 分发业务请求。各模块的数据表由各自维护的 `schema.sql` 定义，在同一事务中初始化。Agent 通过 `agent.Records` 接口使用应用层注入的 `storage.Service`；两个业务包互不导入。Agent 生命周期和完成状态重试独立于扫描管理器。
 
-Web 的快照、变更读取和目录探索，以及 Agent 的查询工具，共用 `storage.Service`。探索使用原记录 ID、`revision` 和 1–3 层 `depth`，发布到同一条记录；两边都能读到最新已提交版本。目录文件统计也随记录持久化，不维护 Agent 私有的目录快照或缓存。详见 [记录读取与探索](docs/records.md)。
+Web 的快照、变更读取和目录探索，以及 Agent 的查询工具，共用 `storage.Service`。探索使用原记录 ID、`revision` 和 1–32 层 `depth`，发布到同一条记录；两边都能读到最新已提交版本。目录文件统计也随记录持久化，不维护 Agent 私有的目录快照或缓存。详见 [记录读取与探索](docs/records.md)。
 
 ## 启动
 
