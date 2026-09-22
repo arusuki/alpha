@@ -242,7 +242,7 @@ function loadJob(id, historical=false, preserveExplorer=false) {
       $('resultLoadingJob').textContent=`任务 ${id.slice(0,8)}`;
       renderResultLoading({stage:'download',done:0,total:null,detail:'等待服务器读取扫描结果'});
       if(!$('resultLoadingDialog').open)$('resultLoadingDialog').showModal();
-      const prepared=await SnapshotLoader.read(`/api/jobs/${encodeURIComponent(id)}/snapshot`,{signal:pending.controller.signal,onProgress:p=>{if(current())renderResultLoading(p);}});
+      const prepared=await SnapshotLoader.read(`/api/jobs/${encodeURIComponent(id)}/snapshot`,{signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
       if(!current())return false;
       renderResultLoading({stage:'render',done:0,total:1,unit:'个视图',detail:'展示磁盘概览、容器排行与目录明细'});
       // Let the browser paint and handle cancellation before committing the new
@@ -253,7 +253,7 @@ function loadJob(id, historical=false, preserveExplorer=false) {
       platform.loaded=id;platform.followLatest=!historical;platform.skippedAutoLoad=null;
       platform.changesError=null;
       $('resultContent').hidden=false;$('firstScan').hidden=true;
-      renderHistory();controls();message('');startSnapshotStream();
+      renderHistory();controls();message(prepared.cacheError || '');refreshSnapshotCache();startSnapshotStream();
       return true;
     } catch(error) {
       if(error.name==='AbortError' || !current())return false;
@@ -317,6 +317,7 @@ function showPage(page,navigate=true) {
   document.querySelectorAll('.platform-page').forEach(el=>el.hidden=el.id!==`page-${page}`);
   document.querySelectorAll('.platform-nav [data-page]').forEach(el=>{const active=el.dataset.page===(storage?'overview':page);el.classList.toggle('active',active);el.setAttribute('aria-current',active?'page':'false');});
   document.querySelectorAll('#storageNav [data-page]').forEach(el=>el.setAttribute('aria-current',el.dataset.page===page?'page':'false'));
+  $('snapshotCachePanel').hidden=!storage;if(storage)refreshSnapshotCache();
   $('storageNav').hidden=!storage;$('storageMonitor').hidden=!['overview','history'].includes(page);
   $('scanActions').hidden=!['overview','history'].includes(page);$('hostInfo').hidden=!storage;$('dashboardRefresh').hidden=page!=='dashboard';
   if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$('pageTitle').focus?.({preventScroll:true});}
@@ -328,6 +329,44 @@ function showPage(page,navigate=true) {
   if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
 }
 window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||'dashboard',false));
+let cacheListSequence = 0;
+async function refreshSnapshotCache() {
+  const scope=platform.user?.id, generation=platform.generation, sequence=++cacheListSequence;
+  if(!scope)return;
+  const current=()=>generation===platform.generation && sequence===cacheListSequence;
+  try {
+    const rows=await SnapshotCache.list(scope);
+    if(!current())return;
+    rows.sort((a,b)=>b.savedAt-a.savedAt);
+    $('snapshotCacheSummary').textContent=`${rows.length} 条 · ${fmt(rows.reduce((sum,row)=>sum+row.size,0))}`;
+    $('clearSnapshotCache').disabled=!rows.length;
+    $('snapshotCacheError').textContent='';
+    $('snapshotCacheRows').innerHTML=rows.map(row=>`<tr><td>${esc(row.jobId || '扫描结果')}<span class="sub">${esc(row.host || '')}</span></td><td>${esc(dateTime(row.savedAt/1000))}</td><td class="amount" title="${row.size} 字节">${fmt(row.size)}</td><td><button data-delete-cache="${esc(row.url)}">删除缓存</button></td></tr>`).join('') || '<tr><td colspan="4" class="empty">暂无本地缓存，打开扫描结果后会自动缓存。</td></tr>';
+  } catch (_) {
+    if(!current())return;
+    $('snapshotCacheSummary').textContent='缓存不可用';
+    $('snapshotCacheError').textContent='无法访问浏览器本地缓存，请检查浏览器的存储设置。';
+    $('snapshotCacheRows').innerHTML='';$('clearSnapshotCache').disabled=true;
+  }
+}
+async function deleteSnapshotCache(url,button) {
+  const scope=platform.user?.id,generation=platform.generation;
+  if(!scope)return;
+  button.disabled=true;
+  try {
+    await SnapshotCache.remove(scope,url);
+    if(generation!==platform.generation)return;
+    button.disabled=false;
+    await refreshSnapshotCache();
+    message(url?'已删除本地缓存，下次打开结果时将重新下载。':'已清空本地缓存，下次打开结果时将重新下载。');
+  } catch (_) {
+    if(generation===platform.generation){button.disabled=false;$('snapshotCacheError').textContent='删除本地缓存失败，请重试。';}
+  }
+}
+$('clearSnapshotCache').addEventListener('click',e=>deleteSnapshotCache(null,e.currentTarget));
+$('snapshotCacheRows').addEventListener('click',e=>{const button=e.target.closest('[data-delete-cache]');if(button)deleteSnapshotCache(button.dataset.deleteCache,button);});
+$('snapshotCachePanel').addEventListener('toggle',()=>{if($('snapshotCachePanel').open)refreshSnapshotCache();});
+window.addEventListener('focus',()=>{if(platform.user && !$('snapshotCachePanel').hidden)refreshSnapshotCache();});
 function renderHistory() {
   $('jobsBody').innerHTML=platform.history.filter(j=>j.trigger!=='incremental').map(j=>`<tr class="${j.id===platform.loaded?'history-selected':''}"><td>${esc(dateTime(j.created_at))}<span class="sub">${esc(j.created_by)} · ${esc(triggerNames[j.trigger]||j.trigger)} · ${esc(j.id.slice(0,8))}${j.snapshot_revision ? ` · 明细版本 ${j.snapshot_revision}` : ''}</span></td><td><span class="pill status-${esc(j.status)}">${esc(statusNames[j.status]||j.status)}</span>${j.warnings?`<span class="sub">${j.warnings} 条扫描提示</span>`:''}</td><td class="amount">${fmt(j.allocated)}</td><td>${j.status==='completed'?`<button data-open-job="${esc(j.id)}">查看结果</button> `:''}<button data-job-detail="${esc(j.id)}">详情</button>${platform.user && platform.user.role==='admin'?` <button class="danger" data-delete-job="${esc(j.id)}" ${['queued','running','cancelling'].includes(j.status)?'disabled title="任务结束后可删除"':''}>删除</button>`:''}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">还没有扫描记录。任务开始后会自动保存在这里。</td></tr>';
   $('moreHistory').hidden=platform.historyExhausted || platform.history.length<50;

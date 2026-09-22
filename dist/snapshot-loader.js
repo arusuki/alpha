@@ -4,7 +4,7 @@ const SnapshotLoader = (() => {
     ['download','读取扫描结果'],['parse','解析 JSON 文档'],['validate','校验扫描数据'],['index','建立目录索引'],
     ['relations','解析挂载与共享引用'],['aggregate','汇总容器与用户用量'],['transfer','准备目录与统计视图'],['render','展示结果']
   ];
-  function read(url,{signal,onProgress}) {
+  function read(url,{signal,onProgress,scope}) {
     return new Promise((resolve,reject) => {
       if (signal.aborted) { reject(new DOMException('已取消读取结果','AbortError')); return; }
       let worker, settled = false, data, model;
@@ -56,10 +56,10 @@ const SnapshotLoader = (() => {
               }
             }
             setTimeout(() => { if (!settled) worker.postMessage({type:'ack'}); },0);
-          } else if (message.type === 'complete') finish(null,{data,usage:Usage.restore(model)});
+          } else if (message.type === 'complete') finish(null,{data,usage:Usage.restore(model),cacheError:message.cacheError});
         } catch (error) { finish(error); }
       };
-      worker.postMessage({type:'start',url});
+      worker.postMessage({type:'start',url,scope});
     });
   }
   return {read,stages};

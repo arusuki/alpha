@@ -215,7 +215,7 @@ func TestJobsHistoryAndPersistence(t *testing.T) {
 
 func TestSnapshotWorkerAssets(t *testing.T) {
 	p := newTestPlatform(t)
-	for _, path := range []string{"/snapshot.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js", "/dashboard.js", "/process.js", "/agent.js"} {
+	for _, path := range []string{"/snapshot.js", "/snapshot-cache.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js", "/dashboard.js", "/process.js", "/agent.js"} {
 		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 		w := httptest.NewRecorder()
 		p.s.ServeHTTP(w, r)

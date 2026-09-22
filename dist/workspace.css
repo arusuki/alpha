@@ -285,3 +285,12 @@ footer { margin-top:32px; color:#a5a3b3; font-size:.61rem; padding-top:20px; }
 @media(prefers-reduced-motion:reduce) {
   *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; }
 }
+/* Browser-local result files, shared across the storage pages. */
+.snapshot-cache-panel { margin-bottom:20px; }
+.snapshot-cache-panel summary { cursor:pointer; font-weight:600; padding:16px 22px; }
+.snapshot-cache-panel summary span { margin-left:12px; font-weight:400; color:var(--muted,#64748b); }
+.snapshot-cache-panel .panel-heading { padding-top:0; gap:16px; }
+.snapshot-cache-panel .panel-heading p { margin:0; }
+.snapshot-cache-panel>p[role=status]:not(:empty) { padding:0 22px 16px; color:var(--amber); }
+.snapshot-cache-panel button { white-space:nowrap; }
+@media(max-width:600px) { .snapshot-cache-panel .panel-heading { align-items:flex-start; flex-direction:column; } }

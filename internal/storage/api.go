@@ -154,8 +154,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			return 200, job, err
 		}
 		if method == "GET" && action == "/snapshot" {
-			snapshot, err := s.Snapshot(id)
-			return 200, snapshot, err
+			return s.serveSnapshot(w, r, id)
 		}
 		if method == "GET" && action == "/changes" {
 			values := r.URL.Query()["revision"]
@@ -178,8 +177,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if id == nil {
 			return failure(httpapi.NewError(404, "还没有完成的扫描，请先在平台发起扫描"))
 		}
-		snapshot, err := s.Snapshot(*id)
-		return 200, snapshot, err
+		return s.serveSnapshot(w, r, *id)
 	}
 	if method == "PUT" && route == "/api/owners" {
 		value, err := httpapi.RequestBody(w, r)
