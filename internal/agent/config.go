@@ -11,16 +11,16 @@ import (
 )
 
 type Config struct {
-	Protocol       string `json:"protocol"`
-	Endpoint       string `json:"endpoint"`
-	Model          string `json:"model"`
-	APIKey         string `json:"api_key"`
-	MaxRounds      int    `json:"max_rounds"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
+	Protocol         string `json:"protocol"`
+	Endpoint         string `json:"endpoint"`
+	Model            string `json:"model"`
+	APIKey           string `json:"api_key"`
+	TimeoutSeconds   int    `json:"timeout_seconds"`
+	ReasoningSummary bool   `json:"reasoning_summary"`
 }
 
 func defaultConfig() Config {
-	return Config{Protocol: "responses", Endpoint: "https://api.openai.com/v1", MaxRounds: 12, TimeoutSeconds: 180}
+	return Config{Protocol: "responses", Endpoint: "https://api.openai.com/v1", TimeoutSeconds: 180}
 }
 
 func (c Config) endpointURL() (string, error) {
@@ -56,8 +56,8 @@ func (c Config) validate() error {
 	if len(c.Model) > 200 || strings.ContainsAny(c.Model, "\r\n") || len(c.APIKey) > 8192 || strings.ContainsAny(c.APIKey, "\r\n") {
 		return httpapi.NewError(400, "模型名或 API Key 格式无效")
 	}
-	if c.MaxRounds < 1 || c.MaxRounds > 30 || c.TimeoutSeconds < 10 || c.TimeoutSeconds > 600 {
-		return httpapi.NewError(400, "工具轮次需为 1–30，单次模型请求超时需为 10–600 秒")
+	if c.TimeoutSeconds < 10 || c.TimeoutSeconds > 600 {
+		return httpapi.NewError(400, "单次模型请求超时需为 10–600 秒")
 	}
 	return nil
 }
@@ -74,7 +74,7 @@ func (d *Store) agentConfig() (Config, int64, error) {
 }
 
 func publicConfig(c Config, revision int64) object {
-	return object{"revision": revision, "value": object{"protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "max_rounds": c.MaxRounds, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != ""}}
+	return object{"revision": revision, "value": object{"protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != "", "reasoning_summary": c.ReasoningSummary}}
 }
 
 func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (object, error) {
@@ -106,8 +106,8 @@ func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (obj
 			err = json.Unmarshal(v, &c.Endpoint)
 		case "model":
 			err = json.Unmarshal(v, &c.Model)
-		case "max_rounds":
-			err = json.Unmarshal(v, &c.MaxRounds)
+		case "reasoning_summary":
+			err = json.Unmarshal(v, &c.ReasoningSummary)
 		case "timeout_seconds":
 			err = json.Unmarshal(v, &c.TimeoutSeconds)
 		case "api_key":

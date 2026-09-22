@@ -15,7 +15,7 @@ function element(id){
   if(!elements.has(id))elements.set(id,{value:'',checked:false,disabled:false,hidden:false,textContent:'',innerHTML:'',listeners:{},setAttribute(){},addEventListener(type,fn){this.listeners[type]=fn;},reset(){}});
   return elements.get(id);
 }
-let config={revision:1,value:{protocol:'responses',endpoint:'https://model.example/v1',model:'test-model',max_rounds:12,timeout_seconds:180,has_api_key:true}};
+let config={revision:1,value:{protocol:'responses',endpoint:'https://model.example/v1',model:'test-model',timeout_seconds:180,has_api_key:true}};
 const requests=[];let accountLoads=0,failSave=false,pendingLoad=null,pendingSave=null;
 const sandbox={console,window:{},$:element,platform:{user:{username:'admin',role:'admin'}},loadAccounts:async()=>{accountLoads++;},message(){},api:async(path,options={})=>{
   requests.push({path,options});assert.equal(path,'/api/agent/settings');
@@ -35,9 +35,10 @@ const submit=()=>element('agentSettingsForm').listeners.submit({preventDefault()
   run('window.SettingsUI.reset();window.SettingsUI.open()');await flush();
   assert.equal(accountLoads,1);assert.equal(element('settingsUsername').textContent,'admin');assert.equal(requests.length,0);
   run('window.SettingsUI.openModel()');await flush();assert.equal(element('agentModel').value,'test-model');assert(element('agentKeyState').textContent.includes('已保存'));assert.equal(element('agentKey').value,'');assert(!element('agentSaveSettings').disabled);
-  element('agentKey').value='new-secret';element('agentProtocol').value='completions';await submit();
+  element('agentReasoningSummary').checked=true;element('agentKey').value='new-secret';element('agentProtocol').value='completions';await submit();
   assert.equal(JSON.parse(requests[requests.length-1].options.body).value.api_key,'new-secret');assert.equal(config.value.protocol,'completions');assert.equal(element('agentKey').value,'');assert.equal(run('settingsState.model.revision'),2);
   await submit();assert(config.value.has_api_key,'blank Key must preserve stored credentials');
+  assert.equal(config.value.reasoning_summary,true);
   element('agentClearKey').checked=true;await submit();assert(!config.value.has_api_key);assert(!element('agentClearKey').checked);
   failSave=true;await submit();assert(element('agentSettingsError').textContent.includes('重新载入'));assert(!element('agentSaveSettings').disabled);failSave=false;
   pendingLoad={};const loading=run('loadModelSettings()');assert(element('agentSaveSettings').disabled);run('window.SettingsUI.reset()');pendingLoad.resolve(config);await loading;pendingLoad=null;assert.equal(run('settingsState.model'),null);assert.equal(element('agentKey').value,'');assert.equal(element('agentSettingsStatus').textContent,'');

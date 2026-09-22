@@ -95,7 +95,7 @@
     <section id="page-overview" class="platform-page" hidden>
       <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
       <section class="agent-entry panel" data-admin aria-label="Agent 辅助分析">
-        <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>定位重点容器，区分挂载与可写层，整理数据资产、时间分布和清理候选。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
+        <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>每 4 个容器一组，聚焦大文件与目录，归并为可删除、有争议、必须保留和放错位置四类。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
         <div class="agent-entry-actions"><button id="generateReport" class="primary" disabled>生成空间报告</button><button id="viewReports">查看分析记录</button></div>
       </section>
       <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先发现这台机器上的容器</h2><p id="firstScanHint">在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
@@ -152,8 +152,9 @@
       <p id="agentSettingsError" class="error-text" role="alert"></p>
       <div class="form-grid"><label>接口类型<select id="agentProtocol"><option value="responses">Responses</option><option value="completions">Chat Completions</option></select></label><label>模型名称<input id="agentModel" maxlength="200" required placeholder="填写服务支持的模型 ID"></label></div>
       <label>Endpoint<input id="agentEndpoint" type="url" required placeholder="https://api.openai.com/v1"><small>支持 API 基础地址或完整接口地址，也支持本地 OpenAI 兼容服务。</small></label>
+      <label class="checkbox-label"><input id="agentReasoningSummary" type="checkbox">请求公开思考摘要（仅 Responses；需要模型支持）</label>
       <label>API Key<input id="agentKey" type="password" maxlength="8192" autocomplete="new-password" placeholder="留空保留已保存的 Key"><small id="agentKeyState">Key 只在服务器保存，不会回传到浏览器。</small></label>
-      <div class="form-grid three"><label>每轮最多工具轮次<input id="agentRounds" type="number" min="1" max="30" value="12" required></label><label>模型请求超时（秒）<input id="agentTimeout" type="number" min="10" max="600" value="180" required></label><label class="checkbox-label"><input id="agentClearKey" type="checkbox">清除已保存的 Key</label></div>
+      <div class="form-grid"><label>模型请求超时（秒）<input id="agentTimeout" type="number" min="10" max="600" value="180" required></label><label class="checkbox-label"><input id="agentClearKey" type="checkbox">清除已保存的 Key</label></div>
       <p class="form-note">分析会把问题、目录路径和统计结果发送至所配置的模型服务。统计工具只读取文件元数据。</p>
       <div class="form-actions"><button class="primary" id="agentSaveSettings" type="submit">保存模型配置</button><button id="agentReloadSettings" type="button">重新载入</button><span id="agentSettingsStatus" role="status"></span></div>
     </form>
@@ -193,8 +194,13 @@
   <div class="agent-status-line"><strong id="agentRunStatus" role="status" aria-live="polite">准备分析</strong><button id="stopAgent" hidden>停止分析</button></div>
   <p id="agentError" class="error-text" role="alert"></p>
   <p id="agentEmpty" class="agent-empty">在空间用量页点击“生成空间报告”，Agent 会先定位占用大头，再按需补查目录，生成报告。分析在后台进行，可随时关闭此窗口。</p>
-  <div id="agentReports" class="agent-reports"></div>
-  <details id="agentActivity" class="agent-activity" hidden><summary>查看分析过程与证据 <span id="agentActivityCount"></span></summary><div id="agentActivityLog"></div></details>
+  <div id="agentMetrics" class="agent-metrics" hidden></div>
+  <nav class="agent-view-tabs" aria-label="分析视图"><button id="agentConversationTab" aria-pressed="true">对话过程 <span id="agentActivityCount"></span></button><button id="agentReportTab" aria-pressed="false">完整报告</button><button id="agentJumpLatest">跳到最新</button><span id="agentConnection" role="status"></span></nav>
+  <section id="agentActivity" class="agent-activity" aria-label="完整分析对话" hidden>
+    <p class="agent-trace-hint">按时间展示问题、模型公开输出和工具证据。展开每轮上下文，可查看实际发送的指令、消息与工具定义。思考摘要仅在接口提供时显示。</p>
+    <div id="agentActivityLog" class="agent-timeline"></div>
+  </section>
+  <div id="agentReports" class="agent-reports" hidden></div>
   <form id="agentFollowup" class="agent-followup" hidden>
     <label for="agentQuestion">继续排查</label><textarea id="agentQuestion" rows="2" maxlength="4000" placeholder="例如：继续查看最大的可写层中有哪些数据集" required></textarea>
     <div class="agent-suggestions"><button type="button" data-agent-question="继续梳理可写层的数据集和模型，按大小降序列出；明确已覆盖范围与未知项。">数据集与模型</button><button type="button" data-agent-question="补查重点数据资产的文件日期，按 90 天以内、90–180 天、180 天及以上 mtime 分组，各组内按实际占用降序；不要把 mtime 或 ctime 当创建时间。">按时间整理</button><button type="button" data-agent-question="整理可重建缓存、日志和编辑器检查点候选，列出负责人、精确路径、候选占用、证据和需要核实的条件，不执行清理。">清理候选清单</button></div>

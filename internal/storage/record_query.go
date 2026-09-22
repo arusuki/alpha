@@ -19,6 +19,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 	allowed := map[string][]string{
 		"overview": {}, "containers": {"query", "sort_by", "offset", "limit"},
 		"owners": {"offset", "limit"}, "container": {"container"}, "directory": {"path", "offset", "limit"},
+		"nodes": {"paths"},
 	}
 	keys, ok := allowed[operation]
 	if !ok {
@@ -39,6 +40,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 		Path, Container, Query string
 		SortBy                 string `json:"sort_by"`
 		Offset, Limit          int
+		Paths                  []string
 	}
 	args.Limit = 30
 	args.SortBy = "exclusive"
@@ -116,7 +118,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			}
 			return object{"snapshot_id": t.snapshot.JobID, "observed_at": t.snapshot.FinishedAt, "usage": row, "sources": sources, "note": "挂载源可能共享或互相包含，不能直接把 sources 相加"}, nil
 
-		case "directory":
+		case "directory", "nodes":
 			job, err := s.Job(id)
 			if err != nil {
 				return nil, err
@@ -124,6 +126,22 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			var config Config
 			if err = json.Unmarshal([]byte(httpapi.JSONText(job["config"])), &config); err != nil {
 				return nil, err
+			}
+			if operation == "nodes" {
+				// Resolve a batch against one immutable revision. Report validation
+				// must not reload and rebuild the whole record for every finding.
+				items := []object{}
+				for _, requested := range args.Paths {
+					item := object{"requested_path": requested}
+					checked, err := validateDetailPath(requested, config, s.DB.Directory)
+					if err != nil {
+						item["error"] = err.Error()
+					} else {
+						item["node"] = nodeSummary(t.usage.resolve(checked))
+					}
+					items = append(items, item)
+				}
+				return object{"snapshot_id": id, "items": items}, nil
 			}
 			path, err := validateDetailPath(args.Path, config, s.DB.Directory)
 			if err != nil {

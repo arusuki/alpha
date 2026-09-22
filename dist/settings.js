@@ -4,7 +4,8 @@ function modelSettingsError(error){$('agentSettingsError').textContent=error ? e
 function renderModelSettings(result){
   settingsState.model=result;const c=result.value;
   $('agentProtocol').value=c.protocol;$('agentEndpoint').value=c.endpoint;$('agentModel').value=c.model;
-  $('agentRounds').value=c.max_rounds;$('agentTimeout').value=c.timeout_seconds;
+  $('agentReasoningSummary').checked=!!c.reasoning_summary;
+  $('agentTimeout').value=c.timeout_seconds;
   $('agentKey').value='';$('agentClearKey').checked=false;
   $('agentKeyState').textContent=c.has_api_key?'已保存 Key；留空保留。浏览器不会读取已保存的 Key。':'尚未保存 Key；无需认证的本地服务可留空。';
   $('agentSettingsStatus').textContent='模型配置已载入';
@@ -42,7 +43,7 @@ $('agentSettingsForm').addEventListener('submit',async e=>{
   const epoch=settingsState.epoch;settingsState.saving=true;modelSettingsError('');modelSettingsControls();
   try{
     if(!settingsState.model)throw Error('请先载入模型配置');
-    const value={protocol:$('agentProtocol').value,endpoint:$('agentEndpoint').value.trim(),model:$('agentModel').value.trim(),api_key:$('agentKey').value,clear_api_key:$('agentClearKey').checked,max_rounds:Number($('agentRounds').value),timeout_seconds:Number($('agentTimeout').value)};
+    const value={protocol:$('agentProtocol').value,endpoint:$('agentEndpoint').value.trim(),model:$('agentModel').value.trim(),api_key:$('agentKey').value,clear_api_key:$('agentClearKey').checked,timeout_seconds:Number($('agentTimeout').value),reasoning_summary:$('agentReasoningSummary').checked};
     const result=await api('/api/agent/settings',{method:'PUT',body:JSON.stringify({revision:settingsState.model.revision,value})});
     if(epoch!==settingsState.epoch)return;
     renderModelSettings(result);$('agentSettingsStatus').textContent='模型配置已保存';

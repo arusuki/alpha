@@ -37,7 +37,7 @@ func waitAgentSession(t *testing.T, p *testPlatform, id string) object {
 }
 func configureTestAgent(t *testing.T, p *testPlatform, protocol, endpoint string) {
 	t.Helper()
-	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "max_rounds": 4, "timeout_seconds": 10}}, nil)
+	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "timeout_seconds": 10}}, nil)
 
 }
 
@@ -63,6 +63,16 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 				if r.URL.Path != want || r.Header.Get("Authorization") != "Bearer test-secret-key" {
 					t.Errorf("bad provider request: %s", r.URL.Path)
 				}
+				var sessionID string
+				if err := p.db.SQL.QueryRow("SELECT id FROM agent_sessions WHERE status='running'").Scan(&sessionID); err != nil {
+					t.Error(err)
+				}
+				if sessionID == "" || r.Header.Get("X-Opencode-Session") != sessionID {
+					t.Error("model request must carry the analysis session ID across tool rounds and followups")
+				}
+				if !strings.HasPrefix(r.UserAgent(), "project-alpha/") {
+					t.Error("model request must identify the application")
+				}
 				var completed int
 				p.db.SQL.QueryRow("SELECT count(*) FROM jobs WHERE status='completed' AND trigger='agent-full'").Scan(&completed)
 				if completed != 1 {
@@ -73,11 +83,11 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 					if !strings.Contains(httpapi.JSONText(body), "全盘观察") || !strings.Contains(httpapi.JSONText(body), "list_containers") {
 						t.Error("missing overview or tools")
 					}
-					arguments := httpapi.JSONText(object{"path": dir, "revision": 0, "depth": 8})
+					arguments := httpapi.JSONText(object{"path": dir, "depth": 8})
 					if protocol == "completions" {
-						httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": nil, "tool_calls": []object{{"id": "call_one", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}, {"id": "call_two", "type": "function", "function": object{"name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}}}, "finish_reason": "tool_calls"}}})
+						writeModelReply(w, object{"choices": []object{{"message": object{"role": "assistant", "content": nil, "tool_calls": []object{{"id": "call_one", "type": "function", "function": object{"name": "scan_directory", "arguments": arguments}}, {"id": "call_two", "type": "function", "function": object{"name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}}}, "finish_reason": "tool_calls"}}})
 					} else {
-						httpapi.WriteJSON(w, 200, object{"status": "completed", "output": []object{{"id": "rs_test", "type": "reasoning", "summary": []object{}, "encrypted_content": "opaque-reasoning"}, {"type": "function_call", "id": "fc_one", "call_id": "call_one", "name": "scan_directory", "arguments": arguments}, {"type": "function_call", "id": "fc_two", "call_id": "call_two", "name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}})
+						writeModelReply(w, object{"status": "completed", "output": []object{{"id": "rs_test", "type": "reasoning", "summary": []object{}, "encrypted_content": "opaque-reasoning"}, {"type": "function_call", "id": "fc_one", "call_id": "call_one", "name": "scan_directory", "arguments": arguments}, {"type": "function_call", "id": "fc_two", "call_id": "call_two", "name": "get_directory", "arguments": httpapi.JSONText(object{"path": dir, "offset": 0, "limit": 30})}}})
 					}
 					return
 				}
@@ -102,9 +112,9 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 					t.Error("followup missing")
 				}
 				if protocol == "completions" {
-					httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": "统计完成：train.parquet 为数据集候选，实际分配 16384 字节。"}, "finish_reason": "stop"}}})
+					writeModelReply(w, object{"choices": []object{{"message": object{"role": "assistant", "content": "统计完成：train.parquet 为数据集候选，实际分配 16384 字节。"}, "finish_reason": "stop"}}})
 				} else {
-					httpapi.WriteJSON(w, 200, object{"status": "completed", "output": []object{{"type": "message", "role": "assistant", "content": []object{{"type": "output_text", "text": "统计完成：train.parquet 为数据集候选，实际分配 16384 字节。"}}}}})
+					writeModelReply(w, object{"status": "completed", "output": []object{{"type": "message", "role": "assistant", "content": []object{{"type": "output_text", "text": "统计完成：train.parquet 为数据集候选，实际分配 16384 字节。"}}}}})
 				}
 			}))
 			defer mock.Close()
@@ -169,8 +179,8 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			if !reflect.DeepEqual(normalized, fresh) {
 				t.Fatal("tool and web returned different records")
 			}
-			if _, err = tool.call(context.Background(), "scan_directory", httpapi.JSONText(object{"path": dir, "revision": web["revision"], "depth": 1})); err == nil {
-				t.Fatal("tool accepted stale revision")
+			if _, err = tool.call(context.Background(), "scan_directory", httpapi.JSONText(object{"path": dir, "depth": 1})); err != nil {
+				t.Fatalf("tool did not resolve latest revision: %v", err)
 			}
 
 		})
@@ -182,7 +192,7 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	p.expect(401, "GET", "/api/agent/settings", nil, nil)
 	p.login(true, "administrator", "A-test-password-123")
 	p.expect(403, "PUT", "/api/agent/settings", object{}, map[string]string{"X-CSRF-Token": "wrong"})
-	value := object{"protocol": "completions", "endpoint": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key": "keep-this-private", "max_rounds": 5, "timeout_seconds": 30}
+	value := object{"protocol": "completions", "endpoint": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key": "keep-this-private", "timeout_seconds": 30}
 	r := p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
 	if strings.Contains(httpapi.JSONText(r), "keep-this-private") || r["value"].(map[string]any)["has_api_key"] != true {
 		t.Fatal("key leaked or was not saved")
@@ -302,6 +312,29 @@ func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 	_, err := (agentProvider{Config: c}).complete(context.Background(), nil, true)
 	if err == nil || redirected.Load() {
 		t.Fatal("followed model redirect with credentials")
+	}
+}
+
+func TestAgentProviderSessionErrorDoesNotExposeUpstreamText(t *testing.T) {
+	for _, kind := range []string{"MissingSessionID", "secret-key-value"} {
+		t.Run(kind, func(t *testing.T) {
+			mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				httpapi.WriteJSON(w, 400, object{"type": "error", "error": object{"type": kind, "message": "upstream reflected Bearer secret-key-value"}})
+			}))
+			defer mock.Close()
+			c := defaultConfig()
+			c.Endpoint, c.APIKey = mock.URL, "secret-key-value"
+			_, err := (agentProvider{Config: c, SessionID: "test-session"}).complete(context.Background(), nil, true)
+			if err == nil {
+				t.Fatal("accepted upstream error")
+			}
+			if strings.Contains(err.Error(), c.APIKey) || strings.Contains(err.Error(), "upstream reflected") {
+				t.Fatalf("upstream text leaked: %v", err)
+			}
+			if !strings.Contains(err.Error(), "HTTP 400") || strings.Contains(err.Error(), "x-opencode-session") != (kind == "MissingSessionID") {
+				t.Fatalf("wrong error classification: %v", err)
+			}
+		})
 	}
 }
 
@@ -432,7 +465,7 @@ func TestAgentRetriesFailedCompletionWithoutClientPolling(t *testing.T) {
 		if _, err := p.db.SQL.Exec("CREATE TRIGGER fail_agent_completion BEFORE UPDATE OF status ON agent_sessions WHEN NEW.status='completed' BEGIN SELECT RAISE(FAIL,'injected completion failure'); END"); err != nil {
 			t.Error(err)
 		}
-		httpapi.WriteJSON(w, 200, object{"choices": []object{{"message": object{"role": "assistant", "content": "扫描完成"}}}})
+		writeModelReply(w, object{"choices": []object{{"message": object{"role": "assistant", "content": "扫描完成"}}}})
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)

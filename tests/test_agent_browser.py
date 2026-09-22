@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -17,31 +18,55 @@ job = dict(id=record_id, status='completed', trigger='manual', created_by='admin
            allocated=sample['tree']['allocated'])
 report = '''# 空间消耗总报告
 
-## 总览与主要结论
-当前记录中，主要空间集中在模型权重、数据集与训练产物。以下为测试报告。
+9 个容器 · 3 组 · 仅列主要占用；同一物理路径已合并。
 
-## 重点容器与用户排行
-| 容器 | 负责人 | 存储来源 | 容器内路径 | 实际占用 | 证据与建议 |
-| --- | --- | --- | --- | --- | --- |
-| research-worker | alice | bind mount | `/workspace/models` | **120 GiB** | 模型权重候选，需确认任务依赖 |
-| training-worker | bob | 可写层 | `/root/.cache/pip` | 8 GiB | 可重建缓存候选，需确认重建成本 |
+## 1. 可立即删除（无争议）
 
-## 大数据资产与时间分布
-- 90 天以内：模型权重候选。
-- 时间未知：未补查的数据集，不推定为旧文件。
+暂无明确条目。
 
-## 清理候选与长期治理
-候选占用不等于可释放空间。迁出可写层前需要核实使用方和挂载配置。
+## 2. 存在争议
 
-## 覆盖范围、证据与待确认事项
-只读取文件元数据，未验证进程占用或创建时间。
+### 下载与包缓存
+
+| 目录 / 文件（物理路径） | 容器 / 内部路径 | 实际占用 | 文件用途与分类原因 |
+| --- | --- | --- | --- |
+| /private/training-worker/root/.cache/pip | training-worker：/root/.cache/pip | 8 GiB | Python 安装包缓存。尚未确认能否重新获取私有依赖。 |
+
+## 3. 必须保留（无争议）
+
+暂无明确条目。
+
+## 4. 放错位置
+
+### 模型权重
+
+| 目录 / 文件（物理路径） | 容器 / 内部路径 | 实际占用 | 文件用途与分类原因 |
+| --- | --- | --- | --- |
+| /private/research-worker/models | research-worker：/models | **120 GiB** | 模型权重存于容器可写层。应迁入已配置的 /workspace/models 共享挂载。 |
 
 <img src=x onerror="window.reportInjected=true">
 '''
+
 session = dict(id=session_id, title='空间消耗总报告', status='running', model='test-model',
                provider='responses', snapshot_id=record_id, created_at=1789373000, updated_at=1789373000)
 messages, writes, sessions = [], [], []
 lock = threading.RLock()
+continue_stream = threading.Event()
+event_connections = []
+stream_stage = 0
+
+def trace(role, data, tool_name=None):
+    message = dict(id=len(messages)+1, role=role, content=json.dumps(data, ensure_ascii=False), created_at=1789373001+len(messages))
+    if tool_name:
+        message['tool_name'] = tool_name
+    messages.append(message)
+
+
+def request_data(request_id, round):
+    return dict(request_id=request_id, round=round, model='test-model', protocol='responses',
+                context_items=2, context_bytes=12345, request_bytes=14000,
+                context=[dict(role='system', content='只根据实际扫描证据给出结论 <script>bad()</script>'),
+                         dict(role='user', content='生成空间消耗总报告')], tools=[dict(type='function', name='get_directory')])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -59,6 +84,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if path == '/api/agent/sessions/' + session_id + '/events':
+            return self.stream_events(parsed)
         with lock:
             if path == '/api/session':
                 return self.respond(dict(user=dict(id='admin', username='admin', role='admin'), csrf='test'))
@@ -79,9 +106,6 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(sessions=sessions))
             if path == '/api/agent/sessions/' + session_id:
                 after = int(parse_qs(parsed.query).get('after', ['0'])[0])
-                if after and session['status'] == 'running':
-                    session['status'] = 'completed'
-                    messages.append(dict(id=len(messages) + 1, role='assistant', content=report, created_at=1789373030))
                 batch = [m for m in messages if m['id'] > after]
                 return self.respond(dict(session=session, messages=batch, next_after=messages[-1]['id'] if messages else after, has_more=False, active_job=None))
         file = repo / 'dist' / ('index.html' if path == '/' else path.lstrip('/'))
@@ -95,6 +119,43 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
 
+    def stream_events(self, parsed):
+        global stream_stage
+        after = int(parse_qs(parsed.query).get('after', ['0'])[0])
+        event_connections.append(after)
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream')
+        self.end_headers()
+        if stream_stage == 0:
+            with lock:
+                trace('model_delta', dict(request_id='request-one', deltas=[dict(kind='summary', text='先核对最大的目录。'), dict(kind='text', text='正在比较目录占用。'), dict(kind='tool', index=0, name='get_directory', arguments='{"path":')]))
+                stream_stage = 1
+        elif stream_stage == 1:
+            if not continue_stream.wait(15):
+                return
+            with lock:
+                trace('model_response', dict(request_id='request-one', status='completed', text='正在比较目录占用。', summary='先核对最大的目录。', duration_ms=1250,
+                      usage=dict(input_tokens=1200, output_tokens=80, total_tokens=1280, cached_tokens=400, reasoning_tokens=30)))
+                trace('tool_start', dict(call_id='tool-one', arguments='{"path":"/data","limit":20}'), 'get_directory')
+                trace('tool_end', dict(call_id='tool-one', status='completed', result='{"allocated":123456}', duration_ms=40), 'get_directory')
+                trace('model_request', request_data('request-two', 2))
+                trace('model_delta', dict(request_id='request-two', deltas=[dict(kind='text', text=report[:50])]))
+                trace('model_response', dict(request_id='request-two', status='completed', text=report, summary='', duration_ms=350,
+                      usage=dict(input_tokens=1600, output_tokens=400, total_tokens=2000, cached_tokens=800, reasoning_tokens=50)))
+                messages.append(dict(id=len(messages)+1, role='group_report', content='### 第 3/3 组 · 1 个容器\n\n本组主要占用已分类。', created_at=1789373029))
+                messages.append(dict(id=len(messages)+1, role='assistant', content=report, created_at=1789373030))
+                session['status'] = 'completed'
+                stream_stage = 2
+        with lock:
+            batch = [m for m in messages if m['id'] > after]
+            update = dict(session=session, messages=batch, next_after=messages[-1]['id'], has_more=False, active_job=None)
+            raw = json.dumps(update)
+        try:
+            self.wfile.write(('event: session\nid: ' + str(update['next_after']) + '\ndata: ' + raw + '\n\n').encode())
+            self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         with lock:
@@ -103,11 +164,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/agent/reports':
                 assert body == dict(snapshot_id=record_id, revision=7)
                 sessions.append(session)
-                messages.extend([
-                    dict(id=1, role='user', content='生成空间消耗总报告'),
-                    dict(id=2, role='status', content='已读取当前扫描记录与可写层排行'),
-                    dict(id=3, role='tool_call', tool_name='get_directory', content='{"path":"/data"}'),
-                    dict(id=4, role='tool_result', tool_name='get_directory', content='{"allocated":123456}')])
+                messages.append(dict(id=1, role='user', content='生成空间消耗总报告'))
+                messages.append(dict(id=2, role='status', content='第 1/3 组 · 4 个容器：正在核对主要占用'))
+                trace('model_request', request_data('request-one', 1))
                 return self.respond(session, 202)
             if self.path.endswith('/messages'):
                 messages.extend([dict(id=len(messages)+1, role='user', content=body['message']),
@@ -134,11 +193,39 @@ try:
         page.locator('.platform-nav [data-page=overview]').click()
         page.wait_for_function('platform.loaded !== null')
         page.locator('#generateReport').click()
+        page.wait_for_function('document.querySelector("#agentActivityLog").textContent.includes("正在比较目录占用")')
+        assert page.evaluate('agentView.session.status') == 'running'
+        assert page.locator('#agentReports').is_hidden()
+        assert page.locator('#agentActivityLog').inner_text().count('正在比较目录占用') == 1
+        assert '先核对最大的目录' in page.locator('#agentActivityLog').inner_text()
+        assert '等待接口统计' in page.locator('#agentMetrics').inner_text()
+        page.locator('.agent-context > summary').first.click()
+        page.locator('.agent-context details > summary').first.click()
+        assert '只根据实际扫描证据' in page.locator('.agent-context').first.inner_text()
+        assert page.locator('#agentActivityLog script').count() == 0
+        page.screenshot(path='/tmp/project-alpha-agent-streaming-desktop.png', full_page=True)
+        continue_stream.set()
         page.wait_for_function('agentView.session?.status === "completed"')
-        assert page.locator('#agentReports table').count() == 1
+        assert len(event_connections) >= 2, event_connections
+        assert event_connections[1] > event_connections[0]
+        assert page.locator('.agent-context').first.get_attribute('open') is not None
+        assert '3,280 token' in page.locator('#agentMetrics').inner_text()
+        assert '已统计 2/2' in page.locator('#agentMetrics').inner_text()
+        assert page.locator('.agent-model-step').count() == 2
+        assert page.locator('.agent-tool-step').count() == 1
+        assert '40 ms' in page.locator('.agent-tool-step').inner_text()
+        group = page.locator('#agentActivityLog > details').filter(has_text='分组结果')
+        assert group.count() == 1
+        assert group.get_attribute('open') is None
+        group.locator('summary').click()
+        assert '本组主要占用已分类' in group.inner_text()
+        page.locator('#agentReportTab').click()
+        assert page.locator('#agentReports table').count() == 2
         assert page.locator('#agentReports img').count() == 0
         assert not page.evaluate('window.reportInjected || false')
-        assert page.locator('#agentReports h3').filter(has_text='大数据资产').count() == 1
+        for category in ['可立即删除', '存在争议', '必须保留', '放错位置']:
+            assert page.locator('#agentReports h3').filter(has_text=category).count() == 1
+        assert '本组主要占用已分类' not in page.locator('#agentReports').inner_text()
         assert page.locator('#stopAgent').is_hidden()
         assert not page.locator('#sendAgentQuestion').is_disabled()
         page.screenshot(path='/tmp/project-alpha-agent-report-desktop.png', full_page=True)
@@ -160,11 +247,15 @@ try:
         page.locator('#viewReports').click()
         page.wait_for_function('document.querySelectorAll(".agent-report").length === 2')
         page.set_viewport_size(dict(width=390, height=844))
+        assert page.locator('.agent-model-step').count() == 2
+        assert '3,280 token' in page.locator('#agentMetrics').inner_text()
+        page.screenshot(path='/tmp/project-alpha-agent-conversation-mobile.png', full_page=True)
+        page.locator('#agentReportTab').click()
         page.screenshot(path='/tmp/project-alpha-agent-report-mobile.png', full_page=True)
         assert page.evaluate('document.querySelector("#agentDialog").scrollWidth <= document.querySelector("#agentDialog").clientWidth + 1')
         assert len([w for w in writes if w[0] == '/api/agent/reports']) == 1
         assert not errors, errors
         browser.close()
-    print('Chromium Agent report passed: selected record, progress, safe Markdown tables, export, followup, reload recovery, mobile layout and no page errors.')
+    print('Chromium Agent report passed: selected record, incremental SSE, reconnect cursors, context inspection, token usage, safe Markdown tables, export, followup, reload recovery, mobile layout and no page errors.')
 finally:
     server.shutdown()

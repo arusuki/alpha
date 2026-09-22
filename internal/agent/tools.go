@@ -29,7 +29,7 @@ func agentToolSpecs() []toolSpec {
 		{"list_owners", "按去重归属用量查询用户。shared 为跨用户引用，不能加进用户独占排行。", page()},
 		{"get_container", "查看一个容器的可写层、挂载、日志源及扫描状态，取得可用于下钻的物理路径。", object{"container": str("容器完整 ID 或精确名称")}},
 		{"get_directory", "从当前记录中按实际占用列出目录明细，包含 Web 和工具已发布的增量探索结果。不扫描；折叠或未记录时会明确提示。", directory},
-		{"scan_directory", "在当前记录上增量探索已有物理目录，更新原记录并返回新版本和文件统计；Web 页面同步可见。先读取目录取得 revision，仅在明细不足或需要刷新时调用。", object{"path": str("当前记录中已有的物理目录绝对路径"), "revision": object{"type": "integer", "minimum": 0, "description": "最近一次记录查询返回的 revision；冲突时重新读取"}, "depth": object{"type": "integer", "minimum": 1, "maximum": 32, "description": "本次保留的目录层数，1–32"}}},
+		{"scan_directory", "在当前记录上增量探索已有物理目录，更新原记录并返回新版本和文件统计；Web 页面同步可见。服务端串行读取最新版本并发布结果。", object{"path": str("当前记录中已有的物理目录绝对路径"), "depth": object{"type": "integer", "minimum": 1, "maximum": 32, "description": "本次保留的目录层数，1–32"}}},
 	}
 }
 func agentToolDefinitions(protocol string) []object {
@@ -54,7 +54,8 @@ func agentToolDefinitions(protocol string) []object {
 type agentTools struct {
 	agent                              *Manager
 	sessionID, userID, actor, recordID string
-	detailScans                        int
+	reportGroup                        []reportContainer
+	inspectedContainers                map[string]bool
 }
 
 func (t *agentTools) call(ctx context.Context, name, arguments string) (any, error) {
@@ -87,7 +88,6 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 		Path, Container, Query string
 		SortBy                 string `json:"sort_by"`
 		Offset, Limit          int
-		Revision               int64
 		Depth                  int
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
@@ -96,22 +96,43 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 	if _, ok := spec.Properties["limit"]; ok && (args.Limit < 1 || args.Limit > 50 || args.Offset < 0 || args.Offset > 1000000) {
 		return nil, fmt.Errorf("分页 limit 需为 1–50，offset 需为 0–1000000")
 	}
+	if name == "get_container" {
+		result, err := t.agent.records.Query(t.recordID, "container", fields)
+		for _, c := range t.reportGroup {
+			if args.Container == c.ID || args.Container == c.Name {
+				if t.inspectedContainers == nil {
+					t.inspectedContainers = map[string]bool{}
+				}
+				t.inspectedContainers[c.ID] = err == nil
+			}
+		}
+		return result, err
+	}
 
 	if name == "scan_directory" {
-		if args.Revision < 0 || args.Depth < 1 || args.Depth > 32 {
-			return nil, fmt.Errorf("记录版本或探索深度无效")
-		}
-		if t.detailScans >= 6 {
-			return nil, fmt.Errorf("本轮已发起 6 次目录探索，请复用结果或在下一轮继续")
+		if args.Depth < 1 || args.Depth > 32 {
+			return nil, fmt.Errorf("探索深度无效")
 		}
 		ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		_, err := t.agent.scan(ctx, t.sessionID, t.userID, t.actor, func() (object, error) {
-			job, err := t.agent.records.Explore(t.actor, t.recordID, args.Path, args.Revision, args.Depth)
-			if err == nil {
-				t.detailScans++
+			// Resolve the version at execution time: several calls in one model
+			// response cannot know versions published by the preceding calls.
+			current, err := t.agent.records.Query(t.recordID, "directory", map[string]json.RawMessage{"path": fields["path"]})
+			if err != nil {
+				return nil, err
 			}
-			return job, err
+			var version struct {
+				Revision *int64 `json:"revision"`
+			}
+			encoded, err := json.Marshal(current)
+			if err != nil {
+				return nil, err
+			}
+			if err = json.Unmarshal(encoded, &version); err != nil || version.Revision == nil || *version.Revision < 0 {
+				return nil, fmt.Errorf("目录查询未返回有效记录版本")
+			}
+			return t.agent.records.Explore(t.actor, t.recordID, args.Path, *version.Revision, args.Depth)
 		}, false)
 		if err != nil {
 			return nil, err

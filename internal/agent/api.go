@@ -18,7 +18,7 @@ type Handler struct {
 
 func NewHandler(db *Store, manager *Manager) *Handler { return &Handler{db, manager} }
 
-var agentSessionRoute = regexp.MustCompile(`^/api/agent/sessions/([a-f0-9]{32})(/messages|/cancel)?$`)
+var agentSessionRoute = regexp.MustCompile(`^/api/agent/sessions/([a-f0-9]{32})(/messages|/cancel|/events)?$`)
 var recordIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
@@ -73,37 +73,24 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if match := agentSessionRoute.FindStringSubmatch(r.URL.Path); match != nil {
 		id, action := match[1], match[2]
-		if r.Method == "GET" && action == "" {
-			session, err := a.session(id, userID)
-			if err != nil {
-				return fail(err)
-			}
+		if r.Method == "GET" && (action == "" || action == "/events") {
 			after := int64(0)
-			if value := r.URL.Query().Get("after"); value != "" {
+			value := r.URL.Query().Get("after")
+			if action == "/events" && r.Header.Get("Last-Event-ID") != "" {
+				value = r.Header.Get("Last-Event-ID")
+			}
+			if value != "" {
+				var err error
 				after, err = strconv.ParseInt(value, 10, 64)
 				if err != nil || after < 0 {
 					return fail(httpapi.NewError(400, "消息游标无效"))
 				}
 			}
-			messages, err := platform.Rows(s.DB.SQL, "SELECT id,role,content,tool_name,created_at FROM agent_messages WHERE session_id=? AND id>? ORDER BY id LIMIT 201", id, after)
-			if err != nil {
-				return fail(err)
+			if action == "/events" {
+				return s.streamSession(w, r, id, userID, after)
 			}
-			hasMore := len(messages) > 200
-			if hasMore {
-				messages = messages[:200]
-			}
-			if len(messages) > 0 {
-				after = messages[len(messages)-1]["id"].(int64)
-			}
-			var job any
-			if jobID := httpapi.String(session["active_job_id"]); jobID != "" {
-				job, err = a.records.Job(jobID)
-				if err != nil {
-					return fail(err)
-				}
-			}
-			return 200, object{"session": session, "messages": messages, "next_after": after, "has_more": hasMore, "active_job": job}, nil
+			update, err := a.sessionUpdate(id, userID, after)
+			return 200, update, err
 		}
 		if r.Method == "POST" {
 			body, err := httpapi.RequestBody(w, r)

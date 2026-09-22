@@ -20,7 +20,7 @@ calls, writes = [], []
 unavailable = False
 has_records = True
 model = dict(revision=1, value=dict(protocol='responses', endpoint='http://model.test/v1',
-             model='example-model', max_rounds=12, timeout_seconds=180, has_api_key=True))
+             model='example-model', timeout_seconds=180, has_api_key=True))
 
 
 def process(pid, binary, children=None, command=None):

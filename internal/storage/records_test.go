@@ -57,6 +57,17 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 		t.Fatalf("expansion failed: %v", done)
 	}
 	current := compare()
+	batch, err := p.api.Service.Query(id, "nodes", map[string]json.RawMessage{"paths": json.RawMessage(httpapi.JSONText([]string{p.storage, filepath.Join(p.storage, "new.parquet"), filepath.Join(p.storage, "missing"), "/proc"}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items := batch["items"].([]object)
+	if len(items) != 4 || httpapi.JSONText(items[0]["node"]) != httpapi.JSONText(current["node"]) || numberInt64(batch["revision"]) != numberInt64(current["revision"]) {
+		t.Fatalf("batch does not share current record evidence: %v", batch)
+	}
+	if items[1]["node"] == nil || items[2]["node"].(object)["known"] != false || items[3]["error"] == nil {
+		t.Fatalf("batch lost file, missing-path or excluded-path distinctions: %v", batch)
+	}
 	record, err := p.api.ReadSnapshot(id)
 	if err != nil || snapshotNodes(record.Tree)[filepath.Join(deep, "deep.bin")] == nil {
 		t.Fatalf("one API exploration did not retain deep descendants: %v", err)
