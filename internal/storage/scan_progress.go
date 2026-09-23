@@ -122,6 +122,13 @@ func (s *Scanner) observeDevice(dev uint64, path string) {
 	if _, ok := s.capacities[dev]; ok {
 		return
 	}
+	if s.virtualDevices[dev] {
+		return
+	}
+	if _, fs := s.mountForPath(path); virtualFilesystem(fs) {
+		s.virtualDevices[dev] = true
+		return
+	}
 	var fs syscall.Statfs_t
 	if syscall.Statfs(path, &fs) != nil {
 		return

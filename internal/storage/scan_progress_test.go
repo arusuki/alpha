@@ -74,6 +74,24 @@ func TestPhysicalProgressTracksSharedContainersAndCapacity(t *testing.T) {
 	}
 }
 
+func TestVirtualFilesystemIsKeptForAccountingButExcludedFromCapacity(t *testing.T) {
+	root := t.TempDir()
+	var st syscall.Stat_t
+	if err := syscall.Lstat(root, &st); err != nil {
+		t.Fatal(err)
+	}
+	virtual := newScanner(defaultConfig(), []MountInfo{{Path: root, FS: "tmpfs"}}, nil)
+	virtual.observeDevice(uint64(st.Dev), root)
+	if len(virtual.capacities) != 0 || len(virtual.filesystems()) != 1 {
+		t.Fatalf("virtual filesystem capacity leaked or accounting disappeared: %+v %+v", virtual.capacities, virtual.filesystems())
+	}
+	physical := newScanner(defaultConfig(), []MountInfo{{Path: root, FS: "ext4"}}, nil)
+	physical.observeDevice(uint64(st.Dev), root)
+	if len(physical.capacities) != 1 {
+		t.Fatalf("physical filesystem capacity missing: %+v", physical.capacities)
+	}
+}
+
 func TestProgressFinishesExcludedAndMissingContainerResources(t *testing.T) {
 	root := t.TempDir()
 	excluded, missing := filepath.Join(root, "excluded"), filepath.Join(root, "missing")

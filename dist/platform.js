@@ -113,8 +113,9 @@ function renderTask(interval) {
     $('taskContainers').textContent=`容器已处理 ${done} / ${total} · 剩余 ${total-done} 个`;
   }
   const directoryRecord=job.trigger==='incremental' && snapshot && job.config && job.config.base_job_id===snapshot.job_id;
-  const recordCapacity=directoryRecord?snapshot.filesystems.reduce((sum,d)=>sum+d.total,0):null;
-  const available=directoryRecord&&snapshot.filesystems.length?snapshot.filesystems.reduce((sum,d)=>sum+d.available,0):Number.isFinite(p.capacity_available)?p.capacity_available:null;
+  const recordDisks=directoryRecord?diskFilesystems(snapshot.filesystems):[];
+  const recordCapacity=directoryRecord?recordDisks.reduce((sum,d)=>sum+d.total,0):null;
+  const available=directoryRecord&&recordDisks.length?recordDisks.reduce((sum,d)=>sum+d.available,0):Number.isFinite(p.capacity_available)?p.capacity_available:null;
   const scanned=directoryRecord?snapshot.tree.allocated:Number.isFinite(p.allocated)?Math.max(0,p.allocated):Math.max(0,job.allocated || 0);
   const capacity=recordCapacity || (Number.isFinite(p.capacity_total)&&p.capacity_total>0&&p.capacity_known!==false?p.capacity_total:null);
   const preparing=p.phase==='discovering' || p.phase==='preparing' || waiting || !p.phase && running;
@@ -149,7 +150,7 @@ function renderTask(interval) {
 // The idle monitor belongs to the displayed record, regardless of which
 // background operation happened most recently.
 function renderScanSummary(interval) {
-  const filesystems=snapshot.filesystems || [];
+  const filesystems=diskFilesystems(snapshot.filesystems || []);
   const total=filesystems.reduce((sum,d)=>sum+d.total,0);
   const available=filesystems.length?filesystems.reduce((sum,d)=>sum+d.available,0):null;
   const used=filesystems.reduce((sum,d)=>sum+d.used,0);

@@ -8,6 +8,8 @@ const fmt = value => {
   while (n >= 1024 && i < units.length-1) { n /= 1024; i++; }
   return `${n.toLocaleString('zh-CN', {maximumFractionDigits:i ? 2 : 0})} ${units[i]}`;
 };
+const virtualFilesystemTypes = new Set('proc sysfs devtmpfs devpts tmpfs cgroup cgroup2 securityfs debugfs tracefs pstore mqueue hugetlbfs configfs fusectl autofs binfmt_misc rpc_pipefs nsfs overlay squashfs'.split(' '));
+const diskFilesystems = filesystems => filesystems.filter(d => !virtualFilesystemTypes.has(d.fs));
 const containerStates = {running:'运行中',exited:'已停止',created:'未启动',paused:'已暂停',restarting:'重启中',removing:'移除中',dead:'异常'};
 let snapshot = null, usage = null, selected = null, query = '', ownerFilter = null, stateFilter = 'all', sortOrder = 'total-desc', tablePage = 0;
 const pageSize = 25;
@@ -85,12 +87,13 @@ function renderOwners() {
 function renderStorageOverview() {
   const all = [...usage.containers.values()].sort((a,b) => b.exclusive-a.exclusive);
   const total = snapshot.tree.allocated;
+  const disks = diskFilesystems(snapshot.filesystems);
   const segments = all.filter(r => r.exclusive > 0).map(r => ({name:r.container.name,bytes:r.exclusive,color:containerColors.get(r.container.id),id:r.container.id}));
   segments.push({name:'容器共享',bytes:usage.shared,color:'#9472cd',className:'shared-fill'}, {name:'Host · 未关联容器',bytes:usage.unrelated,color:'#72849f',host:true});
-  const capacity = snapshot.filesystems.reduce((sum,d) => sum+d.total,0);
-  const available = snapshot.filesystems.reduce((sum,d) => sum+d.available,0);
-  $('storageOverview').innerHTML = `<div class="panel-heading"><div><span class="eyebrow">STORAGE OVERVIEW</span><h2>磁盘空间分布</h2><p>从整盘到容器与宿主机，找到空间的去向</p></div><div class="capacity-total"><strong>${fmt(snapshot.filesystems.length ? capacity : null)}</strong><span>已发现文件系统总容量 · 可用 ${fmt(snapshot.filesystems.length ? available : null)}</span></div></div>
-    <div class="filesystem-grid">${snapshot.filesystems.map(d => {
+  const capacity = disks.reduce((sum,d) => sum+d.total,0);
+  const available = disks.reduce((sum,d) => sum+d.available,0);
+  $('storageOverview').innerHTML = `<div class="panel-heading"><div><span class="eyebrow">STORAGE OVERVIEW</span><h2>磁盘空间分布</h2><p>从整盘到容器与宿主机，找到空间的去向</p></div><div class="capacity-total"><strong>${fmt(disks.length ? capacity : null)}</strong><span>已发现磁盘文件系统总容量 · 可用 ${fmt(disks.length ? available : null)}</span></div></div>
+    <div class="filesystem-grid">${disks.map(d => {
       const reserved = Math.max(0,d.total-d.used-d.available), denominator = Math.max(d.total,d.used+d.available);
       return `<article class="filesystem-card"><div class="filesystem-heading"><div><span class="disk-icon" aria-hidden="true">▤</span><strong class="mono">${esc(d.mount)}</strong><span class="sub">${esc(d.fs)} · ${fmt(d.total)}</span></div><strong>${percentLabel(d.used,d.total)}<small>已用</small></strong></div><div class="capacity-bar" role="img" aria-label="${esc(d.mount)}：已用 ${fmt(d.used)}，可用 ${fmt(d.available)}，保留 ${fmt(reserved)}"><span style="width:${percent(d.used,denominator)}%;background:#4361d8"></span><span class="reserved-fill" style="width:${percent(reserved,denominator)}%"></span></div><div class="capacity-labels"><span><i style="--swatch:#4361d8"></i>已用 ${fmt(d.used)}</span><span>可用 ${fmt(d.available)}${reserved ? ` · 保留 ${fmt(reserved)}` : ''}</span></div></article>`;
     }).join('') || '<p class="empty">未取得整盘容量，下面展示已扫描的空间。</p>'}</div>

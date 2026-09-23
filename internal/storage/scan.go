@@ -63,6 +63,7 @@ type Scanner struct {
 	devices                               map[uint64]string
 	deviceAllocated                       map[uint64]int64
 	capacities                            map[uint64]scanCapacity
+	virtualDevices                        map[uint64]bool
 	RequireReadOnly                       bool
 	DetailRoots                           map[string]bool
 	rootDevice                            uint64
@@ -81,6 +82,25 @@ func within(path, root string) bool {
 }
 
 var mountEscape = regexp.MustCompile(`\\([0-7]{3})`)
+
+const virtualFilesystemTypes = " proc sysfs devtmpfs devpts tmpfs cgroup cgroup2 securityfs debugfs tracefs pstore mqueue hugetlbfs configfs fusectl autofs binfmt_misc rpc_pipefs nsfs overlay squashfs "
+
+func virtualFilesystem(fs string) bool {
+	return strings.Contains(virtualFilesystemTypes, " "+fs+" ")
+}
+
+func (s *Scanner) mountForPath(path string) (string, string) {
+	mount, fs := "", "unknown"
+	for _, m := range s.Mounts {
+		if within(path, m.Path) && len(m.Path) > len(mount) {
+			mount, fs = m.Path, m.FS
+		}
+	}
+	if mount == "" {
+		mount = path
+	}
+	return mount, fs
+}
 
 func mountTable() []MountInfo {
 	f, err := os.Open("/proc/self/mountinfo")
@@ -128,11 +148,10 @@ func newScanner(c Config, mounts []MountInfo, progress func(object) error) *Scan
 	for i, p := range c.Exclude {
 		c.Exclude[i] = fsutil.Canonical(p)
 	}
-	s := &Scanner{Config: c, Mounts: mounts, Progress: progress, seen: map[inode]string{}, required: map[string]bool{}, skip: map[string]bool{}, devices: map[uint64]string{}, deviceAllocated: map[uint64]int64{}, Errors: []Warning{}, started: time.Now()}
+	s := &Scanner{Config: c, Mounts: mounts, Progress: progress, seen: map[inode]string{}, required: map[string]bool{}, skip: map[string]bool{}, devices: map[uint64]string{}, deviceAllocated: map[uint64]int64{}, virtualDevices: map[uint64]bool{}, Errors: []Warning{}, started: time.Now()}
 	s.capacities = map[uint64]scanCapacity{}
-	pseudo := " proc sysfs devtmpfs devpts tmpfs cgroup cgroup2 securityfs debugfs tracefs pstore mqueue hugetlbfs configfs fusectl autofs binfmt_misc rpc_pipefs nsfs overlay squashfs "
 	for _, m := range mounts {
-		if strings.Contains(pseudo, " "+m.FS+" ") {
+		if virtualFilesystem(m.FS) {
 			s.skip[m.Path] = true
 		}
 	}
@@ -529,16 +548,7 @@ func (s *Scanner) filesystems() []object {
 			s.recordError(path, fmt.Errorf("filesystem capacity: %w", err))
 			continue
 		}
-		mount, fs := "", "unknown"
-		for _, m := range s.Mounts {
-			if within(path, m.Path) && len(m.Path) > len(mount) {
-				mount = m.Path
-				fs = m.FS
-			}
-		}
-		if mount == "" {
-			mount = path
-		}
+		mount, fs := s.mountForPath(path)
 		block := v.Frsize
 		if block == 0 {
 			block = v.Bsize
