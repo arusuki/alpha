@@ -24,6 +24,9 @@ type stringFlags []string
 func (s *stringFlags) String() string     { return fmt.Sprint([]string(*s)) }
 func (s *stringFlags) Set(v string) error { *s = append(*s, v); return nil }
 func Run(ctx context.Context, args []string) error {
+	if len(args) == 1 && args[0] == "cleanup-helper" {
+		return storage.ServeCleanupHelper(ctx, os.Stdin, os.Stdout)
+	}
 	if len(args) == 1 && args[0] == "scan-helper" {
 		return storage.ServeScanHelper(ctx, os.Stdin, os.Stdout)
 	}
