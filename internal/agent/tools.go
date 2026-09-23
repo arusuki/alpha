@@ -52,10 +52,10 @@ func agentToolDefinitions(protocol string) []object {
 }
 
 type agentTools struct {
-	agent                              *Manager
-	sessionID, userID, actor, recordID string
-	reportGroup                        []reportContainer
-	inspectedContainers                map[string]bool
+	agent                                       *Manager
+	sessionID, userID, actor, recordID, groupID string
+	reportGroup                                 []reportContainer
+	inspectedContainers                         map[string]bool
 }
 
 func (t *agentTools) call(ctx context.Context, name, arguments string) (any, error) {

@@ -38,9 +38,11 @@ go build -o bin/project-alpha ./cmd/project-alpha
 - 辅助容器默认使用本机已有的 `ubuntu:latest`，通过 `PROJECT_ALPHA_SCAN_HELPER_IMAGE` 指定含 `/usr/sbin/chroot` 的镜像，不自动拉取。服务与 Docker daemon 必须共享宿主机路径视图。
 - 扫描模式：默认 `normal` 最多使用 4 路 Go 并发，`fast` 使用进程可见的全部逻辑 CPU。目录遍历为串行，速度仍受磁盘 I/O 限制。
 
+管理员可在“存储 → 诊断清理”让 Agent 读取完整报告并提取全部路径和说明，筛选、勾选并确认后后台删除实际目录或文件。已结束的提取记录可单独删除并从原报告重新提取，不影响实际磁盘内容。每次删除需在确认窗口输入服务账号的 sudo 密码，仅通过内存管道用于本批提权，不保存密码或复用 sudo 授权；处理结果持久保存，清理后需重新扫描更新空间统计。
+
 SQLite 保存账号、配置和任务；扫描结果保存在 `data/results/`。目录增量更新按节点写入 SQLite，取消时保留已提交的明细。历史记录可在网页删除；备份时停止服务并复制整个数据目录。
 
-1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v9、快照为 v3；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
+1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v11、快照为 v3；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
 
 独立扫描示例：
 
@@ -113,7 +115,7 @@ go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
 ```
 
-浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py`、`python3 tests/test_agent_browser.py`、`python3 tests/test_workspace_browser.py` 和 `python3 tests/test_auth_browser.py`，验证目录下钻、报告生成、追问、导出，以及登录开屏的逐笔绘制、跳过/重播、减少动态效果、总面板、模块导航、进程监控、权限和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
+浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py`、`python3 tests/test_agent_browser.py`、`python3 tests/test_cleanup_browser.py`、`python3 tests/test_workspace_browser.py` 和 `python3 tests/test_auth_browser.py`，验证目录下钻、报告生成、追问、导出，以及登录开屏的逐笔绘制、跳过/重播、减少动态效果、总面板、模块导航、进程监控、权限和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
 
 测试数据位于 `tests/fixtures/snapshot.json`，通过 `go run ./examples --output tests/fixtures/snapshot.json` 重新生成。
 

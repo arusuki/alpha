@@ -34,6 +34,7 @@ func (m testModules) Dispatch(w http.ResponseWriter, r *http.Request, u platform
 type testRecords struct {
 	*storage.Service
 	failStart bool
+	cleanup   func(context.Context, string, string, []string, []byte, func(string, string, string) error) error
 }
 
 func (r *testRecords) StartOverview(actor string) (object, error) {

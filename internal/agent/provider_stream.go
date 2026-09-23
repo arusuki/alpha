@@ -48,11 +48,19 @@ func parseModelUsage(raw object, protocol string) *modelUsage {
 }
 
 type modelDelta struct {
-	Kind      string `json:"kind"`
-	Text      string `json:"text,omitempty"`
-	Index     int    `json:"index,omitempty"`
-	Name      string `json:"name,omitempty"`
-	Arguments string `json:"arguments,omitempty"`
+	Kind         string `json:"kind"`
+	Text         string `json:"text,omitempty"`
+	DroppedBytes int64  `json:"dropped_bytes,omitempty"`
+	Index        int    `json:"index,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Arguments    string `json:"arguments,omitempty"`
+}
+
+func completionReasoning(message object) string {
+	if text := httpapi.String(message["reasoning_content"]); text != "" {
+		return text
+	}
+	return httpapi.String(message["reasoning"])
 }
 
 // Only explicit public fields enter the durable context viewer. Opaque reasoning
@@ -64,7 +72,7 @@ func visibleContext(history []object) []object {
 		if item["type"] == "reasoning" {
 			v = object{"type": "reasoning", "note": "内部推理状态已在内存中传递，不保存或展示"}
 		} else {
-			for _, key := range []string{"role", "type", "content", "refusal", "tool_calls", "tool_call_id", "call_id", "name", "arguments", "output"} {
+			for _, key := range []string{"role", "type", "content", "refusal", "reasoning_content", "reasoning", "tool_calls", "tool_call_id", "call_id", "name", "arguments", "output"} {
 				if value, ok := item[key]; ok {
 					v[key] = value
 				}
@@ -76,10 +84,14 @@ func visibleContext(history []object) []object {
 }
 
 func (p agentProvider) readStream(reader io.Reader) (modelReply, error) {
-	const limit = 8 * 1024 * 1024
+	limit := int64(8 * 1024 * 1024)
+	if p.StreamLimitBytes > 0 {
+		limit = p.StreamLimitBytes
+	}
 	limited := &io.LimitedReader{R: reader, N: limit + 1}
 	scanner := bufio.NewScanner(limited)
-	scanner.Buffer(make([]byte, 4096), limit)
+	scanner.Buffer(make([]byte, 4096), int(limit))
+	tooLarge := func() error { return fmt.Errorf("模型响应超过 %d MB 限制", limit/(1024*1024)) }
 	var data []string
 	message := object{"role": "assistant", "content": ""}
 	calls := map[int]object{}
@@ -135,6 +147,16 @@ func (p agentProvider) readStream(reader io.Reader) (modelReply, error) {
 					finish = f
 				}
 				delta, _ := choice["delta"].(map[string]any)
+				for _, key := range []string{"reasoning_content", "reasoning"} {
+					if text := httpapi.String(delta[key]); text != "" {
+						message[key] = httpapi.String(message[key]) + text
+					}
+				}
+				if text := completionReasoning(delta); text != "" {
+					if err := emit(modelDelta{Kind: "reasoning", Text: text}); err != nil {
+						return false, err
+					}
+				}
 				text := httpapi.String(delta["content"]) + httpapi.String(delta["refusal"])
 				if text != "" {
 					message["content"] = httpapi.String(message["content"]) + text
@@ -214,7 +236,7 @@ func (p agentProvider) readStream(reader io.Reader) (modelReply, error) {
 	}
 	for scanner.Scan() {
 		if limited.N <= 0 {
-			return reply, fmt.Errorf("模型响应超过 8 MB 限制")
+			return reply, tooLarge()
 		}
 		line := scanner.Text()
 		if line == "" {
@@ -231,7 +253,7 @@ func (p agentProvider) readStream(reader io.Reader) (modelReply, error) {
 		}
 	}
 	if limited.N <= 0 {
-		return reply, fmt.Errorf("模型响应超过 8 MB 限制")
+		return reply, tooLarge()
 	}
 	if scanner.Err() != nil {
 		return reply, fmt.Errorf("读取模型流失败，连接中断或请求超时")

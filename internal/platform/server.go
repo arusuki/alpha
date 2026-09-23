@@ -65,8 +65,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js",
 		"/snapshot-loader.js": "snapshot-loader.js", "/snapshot-worker.js": "snapshot-worker.js",
 		"/snapshot-cache.js": "snapshot-cache.js",
-		"/app.js": "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
-		"/agent.js": "agent.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js",
+		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
+		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js",
 		"/style.css": "style.css", "/workspace.css": "workspace.css", "/workspace-art.png": "workspace-art.png",
 		"/auth.css": "auth.css", "/auth.js": "auth.js",
 	}

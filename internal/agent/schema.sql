@@ -12,6 +12,21 @@ CREATE TABLE agent_messages (
  role TEXT NOT NULL, content TEXT NOT NULL, tool_name TEXT, created_at REAL NOT NULL
 );
 CREATE INDEX idx_agent_messages_session ON agent_messages(session_id,id);
+CREATE TABLE agent_reports (
+ message_id INTEGER PRIMARY KEY REFERENCES agent_messages(id) ON DELETE CASCADE,
+ entries TEXT NOT NULL
+);
+CREATE TABLE agent_cleanups (
+ session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
+ report_id INTEGER NOT NULL UNIQUE REFERENCES agent_reports(message_id),
+ phase TEXT NOT NULL DEFAULT 'extract'
+);
+CREATE TABLE agent_cleanup_entries (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_cleanups(session_id) ON DELETE CASCADE,
+ path TEXT NOT NULL, category INTEGER NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL,
+ status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
+ UNIQUE(session_id,path)
+);
 -- Keep record references consistent in the same transaction as record deletion.
 CREATE TRIGGER agent_record_delete_guard BEFORE DELETE ON jobs
 WHEN EXISTS (SELECT 1 FROM agent_sessions WHERE status IN ('queued','scanning','running','cancelling') AND (snapshot_id=OLD.id OR active_job_id=OLD.id))

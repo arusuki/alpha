@@ -52,7 +52,7 @@ func TestProviderStreamsBeforeCompletion(t *testing.T) {
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
 				if protocol == "completions" {
-					fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"正在核对\"}}]}\n\n")
+					fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"先检查目录\",\"content\":\"正在核对\"}}]}\n\n")
 				} else {
 					fmt.Fprint(w, "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"先检查目录\"}\n\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"正在核对\"}\n\n")
 				}
@@ -82,8 +82,12 @@ func TestProviderStreamsBeforeCompletion(t *testing.T) {
 			}()
 			select {
 			case d := <-deltas:
-				if d.Text == "" {
-					t.Error("empty delta")
+				kind := "summary"
+				if protocol == "completions" {
+					kind = "reasoning"
+				}
+				if d.Kind != kind || d.Text != "先检查目录" {
+					t.Errorf("missing incremental thinking: %+v", d)
 				}
 			case <-time.After(3 * time.Second):
 				close(release)
@@ -103,12 +107,59 @@ func TestProviderStreamsBeforeCompletion(t *testing.T) {
 				t.Fatalf("bad reply: %+v", reply)
 			}
 			if protocol == "responses" {
+				if strings.TrimSpace(reply.Summary) != "先检查目录" || reply.Reasoning != "" {
+					t.Fatalf("wrong Responses thinking: %+v", reply)
+				}
 				if !strings.Contains(httpapi.JSONText(reply.Items), "opaque-private") {
 					t.Fatal("lost in-memory reasoning replay")
 				}
 				if strings.Contains(httpapi.JSONText(visibleContext(reply.Items)), "opaque-private") {
 					t.Fatal("private reasoning entered context viewer")
 				}
+			} else if reply.Reasoning != "先检查目录" || reply.Summary != "" || reply.Items[0]["reasoning_content"] != reply.Reasoning {
+				t.Fatalf("lost Completions reasoning or replay: %+v", reply)
+			}
+		})
+	}
+}
+
+func TestCleanupStreamAcceptsDuplicatedResponsesCompletion(t *testing.T) {
+	output := strings.Repeat("x", 5*1024*1024)
+	stream := "data: " + httpapi.JSONText(object{"type": "response.output_text.delta", "delta": output}) + "\n\n" +
+		"data: " + httpapi.JSONText(object{"type": "response.completed", "response": object{"status": "completed", "output": []object{{"type": "message", "content": []object{{"type": "output_text", "text": output}}}}}}) + "\n\n"
+	if _, err := (agentProvider{Config: Config{Protocol: "responses"}}).readStream(strings.NewReader(stream)); err == nil {
+		t.Fatal("ordinary model stream should retain its 8 MB limit")
+	}
+	reply, err := (agentProvider{Config: Config{Protocol: "responses"}, StreamLimitBytes: cleanupStreamLimitBytes}).readStream(strings.NewReader(stream))
+	if err != nil || reply.Text != output {
+		t.Fatalf("cleanup stream lost complete output: length=%d err=%v", len(reply.Text), err)
+	}
+}
+
+func TestCompletionReasoningFragments(t *testing.T) {
+	for _, field := range []string{"reasoning_content", "reasoning"} {
+		t.Run(field, func(t *testing.T) {
+			var stream strings.Builder
+			for _, text := range []string{"先检查目录。\n", "再比较占用。"} {
+				fmt.Fprintf(&stream, "data: %s\n\n", httpapi.JSONText(object{"choices": []object{{"index": 0, "delta": object{field: text}}}}))
+			}
+			prefix := stream.String()
+			stream.WriteString("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"检查完成\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			var thinking string
+			provider := agentProvider{Config: Config{Protocol: "completions"}, OnDelta: func(d modelDelta) error {
+				if d.Kind == "reasoning" {
+					thinking += d.Text
+				}
+				return nil
+			}}
+			reply, err := provider.readStream(strings.NewReader(stream.String()))
+			want := "先检查目录。\n再比较占用。"
+			if err != nil || thinking != want || reply.Reasoning != want || reply.Items[0][field] != want || reply.Text != "检查完成" {
+				t.Fatalf("lost reasoning fragments: %+v %q %v", reply, thinking, err)
+			}
+			thinking = ""
+			if _, err := provider.readStream(strings.NewReader(prefix)); err == nil || thinking != want {
+				t.Fatalf("interrupted thinking lost or treated as complete: %q %v", thinking, err)
 			}
 		})
 	}

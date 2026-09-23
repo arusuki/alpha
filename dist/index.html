@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/auth.css">
   <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
-  <script src="/dashboard.js" defer></script><script src="/process.js" defer></script>
+  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script>
 </head>
 <body>
 <section id="authPanel" class="auth-panel" data-phase="ready" aria-label="project alpha 登录" hidden>
@@ -81,7 +81,7 @@
       </div>
       <div class="dashboard-bottom"><section class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT ACTIVITY</span><h2>最近扫描</h2></div><button class="text-button" data-page="history">全部记录 ↗</button></div><div id="dashboardRecent" class="recent-list"><p class="dashboard-empty">正在读取记录…</p></div></section><section class="panel glance-panel"><span class="eyebrow">AT A GLANCE</span><h2>存储速览</h2><div class="glance-value"><strong id="dashboardAllocated">—</strong><span>最近完整扫描 · 实际占用</span></div><div class="glance-row"><span>当前扫描</span><strong id="dashboardTask">正在读取</strong></div><div class="glance-row"><span>扫描计划</span><strong id="dashboardSchedule">—</strong></div><p id="dashboardUpdated">扫描完成后，统计会出现在这里。</p></section></div>
     </section>
-    <nav id="storageNav" class="module-tabs" aria-label="存储模块导航" hidden><button data-page="overview">空间用量</button><button data-page="history">扫描记录</button><button data-page="scan-settings" data-admin>扫描配置</button></nav>
+    <nav id="storageNav" class="module-tabs" aria-label="存储模块导航" hidden><button data-page="overview">空间用量</button><button data-page="history">扫描记录</button><button data-page="cleanup" data-admin>诊断清理</button><button data-page="scan-settings" data-admin>扫描配置</button></nav>
     <details id="snapshotCachePanel" class="panel snapshot-cache-panel" hidden>
       <summary>本地结果缓存 <span id="snapshotCacheSummary" role="status">正在读取…</span></summary>
       <div class="panel-heading"><p>缓存保存在当前浏览器，每次打开结果都会与服务器校验哈希。删除缓存后，下次打开将重新下载，服务器扫描记录不受影响。</p><button id="clearSnapshotCache" disabled>清空缓存</button></div>
@@ -103,7 +103,7 @@
       <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
       <section class="agent-entry panel" data-admin aria-label="Agent 辅助分析">
         <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>每 4 个容器一组，聚焦大文件与目录，归并为可删除、有争议、必须保留和放错位置四类。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
-        <div class="agent-entry-actions"><button id="generateReport" class="primary" disabled>生成空间报告</button><button id="viewReports">查看分析记录</button></div>
+        <div class="agent-entry-actions"><label class="agent-concurrency-field">最大并行 Agent 数<input id="reportConcurrency" type="number" min="1" max="16" step="1" value="3" aria-label="新报告最大并行 Agent 数"></label><button id="generateReport" class="primary" disabled>生成空间报告</button><button id="viewReports">查看分析记录</button></div>
       </section>
       <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先发现这台机器上的容器</h2><p id="firstScanHint">在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
       <div id="resultContent" hidden>
@@ -135,6 +135,16 @@
         <details id="warnings" class="scan-notes"><summary id="warningSummary">扫描范围与说明</summary><div id="scopeSummary"></div><ul id="warningList"></ul></details>
       </div>
     </section>
+<section id="page-cleanup" class="platform-page management-panel" hidden>
+  <div class="section-heading"><div><h2>从报告到目录清理</h2><p>让 Agent 阅读完整报告，提取全部条目和说明，再选择需要删除的目录或文件。</p></div><button id="cleanupRefresh">刷新报告</button></div>
+  <div class="cleanup-source"><label>完整报告<select id="cleanupReport"><option value="">正在读取报告…</option></select></label><button id="cleanupExtract" class="primary" disabled>提取报告条目</button><button id="cleanupCancel" hidden>停止提取</button><button id="cleanupRemoveHistory" hidden>删除提取记录</button></div>
+  <p id="cleanupSourceHint" class="form-note"></p><p id="cleanupStatus" role="status" class="form-note"></p><p id="cleanupError" role="alert" class="error-text"></p>
+  <section id="cleanupAgentPanel" class="cleanup-agent-panel" aria-labelledby="cleanupAgentTitle" hidden><div class="section-heading"><div><h3 id="cleanupAgentTitle">Agent 提取过程</h3><p>实时查看模型输出及其公开返回的思考内容。Responses 思考摘要需在 Agent 设置中开启并由模型提供。</p></div><span id="cleanupAgentConnection" class="form-note" role="status"></span></div><div id="cleanupAgentLog" class="cleanup-agent-log" role="log" aria-live="off"></div></section>
+  <div class="cleanup-toolbar"><label>分类<select id="cleanupCategory"><option value="">全部分类</option><option value="1">可立即删除</option><option value="2">存在争议</option><option value="3">必须保留</option><option value="4">放错位置</option></select></label><label>搜索条目<input id="cleanupSearch" type="search" placeholder="路径、用途或说明"></label><span id="cleanupSelection" role="status">未选择条目</span><button id="cleanupDelete" class="danger" disabled>删除所选</button></div>
+  <p class="form-note">所有条目默认不勾选。删除会移除宿主机上的实际内容，无法恢复；争议项与放错位置的条目请先核对处理条件。扫描统计是历史记录，清理后需重新扫描。</p>
+  <div class="cleanup-select-all"><input id="cleanupSelectAll" type="checkbox" aria-label="选择当前展开且符合筛选条件的可操作条目" disabled><label for="cleanupSelectAll">选择当前展开的可操作条目</label></div>
+  <div id="cleanupEntries" class="cleanup-groups">选择完整报告后提取条目。</div>
+</section>
 <section id="page-history" class="platform-page management-panel" hidden><div class="section-heading"><div><h2>扫描任务与历史</h2><p>任务记录保存在服务器。选择已完成的任务查看当时的存储状态；管理员可删除已结束的记录。</p></div><button id="reloadHistory">刷新记录</button></div><div class="table-scroll"><table class="jobs-table"><thead><tr><th>时间 / 发起人</th><th>状态</th><th>实际占用</th><th>操作</th></tr></thead><tbody id="jobsBody"></tbody></table></div><button id="moreHistory" hidden>加载更早记录</button><section id="jobDetails" class="job-details" hidden></section></section>
 <section id="page-scan-settings" class="platform-page management-panel" hidden><div class="section-heading"><div><h2>扫描配置</h2><p>保存后用于下一次扫描；正在运行的任务保留启动时的配置。</p></div><button id="reloadSettings">重新载入</button></div><form id="settingsForm" class="settings-form">
 <div class="form-grid"><label>附加宿主机目录 <small>每行一个绝对路径</small><textarea id="cfgRoots" rows="4" placeholder="/srv
@@ -195,26 +205,39 @@
   <div class="form-actions"><button id="cancelResultLoading" type="button" autofocus>取消读取</button></div>
 </dialog>
 <dialog id="agentDialog" class="agent-dialog" aria-labelledby="agentTitle">
-  <div class="dialog-heading"><div><span class="eyebrow">AGENT ANALYSIS</span><h2 id="agentTitle">空间消耗总报告</h2></div><button id="closeAgent" aria-label="关闭分析报告">✕</button></div>
+  <div class="dialog-heading"><div><span class="eyebrow">AGENT ANALYSIS</span><h2 id="agentTitle">空间诊断</h2></div><button id="closeAgent" aria-label="关闭分析报告">✕</button></div>
   <div class="agent-toolbar"><label>分析记录<select id="agentHistory"><option value="">暂无分析记录</option></select></label><button id="reloadReports">刷新记录</button><button id="downloadReport" disabled>导出 Markdown</button><button id="agentModelSettings">模型设置</button></div>
+  <div class="agent-run-config"><label class="agent-concurrency-field">新诊断最大并行 Agent 数<input id="agentConcurrency" type="number" min="1" max="16" step="1" value="3"></label><small>每组独立分析，空位自动补充下一组。</small><button id="startAgentReport" type="button">开始新诊断</button></div>
   <p id="agentReportSource" class="form-note"></p>
   <div class="agent-status-line"><strong id="agentRunStatus" role="status" aria-live="polite">准备分析</strong><button id="stopAgent" hidden>停止分析</button></div>
   <p id="agentError" class="error-text" role="alert"></p>
   <p id="agentEmpty" class="agent-empty">在空间用量页点击“生成空间报告”，Agent 会先定位占用大头，再按需补查目录，生成报告。分析在后台进行，可随时关闭此窗口。</p>
-  <div id="agentMetrics" class="agent-metrics" hidden></div>
-  <nav class="agent-view-tabs" aria-label="分析视图"><button id="agentConversationTab" aria-pressed="true">对话过程 <span id="agentActivityCount"></span></button><button id="agentReportTab" aria-pressed="false">完整报告</button><button id="agentJumpLatest">跳到最新</button><span id="agentConnection" role="status"></span></nav>
-  <section id="agentActivity" class="agent-activity" aria-label="完整分析对话" hidden>
-    <p class="agent-trace-hint">按时间展示问题、模型公开输出和工具证据。展开每轮上下文，可查看实际发送的指令、消息与工具定义。思考摘要仅在接口提供时显示。</p>
-    <div id="agentActivityLog" class="agent-timeline"></div>
-  </section>
-  <div id="agentReports" class="agent-reports" hidden></div>
+  <div id="agentWorkspace" class="agent-workspace" hidden>
+    <aside class="agent-sidebar" aria-label="诊断 Agent 列表">
+      <button id="agentConversationTab" class="agent-sidebar-link" aria-pressed="true">总览与追问</button>
+      <button id="agentReportTab" class="agent-sidebar-link" aria-pressed="false">完整报告 <small id="agentReportReady">待生成</small></button>
+      <div id="agentGroupSection" hidden><p class="agent-sidebar-label">分组 Agent · 每组最多 4 个容器</p><p id="agentConcurrencyStatus" class="agent-concurrency-status"></p><div id="agentGroupList" class="agent-group-list"></div></div>
+      <button id="agentFollowCurrent" class="agent-follow-current" aria-pressed="true" hidden>跟随当前 Agent</button>
+    </aside>
+    <div class="agent-conversation-pane">
+      <div class="agent-pane-heading"><div><h3 id="agentScopeTitle">总览与追问</h3><p id="agentScopeHint"></p></div><div class="agent-pane-actions"><button id="agentRetry" type="button" hidden>重试失败请求</button><button id="agentJumpLatest">跳到最新</button></div></div>
+      <div class="agent-conversation-meta"><span id="agentActivityCount"></span><span id="agentConnection" role="status"></span></div>
+      <p id="agentScopeEmpty" class="agent-scope-empty" hidden></p>
+      <section id="agentActivity" class="agent-activity" aria-label="诊断对话" hidden>
+        <div id="agentActivityLog" class="agent-timeline" role="log" aria-label="模型回复与工具状态" aria-live="polite" aria-relevant="additions" tabindex="0"></div>
+      </section>
+      <div id="agentReports" class="agent-reports" hidden></div>
   <form id="agentFollowup" class="agent-followup" hidden>
-    <label for="agentQuestion">继续排查</label><textarea id="agentQuestion" rows="2" maxlength="4000" placeholder="例如：继续查看最大的可写层中有哪些数据集" required></textarea>
+    <label for="agentQuestion" class="sr-only">继续排查</label><textarea id="agentQuestion" rows="2" maxlength="4000" placeholder="例如：继续查看最大的可写层中有哪些数据集" required></textarea>
     <div class="agent-suggestions"><button type="button" data-agent-question="继续梳理可写层的数据集和模型，按大小降序列出；明确已覆盖范围与未知项。">数据集与模型</button><button type="button" data-agent-question="补查重点数据资产的文件日期，按 90 天以内、90–180 天、180 天及以上 mtime 分组，各组内按实际占用降序；不要把 mtime 或 ctime 当创建时间。">按时间整理</button><button type="button" data-agent-question="整理可重建缓存、日志和编辑器检查点候选，列出负责人、精确路径、候选占用、证据和需要核实的条件，不执行清理。">清理候选清单</button></div>
     <div class="form-actions"><button id="sendAgentQuestion" type="submit" class="primary">继续分析</button><small>只读取文件元数据；问题、路径及统计会发送至所配置的模型服务。</small></div>
   </form>
+    </div>
+  </div>
 </dialog>
 <dialog id="containerDialog" class="container-dialog" aria-labelledby="detailTitle"><div class="dialog-heading"><div><span class="eyebrow">STORAGE EXPLORER / 存储分析</span><h2 id="detailTitle">容器详情</h2></div><button id="closeContainer" aria-label="关闭容器详情">✕</button></div><div id="detail"></div></dialog>
+<dialog id="cleanupDeleteDialog" aria-labelledby="cleanupDeleteTitle"><h2 id="cleanupDeleteTitle">删除所选目录及内容？</h2><p class="form-note">以下是将被永久删除的宿主机物理路径，包括目录内全部内容。此操作无法恢复。</p><div id="cleanupDeletePaths" class="cleanup-delete-paths"></div><label for="cleanupSudoPassword">服务账号的 sudo 密码<input id="cleanupSudoPassword" type="password" autocomplete="off" maxlength="1024" spellcheck="false" autocapitalize="none" data-lpignore="true" data-1p-ignore required aria-describedby="cleanupSudoHint"></label><p id="cleanupSudoHint" class="form-note">输入运行服务的宿主机账号密码，不是平台登录密码。仅用于本次删除，提交或关闭后立即清空，不保存、不记住授权；下次删除需要重新输入。</p><p id="cleanupDeleteError" class="error-text" role="alert"></p><div class="form-actions"><button id="cleanupDeleteClose" autofocus>取消</button><button id="cleanupDeleteConfirm" class="danger">确认永久删除</button></div></dialog>
+<dialog id="cleanupHistoryDialog" aria-labelledby="cleanupHistoryTitle"><h2 id="cleanupHistoryTitle">删除这次提取记录？</h2><p id="cleanupHistoryDetails" class="form-note"></p><p class="form-note">提取过程、思考内容、条目和处理状态将从页面历史中移除，无法恢复。完整报告会保留，可以重新提取；已经删除的磁盘内容不会恢复。</p><p id="cleanupHistoryError" class="error-text" role="alert"></p><div class="form-actions"><button id="cleanupHistoryClose">取消</button><button id="cleanupHistoryConfirm" class="danger">删除提取记录</button></div></dialog>
 <dialog id="deleteJobDialog" aria-labelledby="deleteJobTitle" aria-describedby="deleteJobHint"><h2 id="deleteJobTitle">删除扫描记录？</h2><p id="deleteJobSummary" class="form-note"></p><p id="deleteJobHint" class="form-note"></p><p class="form-note">仅清理平台保存的扫描数据，不会删除宿主机文件或容器。</p><p id="deleteJobError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closeDeleteJob" autofocus>取消</button><button type="button" id="confirmDeleteJob" class="danger">确认删除</button></div></dialog>
 <dialog id="ownerDialog"><form id="ownerForm"><h2>设置容器所属用户</h2><p id="ownerContainer" class="mono"></p><label>所属用户<input id="ownerInput" maxlength="100" placeholder="留空则使用容器标签"></label><p class="form-note">保存平台内的归属映射，用于所有扫描结果的展示。</p><div class="form-actions"><button type="button" id="closeOwner">取消</button><button type="submit" class="primary">保存归属</button></div></form></dialog>
 <dialog id="passwordDialog"><form id="passwordForm"><h2>修改登录密码</h2><label>原密码<input id="oldPassword" type="password" autocomplete="current-password" required maxlength="256"></label><label>新密码<input id="changedPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label><p class="form-note">修改后所有设备的登录会话失效，需要使用新密码重新登录。</p><p id="passwordError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closePassword">取消</button><button type="submit" class="primary">修改密码</button></div></form></dialog>

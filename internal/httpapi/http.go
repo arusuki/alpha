@@ -24,6 +24,7 @@ func RequestBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMes
 		return nil, NewError(415, "请使用 application/json 请求")
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 65536))
+	defer clear(raw)
 	var max *http.MaxBytesError
 	if errors.As(err, &max) || len(raw) == 0 {
 		return nil, NewError(413, "请求体需在 1–65536 字节之间")

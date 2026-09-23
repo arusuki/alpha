@@ -199,7 +199,7 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, protocol, mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+			created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 			sessionID := created["id"].(string)
 			result := waitAgentSession(t, p, sessionID)
 			if result["session"].(object)["status"] != "completed" || created["snapshot_id"] != id {
@@ -215,6 +215,75 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			p.db.SQL.QueryRow("SELECT content FROM agent_messages WHERE session_id=? AND role='assistant'", sessionID).Scan(&final)
 			if groupCount != 3 || finalCount != 1 || strings.Count(final, "| /shared/models |") != 1 || !strings.Contains(final, "版本 24") {
 				t.Fatalf("bad merged report: %d groups %d finals %s", groupCount, finalCount, final)
+			}
+			rows, err := p.db.SQL.Query("SELECT role,content FROM agent_messages WHERE session_id=? ORDER BY id", sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			active, completed, planned := "", 0, false
+			for rows.Next() {
+				var role, content string
+				if err := rows.Scan(&role, &content); err != nil {
+					t.Fatal(err)
+				}
+				switch role {
+				case "report_plan":
+					var plan struct {
+						Groups []struct {
+							ID         string            `json:"id"`
+							Number     int               `json:"number"`
+							Containers []reportContainer `json:"containers"`
+						} `json:"groups"`
+					}
+					if err := json.Unmarshal([]byte(content), &plan); err != nil || len(plan.Groups) != 3 {
+						t.Fatalf("bad sidebar plan: %s, %v", content, err)
+					}
+					for i, group := range plan.Groups {
+						want := fixture.containers[i*4 : min(i*4+4, 9)]
+						if group.ID != fmt.Sprintf("group-%d", i+1) || group.Number != i+1 || httpapi.JSONText(group.Containers) != httpapi.JSONText(want) {
+							t.Fatalf("incorrect agent assignment: %+v", group)
+						}
+					}
+					planned = true
+				case "group_state":
+					var state struct{ ID, Status string }
+					if err := json.Unmarshal([]byte(content), &state); err != nil {
+						t.Fatal(err)
+					}
+					if state.Status == "running" {
+						if !planned || active != "" || state.ID != fmt.Sprintf("group-%d", completed+1) {
+							t.Fatalf("group start out of order: %s", content)
+						}
+						active = state.ID
+					} else {
+						if state.Status != "completed" || active != state.ID {
+							t.Fatalf("group end out of order: %s", content)
+						}
+						active = ""
+						completed++
+					}
+				case "model_request", "model_delta", "model_response", "tool_start", "tool_end", "group_report":
+					var event struct {
+						GroupID string `json:"group_id"`
+					}
+					if err := json.Unmarshal([]byte(content), &event); err != nil {
+						t.Fatal(err)
+					}
+					if active == "" || event.GroupID != active {
+						t.Fatalf("unscoped group event: %s %s", role, content)
+					}
+				case "assistant":
+					if active != "" || completed != 3 {
+						t.Fatal("merged report must be outside every group")
+					}
+				}
+			}
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+			rows.Close()
+			if completed != 3 {
+				t.Fatalf("missing group completion events: %d", completed)
 			}
 			p.expect(202, "POST", "/api/agent/sessions/"+sessionID+"/messages", object{"message": "继续查看缓存"}, nil)
 			result = waitAgentSession(t, p, sessionID)
@@ -261,7 +330,7 @@ func TestDiskReportEmptyRecordSkipsModel(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 0 || !strings.Contains(httpapi.JSONText(result), "没有容器") {
 		t.Fatalf("empty record called model or lacked explanation: %v", result)
@@ -301,7 +370,7 @@ func TestDiskReportRepairsInvalidGroupWithoutRepeatingExploration(t *testing.T) 
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	sessionID := created["id"].(string)
 	result := waitAgentSession(t, p, sessionID)
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 3 || fixture.reads.Load() != 8 {
@@ -379,7 +448,7 @@ func TestReportExploresBeyondFormerRoundLimit(t *testing.T) {
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 15 {
 		t.Fatalf("exploration ended prematurely: %v, requests=%d", result["session"], calls.Load())

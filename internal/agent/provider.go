@@ -15,18 +15,20 @@ import (
 
 type agentToolCall struct{ ID, Name, Arguments string }
 type modelReply struct {
-	Text    string
-	Summary string
-	Usage   *modelUsage
-	Calls   []agentToolCall
-	Items   []object
+	Text      string
+	Summary   string
+	Reasoning string
+	Usage     *modelUsage
+	Calls     []agentToolCall
+	Items     []object
 }
 
 type agentProvider struct {
-	Config    Config
-	SessionID string
-	OnRequest func(object) error
-	OnDelta   func(modelDelta) error
+	Config           Config
+	SessionID        string
+	StreamLimitBytes int64
+	OnRequest        func(object) error
+	OnDelta          func(modelDelta) error
 }
 
 // Keep endpoint and credentials inside this adapter; neither is exposed to tools.
@@ -140,6 +142,7 @@ func parseModelReply(data []byte, protocol string) (modelReply, error) {
 		}
 		message["role"] = "assistant"
 		reply.Text, _ = message["content"].(string)
+		reply.Reasoning = completionReasoning(message)
 		if refusal, _ := message["refusal"].(string); reply.Text == "" && refusal != "" {
 			reply.Text = refusal
 		}

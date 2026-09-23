@@ -6,15 +6,21 @@ import (
 	"project-alpha/internal/httpapi"
 )
 
+const maxReportConcurrency = 16
+
 type reportSource struct {
-	SnapshotID string `json:"snapshot_id"`
-	Revision   int64  `json:"revision"`
+	Concurrency int    `json:"concurrency"`
+	SnapshotID  string `json:"snapshot_id"`
+	Revision    int64  `json:"revision"`
 }
 
-// The report contract lives on the server; the browser selects only its source.
+// The report contract lives on the server; the browser selects its source and concurrency.
 const diskReportRequest = `生成容器空间分析报告：查清空间用途，找出可清理内容及处理条件。按可立即删除、存在争议、必须保留、放错位置四类归并，列出具体路径、实际占用及判断依据。报告不执行删除。`
 
 func (a *Manager) validateReportSource(source *reportSource) error {
+	if source.Concurrency < 1 || source.Concurrency > maxReportConcurrency {
+		return httpapi.NewError(400, "concurrency 必须为 1–16 的整数")
+	}
 	job, err := a.records.Job(source.SnapshotID)
 	if err != nil {
 		return err

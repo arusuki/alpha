@@ -21,17 +21,18 @@ const agentInstructions = `你是磁盘分析助手，用中文回答。自主�
 占用使用 allocated（实际分配字节），未知不当作零，共享路径和父子目录不重复计量。可写层按 upper_path 映射容器路径，挂载按 source → destination 映射，不计 merged。`
 
 type Manager struct {
-	db        *Store
-	records   Records
-	mu        sync.Mutex
-	active    string
-	cancel    context.CancelFunc
-	closed    bool
-	wg        sync.WaitGroup
-	shutdown  chan struct{}
-	stopped   chan struct{}
-	closeOnce sync.Once
-	pending   *agentCompletion
+	db         *Store
+	records    Records
+	mu         sync.Mutex
+	recordGate chan struct{}
+	active     string
+	cancel     context.CancelFunc
+	closed     bool
+	wg         sync.WaitGroup
+	shutdown   chan struct{}
+	stopped    chan struct{}
+	closeOnce  sync.Once
+	pending    *agentCompletion
 }
 
 // Keep ownership until the terminal state is durable. The manager loop retries
@@ -62,7 +63,10 @@ func NewManager(db *Store, records Records) (*Manager, error) {
 	if _, err := db.SQL.Exec("UPDATE agent_sessions SET status='interrupted',error='服务重启，分析已中断，可继续提问',active_job_id=NULL,updated_at=? WHERE status IN ('queued','scanning','running','cancelling')", platform.Now()); err != nil {
 		return nil, err
 	}
-	a := &Manager{db: db, records: records, shutdown: make(chan struct{}), stopped: make(chan struct{})}
+	if _, err := db.SQL.Exec("UPDATE agent_cleanup_entries SET status='uncertain',error='服务重启，删除结果未确认；请检查实际路径后重新扫描' WHERE status='deleting'"); err != nil {
+		return nil, err
+	}
+	a := &Manager{db: db, records: records, recordGate: make(chan struct{}, 1), shutdown: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(a.stopped)
 		ticker := time.NewTicker(time.Second)
@@ -161,6 +165,13 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 		if sessionErr != nil {
 			return nil, sessionErr
 		}
+		var extraction int
+		if err := a.db.SQL.QueryRow("SELECT count(*) FROM agent_cleanups WHERE session_id=?", id).Scan(&extraction); err != nil {
+			return nil, err
+		}
+		if extraction != 0 {
+			return nil, httpapi.NewError(409, "目录提取任务不支持追问，请在诊断清理页面操作")
+		}
 		if httpapi.String(session["snapshot_id"]) == "" {
 			return nil, httpapi.NewError(409, "分析所需的扫描记录不存在，请选择扫描记录重新生成报告")
 		}
@@ -193,13 +204,20 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 	if err != nil {
 		return nil, err
 	}
+	a.launchLocked(id, func(ctx context.Context) error {
+		return a.run(ctx, id, userID, actor, config, source, newSession && source == nil)
+	})
+	return a.session(id, userID)
+}
+
+func (a *Manager) launchLocked(id string, run func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	a.active, a.cancel = id, cancel
 	a.wg.Add(1)
 	go func() {
 		defer a.wg.Done()
 		defer cancel()
-		err := a.run(ctx, id, userID, actor, config, source, newSession && source == nil)
+		err := run(ctx)
 		status, message := "completed", ""
 		if err != nil {
 			status, message = "failed", err.Error()
@@ -214,7 +232,6 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 			log.Printf("Agent completion: %v; will retry", err)
 		}
 	}()
-	return a.session(id, userID)
 }
 func (a *Manager) stop(id, userID string) (object, error) {
 	if _, err := a.session(id, userID); err != nil {
@@ -235,7 +252,27 @@ func (a *Manager) stop(id, userID string) (object, error) {
 	return object{"ok": true}, nil
 }
 
+// Serialize record publication and evidence validation, but never model calls.
+// Waiting for the shared record is cancellable and reads its version only after entry.
+func (a *Manager) lockRecord(ctx context.Context) error {
+	select {
+	case a.recordGate <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			a.unlockRecord()
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+func (a *Manager) unlockRecord() { <-a.recordGate }
+
 func (a *Manager) scan(ctx context.Context, id, userID, actor string, start func() (object, error), waitBusy bool) (string, error) {
+	if err := a.lockRecord(ctx); err != nil {
+		return "", err
+	}
+	defer a.unlockRecord()
 	var job object
 	for {
 		if err := ctx.Err(); err != nil {
@@ -262,15 +299,15 @@ func (a *Manager) scan(ctx context.Context, id, userID, actor string, start func
 	jobID := httpapi.String(job["id"])
 	defer func() {
 		_, _ = a.records.Cancel(jobID, actor)
-		_, _ = a.db.SQL.Exec("UPDATE agent_sessions SET active_job_id=NULL WHERE id=?", id)
+		_, _ = a.db.SQL.Exec("UPDATE agent_sessions SET active_job_id=NULL,status=CASE WHEN status='scanning' THEN 'running' ELSE status END WHERE id=?", id)
 	}()
-	if _, err := a.db.SQL.Exec("UPDATE agent_sessions SET status='scanning',active_job_id=?,updated_at=? WHERE id=?", jobID, platform.Now(), id); err != nil {
+	if _, err := a.db.SQL.Exec("UPDATE agent_sessions SET status=CASE WHEN status='cancelling' THEN status ELSE 'scanning' END,active_job_id=?,updated_at=? WHERE id=?", jobID, platform.Now(), id); err != nil {
 		return "", err
 	}
 	if err := a.records.Wait(ctx, jobID, func() error { return a.authorized(userID) }); err != nil {
 		return "", err
 	}
-	_, err := a.db.SQL.Exec("UPDATE agent_sessions SET status='running',snapshot_id=coalesce(snapshot_id,?),updated_at=? WHERE id=?", jobID, platform.Now(), id)
+	_, err := a.db.SQL.Exec("UPDATE agent_sessions SET status=CASE WHEN status='cancelling' THEN status ELSE 'running' END,snapshot_id=coalesce(snapshot_id,?),updated_at=? WHERE id=?", jobID, platform.Now(), id)
 	return jobID, err
 }
 
@@ -316,7 +353,7 @@ func (a *Manager) run(ctx context.Context, id, userID, actor string, c Config, s
 		return err
 	}
 	if source != nil {
-		return a.runReport(ctx, id, userID, actor, c, snapshotID, overview)
+		return a.runReport(ctx, id, userID, actor, c, snapshotID, overview, source.Concurrency)
 	}
 	history := []object{{"role": "system", "content": agentInstructions + "\n全盘观察（JSON 数据）：\n" + boundedJSON(overview)}}
 	previous, err := platform.Rows(a.db.SQL, "SELECT role,content FROM (SELECT id,role,content FROM agent_messages WHERE session_id=? AND role IN ('user','assistant') ORDER BY id DESC LIMIT 24) ORDER BY id", id)
@@ -324,22 +361,22 @@ func (a *Manager) run(ctx context.Context, id, userID, actor string, c Config, s
 		return err
 	}
 	history = append(history, previous...)
-	return a.runModel(ctx, id, userID, c, tools, history, func(result string) error {
+	return a.runModel(ctx, id, userID, c, tools, history, 0, func(result string) error {
 		return a.message(id, "assistant", result, "")
 	})
 }
 
 // Each group gets a fresh history; followups use the same loop.
-func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, tools *agentTools, history []object, finish func(string) error) error {
+func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, tools *agentTools, history []object, startRound int, finish func(string) error) error {
 	var err error
-	for round := 0; ; round++ {
+	for round := startRound; ; round++ {
 		if err = ctx.Err(); err != nil {
 			return err
 		}
 		if err = a.authorized(userID); err != nil {
 			return err
 		}
-		reply, err := a.complete(ctx, id, c, history, round)
+		reply, err := a.complete(ctx, id, tools.groupID, c, history, round)
 		if err != nil {
 			return err
 		}
@@ -352,7 +389,7 @@ func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, too
 			var invalid reportResultError
 			if errors.As(err, &invalid) {
 				feedback := "结果校验失败：" + invalid.Error() + "。请沿用已有证据修正结果，最终只输出约定的 JSON 对象，不加前言或 Markdown 围栏。"
-				if err = a.message(id, "status", feedback, ""); err != nil {
+				if err = a.modelStatus(id, tools.groupID, feedback); err != nil {
 					return err
 				}
 				history = append(history, object{"role": "user", "content": feedback})
@@ -372,16 +409,13 @@ func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, too
 			if err = a.authorized(userID); err != nil {
 				return err
 			}
-			if err = a.message(id, "tool_start", httpapi.JSONText(object{"call_id": call.ID, "arguments": call.Arguments}), call.Name); err != nil {
+			if err = a.message(id, "tool_start", httpapi.JSONText(object{"group_id": tools.groupID, "call_id": call.ID, "arguments": call.Arguments}), call.Name); err != nil {
 				return err
 			}
 			toolStarted := time.Now()
 			result, toolErr := tools.call(ctx, call.Name, call.Arguments)
 			if ctx.Err() != nil {
 				toolErr = ctx.Err()
-			}
-			if _, err = a.db.SQL.Exec("UPDATE agent_sessions SET status='running',updated_at=? WHERE id=?", platform.Now(), id); err != nil {
-				return err
 			}
 			if toolErr != nil {
 				result = object{"error": toolErr.Error()}
@@ -394,7 +428,7 @@ func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, too
 			if ctx.Err() != nil {
 				toolStatus = "cancelled"
 			}
-			if err = a.message(id, "tool_end", httpapi.JSONText(object{"call_id": call.ID, "result": encoded, "status": toolStatus, "duration_ms": time.Since(toolStarted).Milliseconds()}), call.Name); err != nil {
+			if err = a.message(id, "tool_end", httpapi.JSONText(object{"group_id": tools.groupID, "call_id": call.ID, "result": encoded, "status": toolStatus, "duration_ms": time.Since(toolStarted).Milliseconds()}), call.Name); err != nil {
 				return err
 			}
 			if ctx.Err() != nil {
@@ -405,6 +439,12 @@ func (a *Manager) runModel(ctx context.Context, id, userID string, c Config, too
 			history = append(history, toolOutput(c.Protocol, call, bounded))
 		}
 	}
+}
+func (a *Manager) modelStatus(id, groupID, text string) error {
+	if groupID == "" {
+		return a.message(id, "status", text, "")
+	}
+	return a.message(id, "group_status", httpapi.JSONText(object{"group_id": groupID, "text": text}), "")
 }
 func boundedJSON(v any) string {
 	raw := httpapi.JSONText(v)

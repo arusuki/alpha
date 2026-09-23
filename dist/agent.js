@@ -1,5 +1,5 @@
 'use strict';
-const agentView={epoch:0,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()};
+const agentView={nextConcurrency:3,groups:new Map(),concurrency:null,scope:'main',followActive:true,scopeCounts:new Map(),scrollPositions:new Map(),epoch:0,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()};
 const agentStatusNames={queued:'等待分析',scanning:'补查目录中',running:'正在生成分析',cancelling:'正在停止',completed:'分析完成',failed:'分析失败',cancelled:'分析已停止',interrupted:'分析已中断'};
 const agentToolNames={get_overview:'核对整体占用',list_containers:'查看容器排行',list_owners:'查看用户归属',get_container:'核对容器存储来源',get_directory:'读取目录明细',scan_directory:'补查大目录与文件'};
 const agentBusy=session=>session && ['queued','scanning','running','cancelling'].includes(session.status);
@@ -41,15 +41,36 @@ function reportMarkdown(text){
 }
 function agentControls(){
   const busy=agentBusy(agentView.session),pending=agentView.posting||agentView.reading;
+  $('agentConcurrency').disabled=pending||busy;
+  $('reportConcurrency').disabled=pending||busy;
+  $('startAgentReport').disabled=busy||pending||!snapshot||!platform.loaded||!!platform.resultLoad||!!platform.changesLoad;
   $('generateReport').disabled=!agentAllowed()||!snapshot||!platform.loaded||!!platform.resultLoad||!!platform.changesLoad||agentView.posting;
   $('agentSourceHint').textContent=snapshot&&platform.loaded?`基于当前${platform.followLatest?'':'历史'}扫描 · ${snapshot.host} · ${snapshot.finished_at}；补查结果同步到空间用量。`:'完成扫描后，即可基于当前记录生成总报告。';
   $('agentHistory').disabled=pending;$('reloadReports').disabled=pending;
   $('stopAgent').hidden=!busy;$('stopAgent').disabled=agentView.posting||agentView.session?.status==='cancelling';
   $('downloadReport').disabled=agentView.reading||!agentView.messages.some(m=>m.role==='assistant');
-  $('agentFollowup').hidden=!agentView.session;
+  $('agentFollowup').hidden=!agentView.session||(agentView.tab==='conversation'&&agentView.scope!=='main');
   $('sendAgentQuestion').disabled=pending||busy||!agentView.session?.snapshot_id;
   $('agentQuestion').disabled=pending||busy||!agentView.session?.snapshot_id;
   document.querySelectorAll('[data-agent-question]').forEach(b=>b.disabled=$('agentQuestion').disabled);
+  renderAgentRetry();
+}
+function agentRetryRequests(){
+  const latest=new Map();
+  for(const request of agentView.requests.values())latest.set(request.scope,request);
+  return [...agentView.groups.values()].filter(group=>group.status==='failed').map(group=>latest.get(group.id)).filter(request=>request?.status==='failed');
+}
+function renderAgentRetry(){
+  const requests=agentRetryRequests(),button=$('agentRetry');
+  button.hidden=!requests.length;
+  button.disabled=!requests.length||!agentAllowed()||agentView.posting||agentView.reading||agentBusy(agentView.session)||!agentView.session?.snapshot_id;
+  button.textContent=requests.length>1?`重试失败 Agent（${requests.length}）`:'重试失败请求';
+  button.title=requests.length?`按原并行上限 ${agentView.concurrency} 恢复 ${requests.length} 个失败 Agent，各自从最近失败请求继续${requests.length===1?`（第 ${requests[0].round} 轮）`:''}，保留已完成的工具结果和分组`:'';
+}
+function retryAgentGroups(){
+  const requests=agentRetryRequests();
+  if(!requests.length||$('agentRetry').disabled)return;
+  return postAgentAction('retry',{requests:requests.map(request=>({group_id:request.scope,request_id:request.request_id}))});
 }
 function agentError(error){agentView.error=error?error.message||String(error):'';$('agentError').textContent=agentView.error;}
 function renderAgentSession(job){
@@ -57,14 +78,15 @@ function renderAgentSession(job){
   $('agentRunStatus').textContent=session?(agentStatusNames[session.status]||session.status):'尚未生成报告';
   if(agentBusy(session)){
     const tool=[...agentView.tools.values()].filter(t=>!t.status).at(-1),request=[...agentView.requests.values()].at(-1);
-    if(tool){const args=agentJSON(tool.arguments);$('agentRunStatus').textContent+=` · ${agentToolNames[tool.name]||tool.name}${args.path?' · '+args.path:args.container?' · '+args.container:''}`;}
-    else if(request&&!request.status){$('agentRunStatus').textContent+=` · 第 ${request.round} 次请求 · ${request.text?'正在输出分析':request.summary?'正在生成思考摘要':request.drafts.size?'正在准备工具调用':'等待模型返回公开内容'}`;}
+    if(agentView.groups.size){$('agentRunStatus').textContent+=` · ${agentRunningGroups().length} 个 Agent 分析中`;}
+    else if(tool){const args=agentJSON(tool.arguments);$('agentRunStatus').textContent+=` · ${agentToolNames[tool.name]||tool.name}${args.path?' · '+args.path:args.container?' · '+args.container:''}`;}
+    else if(request&&!request.status){$('agentRunStatus').textContent+=` · ${request.drafts.size?'正在准备查询':request.text&&!agentProse(request.text)?'正在整理结果':request.text?'正在回复':'正在思考'}`;}
   }
   if(job?.progress){const p=job.progress;$('agentRunStatus').textContent+=` · 已遍历 ${(p.entries||0).toLocaleString('zh-CN')} 项${p.path?' · '+p.path:''}`;}
   $('agentReportSource').textContent=session?`模型 ${session.model} · ${dateTime(session.created_at)} · ${session.snapshot_id?'扫描记录 '+session.snapshot_id:'扫描记录已不存在，请重新生成报告'}${session.snapshot_id&&session.snapshot_id!==platform.loaded?' · 与当前页面所查看的记录不同':''}`:'';
   $('agentEmpty').hidden=agentView.messages.length>0;
-  renderAgentMetrics();
   renderAgentPending();
+  renderAgentSidebar();
   if(session?.error)agentError(session.error);
   agentControls();
 }
@@ -78,54 +100,99 @@ function rememberAgentSession(session){
   agentView.sessions=[session,...agentView.sessions.filter(s=>s.id!==session.id)].sort((a,b)=>b.updated_at-a.updated_at);
   renderAgentHistory();
 }
-function agentJSON(text){try{return JSON.parse(text);}catch{return {};}}
-function agentPretty(value){return typeof value==='string'?(()=>{try{return JSON.stringify(JSON.parse(value),null,2);}catch{return value;}})():JSON.stringify(value,null,2);}
-function agentTokens(value){return Number.isFinite(value)?value.toLocaleString('zh-CN'):'未提供';}
+function agentJSON(text){try{return JSON.parse(text)||{};}catch{return {};}}
+function agentStepStatus(status){
+  if(status)return status;
+  if(agentBusy(agentView.session))return 'running';
+  return ['failed','cancelled'].includes(agentView.session?.status)?agentView.session.status:'interrupted';
+}
 function agentDuration(ms){return ms<1000?`${ms} ms`:`${(ms/1000).toFixed(1)} 秒`;}
-function agentDetails(label,value){return `<details><summary>${esc(label)}</summary><pre>${esc(agentPretty(value))}</pre></details>`;}
-function agentContextItem(item,index){
-  const names={system:'系统指令与观察数据',developer:'开发者指令',user:'用户消息',assistant:'助手消息',tool:'工具结果',function_call:'工具调用',function_call_output:'工具结果',reasoning:'推理状态'};
-  const role=item.role||item.type||'消息',content=item.content??item.output??item.arguments??item.note;
-  let readable=content;
-  if(Array.isArray(content))readable=content.map(part=>part.text||part.refusal||agentPretty(part)).join('\n');
-  return `<details><summary>${index+1}. ${esc(names[role]||role)}${item.name?' · '+esc(item.name):''}</summary>${readable!=null?`<pre>${esc(agentPretty(readable))}</pre>`:''}${agentDetails('查看该项完整结构',item)}</details>`;
+// Structured group results are published as readable group_report messages only
+// after validation. Never expose partial JSON (including an unfinished fence).
+function agentProse(text){
+  const value=text.trim();
+  if(value.startsWith('{')||/^\[\s*(?:[\[{"]|$)/.test(value))return '';
+  if(/^```(?:json\b|\s*[\[{])/i.test(value)||['`','``','```','```j','```js','```jso','```json'].includes(value.toLowerCase()))return '';
+  return text;
+}
+function agentBubble(id,time,body,kind='assistant',scope='main'){
+  return `<article ${id?`id="${id}"`:''} class="agent-message agent-${kind}-message"><div class="agent-avatar" aria-hidden="true">${kind==='user'?'你':'A'}</div><div class="agent-bubble"><header><strong>${kind==='user'?'你':scope!=='main'?'Agent '+esc(agentView.groups.get(scope).number):'Agent'}</strong><time>${esc(time)}</time></header>${body}</div></article>`;
+}
+function agentRunningGroups(){return [...agentView.groups.values()].filter(group=>group.status==='running');}
+function followRunningAgent(){
+  if(!agentView.followActive||agentView.groups.get(agentView.scope)?.status==='running')return;
+  const group=agentRunningGroups()[0];if(group)selectAgentScope(group.id,true);
+}
+function agentGroupStatus(group){
+  if(group.status==='queued')return agentBusy(agentView.session)?'queued':'not_started';
+  if(group.status==='running')return agentStepStatus();
+  return group.status;
+}
+const agentGroupStatusNames={queued:'等待中',running:'分析中',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断',not_started:'未开始'};
+function renderAgentSidebar(){
+  const groups=[...agentView.groups.values()];
+  const html=groups.map(group=>{
+    const status=agentGroupStatus(group),selected=agentView.tab==='conversation'&&agentView.scope===group.id;
+    return `<button type="button" class="agent-group-button" data-agent-group="${esc(group.id)}" aria-pressed="${selected}"><span class="agent-group-heading"><strong>Agent ${group.number}</strong><span class="agent-group-status" data-status="${status}">${agentGroupStatusNames[status]}</span></span><small>${group.containers.length} 个容器</small><span class="agent-group-containers">${group.containers.map(c=>`<span title="${esc(c.name||c.id)}">${esc(c.name||c.id)}</span>`).join('')}</span></button>`;
+  }).join('');
+  if($('agentGroupList').innerHTML!==html)$('agentGroupList').innerHTML=html;
+  $('agentGroupSection').hidden=!groups.length;
+  $('agentConcurrencyStatus').textContent=groups.length?`并行上限 ${agentView.concurrency} · 分析中 ${agentBusy(agentView.session)?agentRunningGroups().length:0} · 已完成 ${groups.filter(g=>g.status==='completed').length}/${groups.length}`:'';
+  $('agentFollowCurrent').hidden=!groups.length||!agentBusy(agentView.session);
+  $('agentFollowCurrent').setAttribute('aria-pressed',String(agentView.followActive));
+  $('agentConversationTab').setAttribute('aria-pressed',String(agentView.tab==='conversation'&&agentView.scope==='main'));
+  $('agentReportTab').setAttribute('aria-pressed',String(agentView.tab==='report'));
+  $('agentReportReady').textContent=agentView.messages.some(m=>m.role==='assistant')?'可查看':agentBusy(agentView.session)?'待生成':'未生成';
+  const group=agentView.groups.get(agentView.scope);
+  $('agentScopeTitle').textContent=agentView.tab==='report'?'完整报告':group?`Agent ${group.number}`:'总览与追问';
+  $('agentScopeHint').textContent=agentView.tab==='report'?'各组分析结果汇总':group?`${agentGroupStatusNames[agentGroupStatus(group)]} · ${group.containers.map(c=>c.name||c.id).join('、')}`:'查看任务、最终回复，或继续追问';
+  const tools=[...agentView.tools.values()].filter(t=>t.scope===agentView.scope).length;
+  $('agentActivityCount').textContent=tools?`${tools} 次工具调用`:'';
+  const hasContent=agentView.scopeCounts.get(agentView.scope)>0;
+  $('agentScopeEmpty').hidden=agentView.tab==='report'?agentView.messages.some(m=>m.role==='assistant'):hasContent;
+  $('agentScopeEmpty').textContent=agentView.tab==='report'?(agentBusy(agentView.session)?'分析完成后，完整报告会显示在这里。':'未能生成完整报告，可在左侧查看已完成的分组结果。'):group?(agentGroupStatus(group)==='queued'?'等待空闲名额，任一 Agent 结束后自动开始。':agentGroupStatus(group)==='not_started'?'本次分析已结束，这个 Agent 尚未开始。':agentGroupStatus(group)==='running'?'正在准备分析这些容器…':`此 Agent ${agentGroupStatusNames[agentGroupStatus(group)]}，尚未收到可展示的回复。`):'准备开始诊断…';
+  $('agentWorkspace').hidden=!agentView.session;
+  renderAgentRetry();
+}
+function agentFilterConversation(){
+  document.querySelectorAll('#agentActivityLog > [data-agent-scope]').forEach(node=>{node.hidden=node.dataset.agentScope!==agentView.scope;});
+}
+function selectAgentScope(scope,follow=false){
+  if(agentView.tab==='conversation')agentView.scrollPositions.set(agentView.scope,$('agentActivityLog').scrollTop);
+  agentView.scope=scope;agentView.followActive=follow;
+  agentSetTab('conversation');
+  $('agentActivityLog').scrollTop=agentView.scrollPositions.get(scope)??$('agentActivityLog').scrollHeight;
+}
+function resetAgentGroups(){
+  Object.assign(agentView,{groups:new Map(),concurrency:null,scope:'main',followActive:true,scopeCounts:new Map(),scrollPositions:new Map()});
+  $('agentGroupList').innerHTML='';
 }
 function agentSetTab(tab){
+  if(tab==='report'&&agentView.tab==='conversation')agentView.scrollPositions.set(agentView.scope,$('agentActivityLog').scrollTop);
   agentView.tab=tab;$('agentReports').hidden=tab!=='report';$('agentActivity').hidden=tab!=='conversation'||!agentView.messages.length;
-  $('agentConversationTab').setAttribute('aria-pressed',String(tab==='conversation'));$('agentReportTab').setAttribute('aria-pressed',String(tab==='report'));
-}
-function agentUsageText(usage){
-  if(!usage)return 'Token 用量：接口未提供';
-  return `输入 ${agentTokens(usage.input_tokens)} · 输出 ${agentTokens(usage.output_tokens)} · 合计 ${agentTokens(usage.total_tokens)} token · 缓存输入 ${agentTokens(usage.cached_tokens)} · 推理 ${agentTokens(usage.reasoning_tokens)}`;
-}
-function renderAgentMetrics(){
-  const requests=[...agentView.requests.values()],last=requests.at(-1),reported=requests.filter(r=>r.usage);
-  $('agentMetrics').hidden=!last;
-  if(!last)return;
-  const sum=key=>reported.reduce((n,r)=>n+r.usage[key],0),tools=agentView.messages.filter(m=>m.role==='tool_start').length;
-  const metrics=`<div><span>本次上下文</span><strong>${last.context_items} 项 · ${(last.context_bytes/1024).toFixed(1)} KiB</strong><small>${last.usage?`输入 ${agentTokens(last.usage.input_tokens)} token`:last.status?'接口未提供输入 token':'输入 token 等待接口统计'}</small></div><div><span>本次输出</span><strong>${last.usage?agentTokens(last.usage.output_tokens)+' token':'尚无统计'}</strong><small>${last.usage?`推理 ${agentTokens(last.usage.reasoning_tokens)} · 包含在输出内`:'通常在本次请求结束时返回'}</small></div><div><span>会话累计用量</span><strong>${reported.length?agentTokens(sum('total_tokens'))+' token':'尚无统计'}</strong><small>已统计 ${reported.length}/${requests.length} 次请求${reported.length?` · 输入 ${agentTokens(sum('input_tokens'))} / 输出 ${agentTokens(sum('output_tokens'))}`:''}</small></div><div><span>执行步骤</span><strong>${requests.length} 次请求 · ${tools} 次工具</strong><small>本轮第 ${last.round} 次模型请求</small></div>`;
-  if($('agentMetrics').innerHTML!==metrics)$('agentMetrics').innerHTML=metrics;
+  agentFilterConversation();renderAgentSidebar();agentControls();
 }
 function renderAgentRequest(request){
-  const busy=agentBusy(agentView.session),status=request.status||(busy?'running':'interrupted');
-  const statusText={running:'等待模型输出',completed:'模型响应完成',failed:'响应失败 · 内容未完成',cancelled:'已停止 · 内容未完成',interrupted:'已中断 · 内容未完成'}[status]||status;
-  $('agentRequestState-'+request.node).textContent=(status==='running'?(request.text?'正在输出文字':request.summary?'正在接收思考摘要':request.drafts.size?'正在生成工具参数':statusText):statusText)+(request.duration_ms!=null?' · '+agentDuration(request.duration_ms):'');
-  const output=$('agentRequestOutput-'+request.node);
-  // Public prose is rendered independently of the context so expanded details
-  // and the user's position survive every streaming update.
-  if(request.renderedText!==request.text||request.renderedSummary!==request.summary){
-  output.innerHTML=(request.summary?`<div class="agent-summary"><strong>思考摘要 · 接口公开内容</strong><div>${reportMarkdown(request.summary)}</div></div>`:'')+(request.text?`<div class="agent-model-text">${reportMarkdown(request.text)}</div>`:'');
-  request.renderedText=request.text;request.renderedSummary=request.summary;
-  }
-  $('agentRequestDraft-'+request.node).textContent=[...request.drafts.values()].map(d=>`准备调用 ${agentToolNames[d.name]||d.name||'工具'}\n${d.arguments||'等待参数…'}`).join('\n\n');
-  $('agentRequestDraft-'+request.node).hidden=!!request.status||!request.drafts.size;
-  $('agentRequestUsage-'+request.node).textContent=(request.status||!busy)?agentUsageText(request.usage):'Token 用量等待接口返回；上下文字节数不等于 token 数。';
+  const status=agentStepStatus(request.status),text=agentProse(request.text),thinking=request.protocol==='completions'?request.reasoning:request.summary;
+  const state=$('agentRequestState-'+request.node);
+  const names=[...request.drafts.values()].map(d=>agentToolNames[d.name]||'工具');
+  state.textContent=({running:names.length?'准备'+[...new Set(names)].join('、'):request.text&&!text?'正在整理分析结果…':text?'正在回复…':thinking?'正在思考…':'正在分析…',completed:'',failed:'回复失败 · 内容未完成',cancelled:'已停止 · 内容未完成',interrupted:'已中断 · 内容未完成'}[status]??status);
+  state.hidden=!state.textContent;
+  state.setAttribute('data-running',String(status==='running'));
+  // Update only the text, preserving the summary disclosure and scroll position.
+  if(request.renderedText!==text){$('agentRequestOutput-'+request.node).innerHTML=reportMarkdown(text);request.renderedText=text;}
+  if(request.renderedThinking!==thinking){$('agentRequestSummaryText-'+request.node).innerHTML=reportMarkdown(thinking);request.renderedThinking=thinking;}
+  $('agentRequestSummary-'+request.node).hidden=!thinking;
   $('agentRequestError-'+request.node).textContent=request.error||'';
+  $('agentRequest-'+request.node).hidden=status==='completed'&&!text&&!thinking;
 }
 function renderAgentTool(tool){
-  const status=tool.status||(agentBusy(agentView.session)?'running':'interrupted');
+  const status=agentStepStatus(tool.status);
+  $('agentTool-'+tool.node).setAttribute('data-status',status);
+  $('agentToolIcon-'+tool.node).textContent=({running:'◌',completed:'✓',failed:'!',cancelled:'−',interrupted:'−'}[status]||'·');
   $('agentToolState-'+tool.node).textContent=({running:'执行中',completed:'完成',failed:'失败',cancelled:'已停止',interrupted:'已中断'}[status]||status)+(tool.duration_ms!=null?' · '+agentDuration(tool.duration_ms):'');
-  if(tool.result!=null)$('agentToolResult-'+tool.node).textContent=agentPretty(tool.result);
+  const error=tool.result!=null?agentJSON(tool.result).error:'';
+  $('agentToolError-'+tool.node).textContent=typeof error==='string'?error:'';
 }
 function renderAgentPending(){
   for(const request of agentView.requests.values())if(!request.status)renderAgentRequest(request);
@@ -136,48 +203,81 @@ function interruptAgentPending(){
   for(const tool of agentView.tools.values())if(!tool.status){tool.status='interrupted';renderAgentTool(tool);}
 }
 function appendAgentMessages(messages){
-  const timeline=$('agentActivityLog'),follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<80;
+  const previousScope=agentView.scope,timeline=$('agentActivityLog'),follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<80;
   for(const m of messages){
     if(agentView.seen.has(m.id))continue;
     agentView.seen.add(m.id);agentView.messages.push(m);
-    const log=$('agentActivityLog'),time=m.created_at?dateTime(m.created_at):'',data=agentJSON(m.content);
+    const time=m.created_at?dateTime(m.created_at):'',data=agentJSON(m.content);
+    if(m.role==='report_plan'){
+      agentView.concurrency=data.concurrency;
+      for(const group of data.groups)agentView.groups.set(group.id,{...group,status:'queued'});
+      continue;
+    }
+    if(m.role==='group_state'){
+      const group=agentView.groups.get(data.id);if(!group)continue;
+      Object.assign(group,{status:data.status,error:data.error});
+      if(data.error){
+        timeline.insertAdjacentHTML('beforeend',`<div data-agent-scope="${esc(data.id)}"><p class="agent-system-event error-text">${esc(data.error)}</p></div>`);
+        agentView.scopeCounts.set(data.id,(agentView.scopeCounts.get(data.id)||0)+1);
+      }
+      followRunningAgent();
+      continue;
+    }
+    if(m.role==='user'){
+      // A new turn cannot revive an unfinished group from a previous run.
+      for(const group of agentView.groups.values()){
+        if(group.status==='running')group.status='interrupted';
+        else if(group.status==='queued')group.status='not_started';
+      }
+    }
+    const scope=data.group_id||'main';
+    if(scope!=='main'&&!agentView.groups.has(scope))continue;
+    const log={insertAdjacentHTML(_,html){
+      timeline.insertAdjacentHTML('beforeend',`<div data-agent-scope="${esc(scope)}"${scope!==agentView.scope?' hidden':''}>${html}</div>`);
+      agentView.scopeCounts.set(scope,(agentView.scopeCounts.get(scope)||0)+1);
+    }};
     if(m.role==='model_request'){
-      const request={...data,node:m.id,text:'',summary:'',drafts:new Map()};agentView.requests.set(data.request_id,request);
-      log.insertAdjacentHTML('beforeend',`<article class="agent-step agent-model-step"><header><strong>模型请求 ${agentView.requests.size} <small>本轮 ${data.round}</small></strong><time>${esc(time)}</time></header><p id="agentRequestState-${m.id}" class="agent-step-state"></p><details class="agent-context"><summary>查看本次上下文 · ${data.context_items} 项 · ${esc(data.model)} · ${esc(data.protocol)}</summary><p>按发送顺序排列。追问使用最新概览及最近 24 条用户/助手消息，本轮工具结果逐次加入；内部推理状态仅在内存传递。上下文大小 ${(data.context_bytes/1024).toFixed(1)} KiB，请求正文 ${(data.request_bytes/1024).toFixed(1)} KiB，均非 token 数；模型窗口上限未提供。</p>${data.context.map(agentContextItem).join('')}${agentDetails('可用工具定义',data.tools||[])}${data.reasoning?agentDetails('推理配置',data.reasoning):''}</details><div id="agentRequestOutput-${m.id}"></div><pre id="agentRequestDraft-${m.id}" hidden></pre><p id="agentRequestUsage-${m.id}" class="agent-token-note"></p><p id="agentRequestError-${m.id}" class="error-text"></p></article>`);
+      const request={...data,scope,node:m.id,text:'',summary:'',reasoning:'',drafts:new Map()};agentView.requests.set(data.request_id,request);
+      log.insertAdjacentHTML('beforeend',agentBubble('agentRequest-'+m.id,time,`<details id="agentRequestSummary-${m.id}" class="agent-summary" hidden><summary>${request.protocol==='completions'?'完整思考':'思考摘要'}</summary><div id="agentRequestSummaryText-${m.id}" class="agent-model-text"></div></details><div id="agentRequestOutput-${m.id}" class="agent-model-text"></div><p id="agentRequestState-${m.id}" class="agent-reply-state"></p><p id="agentRequestError-${m.id}" class="error-text"></p>`,'assistant',scope));
       renderAgentRequest(request);
     }else if(m.role==='model_delta'){
-      const request=agentView.requests.get(data.request_id);if(!request)continue;
-      for(const delta of data.deltas){if(delta.kind==='text')request.text+=delta.text||'';else if(delta.kind==='summary')request.summary+=delta.text||'';else if(delta.kind==='tool')request.drafts.set(delta.index,delta);}
+      const request=agentView.requests.get(data.request_id);if(!request||request.scope!==scope)continue;
+      for(const delta of data.deltas){if(delta.kind==='text')request.text+=delta.text||'';else if(delta.kind==='summary')request.summary+=delta.text||'';else if(delta.kind==='reasoning')request.reasoning+=delta.text||'';else if(delta.kind==='tool')request.drafts.set(delta.index,delta);}
       renderAgentRequest(request);
     }else if(m.role==='model_response'){
-      const request=agentView.requests.get(data.request_id);if(!request)continue;
+      const request=agentView.requests.get(data.request_id);if(!request||request.scope!==scope)continue;
       Object.assign(request,{status:data.status,error:data.error,usage:data.usage,duration_ms:data.duration_ms});
-      if(data.text)request.text=data.text;if(data.summary)request.summary=data.summary;renderAgentRequest(request);
+      if(data.text)request.text=data.text;if(data.summary)request.summary=data.summary;if(data.reasoning)request.reasoning=data.reasoning;renderAgentRequest(request);
     }else if(m.role==='tool_start'){
-      const tool={...data,node:m.id,name:m.tool_name};agentView.tools.set(data.call_id,tool);
-      log.insertAdjacentHTML('beforeend',`<article class="agent-step agent-tool-step"><header><strong>${esc(agentToolNames[m.tool_name]||m.tool_name)} <code>${esc(m.tool_name)}</code></strong><time>${esc(time)}</time></header><p id="agentToolState-${m.id}" class="agent-step-state"></p>${agentDetails('调用参数',data.arguments)}<details><summary>工具结果与统计证据</summary><pre id="agentToolResult-${m.id}">等待结果…</pre></details></article>`);renderAgentTool(tool);
+      const tool={...data,scope,node:m.id,name:m.tool_name};agentView.tools.set(scope+':'+data.call_id,tool);
+      const args=agentJSON(data.arguments),target=args.path||args.container||args.query||'';
+      log.insertAdjacentHTML('beforeend',`<div id="agentTool-${m.id}" class="agent-tool"><span id="agentToolIcon-${m.id}" class="agent-tool-icon" aria-hidden="true"></span><div class="agent-tool-description"><span>${esc(agentToolNames[m.tool_name]||'查询数据')}</span>${target?`<code title="${esc(target)}">${esc(target)}</code>`:''}<p id="agentToolError-${m.id}" class="error-text"></p></div><span id="agentToolState-${m.id}" class="agent-tool-state"></span></div>`);renderAgentTool(tool);
     }else if(m.role==='tool_end'){
-      const tool=agentView.tools.get(data.call_id);if(tool){Object.assign(tool,data);renderAgentTool(tool);}
+      const tool=agentView.tools.get(scope+':'+data.call_id);if(tool){Object.assign(tool,data);renderAgentTool(tool);}
     }else if(m.role==='group_report'){
-      log.insertAdjacentHTML('beforeend',`<details class="agent-step"><summary>${esc(m.content.split('\n')[0].replace(/^#+\s*/,''))} · 分组结果</summary>${reportMarkdown(m.content)}</details>`);
+      log.insertAdjacentHTML('beforeend',agentBubble('',time,`<details class="agent-group-result"><summary>${esc(data.text.split('\n')[0].replace(/^#+\s*/,''))} · 查看结果</summary><div class="agent-model-text">${reportMarkdown(data.text)}</div></details>`,'assistant',scope));
     }else if(m.role==='assistant'){
       $('agentReports').insertAdjacentHTML('beforeend',`<article class="agent-report"><div class="agent-answer-time">${esc(time)}</div>${reportMarkdown(m.content)}</article>`);
-      log.insertAdjacentHTML('beforeend','<p class="agent-report-ready">本轮完整回复已保存，可切换到“完整报告”阅读或导出。</p>');
+      const last=[...agentView.requests.values()].at(-1);
+      // Final assistant messages often persist the same reply just streamed.
+      // Keep one bubble while retaining the completed report for export.
+      if(last&&last.scope===scope&&!last.final&&last.status==='completed'&&last.text===m.content&&agentProse(last.text))last.final=true;
+      else log.insertAdjacentHTML('beforeend',agentBubble('',time,`<div class="agent-model-text">${reportMarkdown(m.content)}</div>`));
     }else if(m.role==='user'){
-      // A followup begins a new turn. Unfinished steps from an interrupted turn
-      // must not start looking active again when the session returns to running.
       interruptAgentPending();
-      log.insertAdjacentHTML('beforeend',`<article class="agent-step agent-user-step"><header><strong>用户问题 / 报告任务</strong><time>${esc(time)}</time></header>${m.content.length>600?agentDetails(m.content.split('\n')[0],m.content):`<p>${esc(m.content)}</p>`}</article>`);
+      for(const request of agentView.requests.values())request.final=true;
+      log.insertAdjacentHTML('beforeend',agentBubble('',time,`<p class="agent-question-text">${esc(m.content)}</p>`,'user'));
       if(agentView.messages.some(v=>v.role==='assistant'))$('agentReports').insertAdjacentHTML('beforeend',`<p class="agent-user-question">${esc(m.content)}</p>`);
-    }else if(m.role==='status'){
-      log.insertAdjacentHTML('beforeend',`<p class="agent-system-event"><span>进度</span> ${esc(m.content)}</p>`);
-    }else if(m.role==='tool_result'){
-      log.insertAdjacentHTML('beforeend',`<article class="agent-step agent-tool-step"><header><strong>预载证据 · ${esc(agentToolNames[m.tool_name]||m.tool_name)}</strong><time>${esc(time)}</time></header>${agentDetails('发送给模型的统计证据',m.content)}</article>`);
+    }else if(m.role==='status'||m.role==='group_status'){
+      const message=m.role==='group_status'?data.text:m.content;
+      const text=message.startsWith('结果校验失败：')?'正在核对并修正分析结果…':message;
+      log.insertAdjacentHTML('beforeend',`<p class="agent-system-event">${esc(text)}</p>`);
     }
+    // Context snapshots, preloaded evidence and duplicate notes are transport
+    // data. They do not create chat messages or expose tool JSON in the DOM.
   }
-  $('agentActivityCount').textContent=`· ${agentView.messages.filter(m=>m.role==='tool_start').length} 次工具`;
-  renderAgentMetrics();agentSetTab(agentView.tab);
-  if(follow)timeline.scrollTop=timeline.scrollHeight;
+  agentSetTab(agentView.tab);
+  if(follow&&previousScope===agentView.scope)timeline.scrollTop=timeline.scrollHeight;
 }
 function closeAgentStream(){if(agentView.stream){agentView.stream.close();agentView.stream=null;}}
 function scheduleAgentPoll(){
@@ -220,7 +320,7 @@ async function readAgentSession(){
   finally{if(current()){agentView.reading=false;agentControls();connectAgentStream();scheduleAgentPoll();}}
 }
 async function selectAgentSession(session){
-  clearTimeout(agentView.timer);closeAgentStream();agentView.selection++;agentView.cursor=0;agentView.messages=[];agentView.reading=false;agentView.requests.clear();agentView.tools.clear();agentView.seen.clear();agentView.tab='conversation';
+  clearTimeout(agentView.timer);closeAgentStream();agentView.selection++;agentView.cursor=0;agentView.messages=[];agentView.reading=false;agentView.requests.clear();agentView.tools.clear();agentView.seen.clear();agentView.tab='conversation';resetAgentGroups();
   $('agentReports').innerHTML='';$('agentActivityLog').innerHTML='';$('agentActivity').hidden=true;$('agentQuestion').value='';agentError('');
   rememberAgentSession(session);renderAgentSession();await readAgentSession();
 }
@@ -242,7 +342,9 @@ async function openAgentReports(){
 }
 async function generateDiskReport(){
   if(!agentAllowed()||!snapshot||!platform.loaded||agentView.posting||platform.resultLoad||platform.changesLoad)return;
-  const source={snapshot_id:platform.loaded,revision:snapshot.revision},epoch=agentView.epoch;
+  const concurrency=Number(agentView.nextConcurrency);
+  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>16){if(!$('agentDialog').open)$('agentDialog').showModal();agentError('最大并行 Agent 数必须为 1–16 的整数');return;}
+  const source={snapshot_id:platform.loaded,revision:snapshot.revision,concurrency},epoch=agentView.epoch;
   agentView.posting=true;agentError('');agentControls();
   if(!$('agentDialog').open)$('agentDialog').showModal();
   try{
@@ -265,7 +367,8 @@ async function postAgentAction(action,body){
   try{
     const result=await api(`/api/agent/sessions/${agentView.session.id}/${action}`,{method:'POST',body:JSON.stringify(body)});
     if(!current())return;
-    if(action==='messages'){rememberAgentSession(result);$('agentQuestion').value='';}
+    if(action==='messages'){rememberAgentSession(result);$('agentQuestion').value='';selectAgentScope('main');}
+    else if(action==='retry'){rememberAgentSession(result);selectAgentScope(body.requests.some(r=>r.group_id===agentView.scope)?agentView.scope:body.requests[0].group_id);}
     else agentView.session.status='cancelling';
     renderAgentSession();await readAgentSession();
   }catch(error){if(current())agentError(error);}
@@ -286,6 +389,7 @@ function downloadAgentReport(){
 window.AgentUI={controls:agentControls,reset(){
   clearTimeout(agentView.timer);closeAgentStream();
   Object.assign(agentView,{epoch:agentView.epoch+1,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()});
+  resetAgentGroups();setAgentConcurrency(3);
   if($('agentDialog').open)$('agentDialog').close();
   $('agentReports').innerHTML='';$('agentActivityLog').innerHTML='';$('agentActivity').hidden=true;$('agentQuestion').value='';
   agentError('');renderAgentHistory();renderAgentSession();
@@ -294,13 +398,26 @@ $('generateReport').addEventListener('click',generateDiskReport);
 $('viewReports').addEventListener('click',openAgentReports);
 $('closeAgent').addEventListener('click',()=>$('agentDialog').close());
 $('agentDialog').addEventListener('close',()=>{clearTimeout(agentView.timer);closeAgentStream();});
-$('agentConversationTab').addEventListener('click',()=>agentSetTab('conversation'));
-$('agentReportTab').addEventListener('click',()=>agentSetTab('report'));
+$('agentConversationTab').addEventListener('click',()=>selectAgentScope('main'));
+$('agentGroupList').addEventListener('click',event=>{const button=event.target.closest('[data-agent-group]');if(button)selectAgentScope(button.dataset.agentGroup);});
+$('agentFollowCurrent').addEventListener('click',()=>{agentView.followActive=true;followRunningAgent();renderAgentSidebar();});
+$('agentReportTab').addEventListener('click',()=>{agentView.followActive=false;agentSetTab('report');});
 $('agentJumpLatest').addEventListener('click',()=>{agentSetTab('conversation');$('agentActivityLog').scrollTop=$('agentActivityLog').scrollHeight;});
 $('reloadReports').addEventListener('click',openAgentReports);
 $('agentHistory').addEventListener('change',()=>{const session=agentView.sessions.find(s=>s.id===$('agentHistory').value);if(session)selectAgentSession(session);});
 $('stopAgent').addEventListener('click',()=>postAgentAction('cancel',{}));
+$('agentRetry').addEventListener('click',retryAgentGroups);
 $('downloadReport').addEventListener('click',downloadAgentReport);
 $('agentModelSettings').addEventListener('click',()=>{$('agentDialog').close();showPage('agent-settings');});
 $('agentFollowup').addEventListener('submit',e=>{e.preventDefault();const message=$('agentQuestion').value.trim();if(message&&!agentBusy(agentView.session)&&!agentView.reading&&agentView.session?.snapshot_id)postAgentAction('messages',{message});});
 document.querySelectorAll('[data-agent-question]').forEach(button=>button.addEventListener('click',()=>{$('agentQuestion').value=button.dataset.agentQuestion;$('agentQuestion').focus();}));
+
+// This limit belongs to the next diagnosis; running plans keep their saved limit.
+function setAgentConcurrency(value){
+  agentView.nextConcurrency=value;
+  $('agentConcurrency').value=value;$('reportConcurrency').value=value;
+}
+$('agentConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value));
+$('reportConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value));
+$('startAgentReport').addEventListener('click',generateDiskReport);
+setAgentConcurrency(3);

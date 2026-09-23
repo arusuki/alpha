@@ -17,8 +17,9 @@ import (
 	"project-alpha/internal/fsutil"
 )
 
-// DatabaseVersion identifies the combined platform and module schema.
-const DatabaseVersion = 9
+// DatabaseVersion identifies the combined schema and persisted event formats.
+// Version 11 adds report manifests and persisted cleanup workflows.
+const DatabaseVersion = 11
 
 //go:embed schema.sql
 var schema string

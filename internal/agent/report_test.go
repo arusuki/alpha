@@ -26,19 +26,24 @@ func TestDiskReportValidatesSourceBeforeCallingModel(t *testing.T) {
 		{"snapshot_id": id, "revision": 0.5}, {"snapshot_id": "../bad", "revision": 0},
 		{"snapshot_id": id, "revision": 0, "message": "override report"},
 	} {
+		body["concurrency"] = 1
 		p.expect(400, "POST", "/api/agent/reports", body, nil)
 	}
-	p.expect(403, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, map[string]string{"X-CSRF-Token": "wrong"})
-	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 9}, nil)
-	p.expect(404, "POST", "/api/agent/reports", object{"snapshot_id": strings.Repeat("f", 32), "revision": 0}, nil)
+	for _, limit := range []any{nil, 0, -1, 17, 1.5, "2"} {
+		p.expect(400, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": limit}, nil)
+	}
+	p.expect(400, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	p.expect(403, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, map[string]string{"X-CSRF-Token": "wrong"})
+	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 9, "concurrency": 1}, nil)
+	p.expect(404, "POST", "/api/agent/reports", object{"snapshot_id": strings.Repeat("f", 32), "revision": 0, "concurrency": 1}, nil)
 	if _, err := p.db.SQL.Exec("UPDATE jobs SET status='failed' WHERE id=?", id); err != nil {
 		t.Fatal(err)
 	}
-	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	if _, err := p.db.SQL.Exec("UPDATE jobs SET status='completed',trigger='incremental' WHERE id=?", id); err != nil {
 		t.Fatal(err)
 	}
-	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	p.expect(409, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	var count int
 	p.db.SQL.QueryRow("SELECT count(*) FROM agent_sessions").Scan(&count)
 	if count != 0 || called.Load() {
@@ -46,5 +51,5 @@ func TestDiskReportValidatesSourceBeforeCallingModel(t *testing.T) {
 	}
 	p.expect(201, "POST", "/api/users", object{"username": "viewer", "password": "A-viewer-password-123", "role": "viewer"}, nil)
 	p.login(false, "viewer", "A-viewer-password-123")
-	p.expect(403, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0}, nil)
+	p.expect(403, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 }
