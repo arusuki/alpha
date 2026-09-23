@@ -243,7 +243,7 @@ function loadJob(id, historical=false, preserveExplorer=false) {
       $('resultLoadingJob').textContent=`任务 ${id.slice(0,8)}`;
       renderResultLoading({stage:'download',done:0,total:null,detail:'等待服务器读取扫描结果'});
       if(!$('resultLoadingDialog').open)$('resultLoadingDialog').showModal();
-      const prepared=await SnapshotLoader.read(`/api/jobs/${encodeURIComponent(id)}/snapshot`,{signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
+      const prepared=await SnapshotLoader.read(`/api/jobs/${encodeURIComponent(id)}/snapshot`,{changesURL:`/api/jobs/${encodeURIComponent(id)}/changes`,signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
       if(!current())return false;
       renderResultLoading({stage:'render',done:0,total:1,unit:'个视图',detail:'展示磁盘概览、容器排行与目录明细'});
       // Let the browser paint and handle cancellation before committing the new

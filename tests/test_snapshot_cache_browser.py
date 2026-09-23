@@ -1,4 +1,4 @@
-"""Raw snapshot caching with real IndexedDB, Workers and conditional HTTP requests."""
+"""Snapshot caching and revision catch-up with real IndexedDB and Workers."""
 import hashlib
 import json
 import mimetypes
@@ -6,7 +6,7 @@ import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -17,6 +17,7 @@ user = dict(id='reader-one', username='reader', role='viewer')
 job = dict(id=record, status='completed', trigger='manual', created_by='admin',
            created_at=1, finished_at=2, snapshot_revision=0, allocated=sample['tree']['allocated'])
 requests = []
+change_requests = []
 response_status = 200
 cache_failure = ''
 
@@ -51,8 +52,15 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if path.endswith('/changes'):
-            return self.respond(dict(job_id=record, base_revision=sample['revision'], revision=sample['revision'],
-                metadata={k: v for k, v in sample.items() if k != 'tree'}, replacements=[], ancestors=[]))
+            if response_status != 200:
+                return self.respond(dict(error='会话已过期'), response_status)
+            revision = int(parse_qs(urlparse(self.path).query)['revision'][0])
+            change_requests.append(revision)
+            changed = revision < sample['revision']
+            return self.respond(dict(job_id=record, base_revision=revision, revision=sample['revision'],
+                metadata={k: v for k, v in sample.items() if k != 'tree'},
+                replacements=[sample['tree']['children'][0]] if changed else [],
+                ancestors=[{k: v for k, v in sample['tree'].items() if k != 'children'}] if changed else []))
         if path.endswith('/snapshot'):
             raw = encoded()
             etag = '"' + hashlib.sha256(raw).hexdigest() + '"'
@@ -82,7 +90,8 @@ try:
         if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
             launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
         browser = p.chromium.launch(**launch)
-        page = browser.new_page()
+        context = browser.new_context()
+        page = context.new_page()
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         base = 'http://127.0.0.1:' + str(server.server_port)
@@ -101,27 +110,47 @@ try:
         page.locator('#snapshotCachePanel').screenshot(path='/tmp/project-alpha-snapshot-cache-mobile.png')
         page.set_viewport_size(dict(width=1280, height=720))
         assert page.evaluate('async () => (await SnapshotCache.read(platform.user.id, `/api/jobs/${platform.loaded}/snapshot`)).blob.text()') == encoded().decode()
+        # Exploration publishes a newer revision while the cached download still
+        # contains revision zero. Closing the tab must not force a full download.
+        sample['revision'] = job['snapshot_revision'] = 1
+        sample['tree']['children'][0]['allocated'] += 16
+        sample['tree']['allocated'] += 16
+        page.close()
+        page = context.new_page()
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(base)
+        page.wait_for_function('platform.user !== null')
+        page.locator('.platform-nav [data-page="overview"]').click()
+        page.wait_for_function('platform.loaded !== null && platform.resultLoad === null')
+        assert requests == [(None, 200)], requests
+        assert change_requests[-1] == 0, change_requests
+        assert page.evaluate('snapshot.revision') == 1
+        assert page.evaluate('snapshot.tree.allocated') == sample['tree']['allocated']
+        assert page.evaluate('async () => JSON.parse(await (await SnapshotCache.read(platform.user.id, `/api/jobs/${platform.loaded}/snapshot`)).blob.text()).revision') == 1
         page.reload()
         page.wait_for_function('platform.user !== null')
         page.locator('.platform-nav [data-page="overview"]').click()
         page.wait_for_function('platform.loaded !== null && platform.resultLoad === null')
-        assert requests[-1][1] == 304 and len(requests) == 2, requests
+        assert requests == [(None, 200)] and change_requests[-1] == 1, (requests, change_requests)
 
         def load(scope='reader-one'):
             return page.evaluate('''async scope => {
                 const progress=[];
                 try {
                     const result=await SnapshotLoader.read('/api/jobs/'+'c'.repeat(32)+'/snapshot', {
+                        changesURL:'/api/jobs/'+'c'.repeat(32)+'/changes',
                         scope, signal:new AbortController().signal, onProgress:p=>progress.push(p.detail)});
                     return {revision:result.data.revision, owner:result.data.containers[0].owner, progress, cacheError:result.cacheError};
                 } catch(error) { return {status:error.status,error:error.message}; }
             }''', scope)
 
         assert any('本地缓存' in text for text in load()['progress'])
-        sample['revision'] = 1
+        before = len(requests)
+        # Owner changes do not advance the directory revision, but must still
+        # replace metadata in both the restored result and its saved cache.
         sample['containers'][0]['owner'] = '新用户'
         result = load()
-        assert requests[-1][1] == 200 and result['revision'] == 1 and result['owner'] == '新用户'
+        assert len(requests) == before and result['revision'] == 1 and result['owner'] == '新用户'
         assert len(page.evaluate('SnapshotCache.list("reader-one")')) == 1
         load('reader-two')
         assert requests[-1] == (None, 200), requests
@@ -133,7 +162,7 @@ try:
             const url='/api/jobs/'+'c'.repeat(32)+'/snapshot';
             const old=await SnapshotCache.read('reader-one',url);
             await SnapshotCache.remove('reader-one',url);
-            const saved=await SnapshotCache.save('reader-one',url,old.epoch,old.record.etag,old.blob,{job_id:'test'});
+            const saved=await SnapshotCache.save('reader-one',url,old.epoch,old.blob,{job_id:'test'});
             return !saved && (await SnapshotCache.list('reader-one')).length===0;
         }''')
         load()
@@ -142,11 +171,11 @@ try:
         # Invalid cached JSON retries with an unconditional network request.
         page.evaluate('''async () => {
             const url='/api/jobs/'+'c'.repeat(32)+'/snapshot', state=await SnapshotCache.read('reader-one',url);
-            await SnapshotCache.save('reader-one',url,state.epoch,state.record.etag,new Blob(['{broken']),{job_id:'broken'});
+            await SnapshotCache.save('reader-one',url,state.epoch,new Blob(['{broken']),{job_id:'broken'});
         }''')
         before = len(requests)
         assert load()['revision'] == 1
-        assert [status for _, status in requests[before:]] == [304, 200]
+        assert [status for _, status in requests[before:]] == [200]
 
         # Neither denied authorization nor network failures may serve cached data.
         response_status = 401
@@ -171,12 +200,13 @@ try:
         assert page.locator('#clearSnapshotCache').is_disabled()
         assert page.evaluate('snapshot !== null'), 'Deleting a file must preserve the current view'
         for failure in ['read', 'save']:
+            sample['containers'][0]['owner'] = failure
             cache_failure = failure
             result = load()
             assert result['revision'] == 1 and result['cacheError'], result
         cache_failure = ''
         assert not errors, errors
         browser.close()
-        print('Snapshot cache browser checks passed: raw bytes, reload/304, changed hash, account isolation, deletion, in-flight writes, corruption, auth/network errors and unavailable/full storage.')
+        print('Snapshot cache browser checks passed: initial bytes, close/reopen with incremental catch-up, persisted revisions, owner changes, account isolation, deletion, in-flight writes, corruption, auth/network errors and unavailable/full storage.')
 finally:
     server.shutdown()

@@ -1,5 +1,5 @@
 'use strict';
-// Store the exact UTF-8 response as a Blob. Metadata lives separately so listing
+// Store snapshot JSON as a Blob. Metadata lives separately so listing
 // cache sizes never deserializes large result files. Scope is the signed-in user.
 const SnapshotCache = (() => {
   const database = 'project-alpha-snapshot-cache';
@@ -45,13 +45,13 @@ const SnapshotCache = (() => {
       done(state);
     });
   }
-  function save(scope,url,epoch,etag,blob,data) {
+  function save(scope,url,epoch,blob,data) {
     return transaction('readwrite',(tx,done) => {
       tx.objectStore('epochs').get(scope).onsuccess = e => {
         // A manual deletion also cancels writes from downloads already in flight,
         // including downloads in other tabs or Workers.
         if ((e.target.result || 0)!==epoch) { done(false); return; }
-        tx.objectStore('records').put({scope,url,etag,size:blob.size,jobId:data.job_id,host:data.host,finishedAt:data.finished_at,savedAt:Date.now()});
+        tx.objectStore('records').put({scope,url,size:blob.size,jobId:data.job_id,host:data.host,finishedAt:data.finished_at,savedAt:Date.now()});
         tx.objectStore('files').put(blob,[scope,url]);
         done(true);
       };

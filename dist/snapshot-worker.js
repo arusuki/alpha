@@ -16,22 +16,21 @@ function sendChunk(section, value) {
   // events (including Cancel) run between batches of directory nodes.
   return new Promise(resolve => { acknowledge = resolve; postMessage({type:'chunk',section,value}); });
 }
-async function readSnapshot(url,scope,retry=false) {
+async function readSnapshot(url,scope,changesURL,retry=false) {
   let cached = null, cacheError = '';
   if (scope) {
     try { cached = await SnapshotCache.read(scope,url); }
     catch (_) { cacheError = '本地缓存不可用，本次结果未缓存。'; }
   }
-  const reusable = !retry && cached?.record && /^"[a-f0-9]{64}"$/.test(cached.record.etag) && cached.blob instanceof Blob && cached.blob.size === cached.record.size;
-  report({stage:'download',done:0,total:null,unit:'bytes',detail:reusable?'正在与服务器校验缓存哈希':'等待服务器读取扫描结果'});
-  const response = await fetch(url,{credentials:'same-origin',cache:'no-store',headers:reusable?{'If-None-Match':cached.record.etag}:{}});
-  const hit = response.status === 304 && reusable;
-  if (!response.ok && !hit) {
+  const hit = !retry && changesURL && cached?.record && cached.blob instanceof Blob && cached.blob.size === cached.record.size;
+  report({stage:'download',done:0,total:null,unit:'bytes',detail:hit?'读取本地缓存':'等待服务器读取扫描结果'});
+  const response = hit ? null : await fetch(url,{credentials:'same-origin',cache:'no-store'});
+  if (response && !response.ok) {
     const body = await response.json().catch(() => ({}));
     const error = Error(body.error || `扫描结果读取失败（${response.status}）`);
     error.status = response.status; throw error;
   }
-  const length = Number(response.headers.get('Content-Length'));
+  const length = Number(response?.headers.get('Content-Length'));
   const total = hit ? cached.blob.size : length > 0 && !response.headers.get('Content-Encoding') ? length : null;
   let received = 0;
   const reader = (hit ? cached.blob.stream() : response.body).getReader(), decoder = new TextDecoder(), chunks = [], bytes = [];
@@ -41,7 +40,7 @@ async function readSnapshot(url,scope,retry=false) {
     received += value.byteLength;
     chunks.push(decoder.decode(value,{stream:true}));
     if (!hit && cached) bytes.push(value);
-    report({stage:'download',done:received,total,unit:'bytes',detail:hit?'哈希一致，读取本地缓存':'下载扫描结果'});
+    report({stage:'download',done:received,total,unit:'bytes',detail:hit?'读取本地缓存':'下载扫描结果'});
   }
   chunks.push(decoder.decode());
   let text = chunks.join('');
@@ -60,17 +59,33 @@ async function readSnapshot(url,scope,retry=false) {
     if (!hit) throw error;
     // A damaged local file must never prevent a fresh authenticated download.
     try { await SnapshotCache.remove(scope,url); } catch (_) {}
-    return readSnapshot(url,scope,true);
+    return readSnapshot(url,scope,changesURL,true);
   }
-  const etag = response.headers.get('ETag');
-  if (!hit && cached && /^"[a-f0-9]{64}"$/.test(etag)) {
-    try { await SnapshotCache.save(scope,url,cached.epoch,etag,new Blob(bytes,{type:'application/json'}),data); }
+  let updated = false;
+  if (hit) {
+    // Directory exploration changes the server revision after the original
+    // download. Catch up from that cached revision instead of downloading the
+    // entire snapshot again. This request also revalidates access and ownership.
+    report({stage:'validate',done:0,total:null,detail:'正在校验缓存版本并读取目录更新'});
+    const response = await fetch(`${changesURL}?revision=${data.revision}`,{credentials:'same-origin',cache:'no-store'});
+    const changes = await response.json();
+    if (!response.ok) {
+      const error = Error(changes.error || `目录更新读取失败（${response.status}）`);
+      error.status = response.status; throw error;
+    }
+    const {tree,...metadata} = data;
+    updated = changes.revision !== data.revision || JSON.stringify(changes.metadata) !== JSON.stringify(metadata);
+    data = SnapshotData.applyChanges(data,changes);
+    report({stage:'validate',done:1,total:1,detail:updated?'本地缓存已合并最新目录与归属':'本地缓存已是最新版本'});
+  }
+  if (cached && (!hit || updated)) {
+    try { await SnapshotCache.save(scope,url,cached.epoch,new Blob(hit?[JSON.stringify(data)]:bytes,{type:'application/json'}),data); }
     catch (_) { cacheError = '本地缓存写入失败（可能空间不足），本次结果仍可正常查看。'; }
   }
   return {data,cacheError};
 }
-async function run(url,scope) {
-  const {data,cacheError} = await readSnapshot(url,scope);
+async function run(url,scope,changesURL) {
+  const {data,cacheError} = await readSnapshot(url,scope,changesURL);
   const model = Usage.build(data,report);
   const {tree,containers,resources,filesystems,warnings,...metadata} = data;
   const {exclusive,shared,crossOwner,unrelated,attributionLimited} = model;
@@ -113,6 +128,6 @@ self.onmessage = event => {
     if (resolve) resolve();
   } else if (event.data.type === 'start' && !started) {
     started = true;
-    run(event.data.url,event.data.scope).catch(error => postMessage({type:'error',message:error.message,status:error.status}));
+    run(event.data.url,event.data.scope,event.data.changesURL).catch(error => postMessage({type:'error',message:error.message,status:error.status}));
   }
 };
