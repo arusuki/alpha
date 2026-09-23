@@ -1,11 +1,14 @@
 'use strict';
-const processView={epoch:0,timer:null,controller:null,data:null,error:'',selected:null,collapsed:new Set(),query:'',host:false};
+const processView={epoch:0,timer:null,controller:null,data:null,error:'',selected:null,collapsed:new Set(),query:'',host:false,sort:'count-desc'};
 const processHTML=new Map();
 function processGroups() {
   const forest=processView.data?.forest;
-  return forest?[...(forest.containers||[]),...(forest.host?[{...forest.host,id:'@host'}]:[])]:[];
+  const groups=forest?[...(forest.containers||[]),...(forest.host?[{...forest.host,id:'@host'}]:[])]:[];
+  const [key,direction]=processView.sort.split('-'),sign=direction==='asc'?1:-1;
+  const byName=(a,b)=>processGroupName(a).localeCompare(processGroupName(b),'zh-CN',{numeric:true,sensitivity:'base'})||a.id.localeCompare(b.id);
+  return groups.sort((a,b)=>sign*(key==='count'?(a.process_count-b.process_count)||byName(a,b):byName(a,b)));
 }
-function processGroupName(group) { return group.id==='@host'?'宿主机':group.id; }
+function processGroupName(group) { return group.id==='@host'?'宿主机':group.name||'未识别名称'; }
 // Flatten iteratively so unusually deep process ancestry cannot overflow the stack.
 function processRows(group) {
   const rows=[],stack=(group.roots||[]).slice().reverse().map(node=>({node,depth:0,parent:-1}));
@@ -13,7 +16,7 @@ function processRows(group) {
     const row=stack.pop(),index=rows.length;rows.push(row);
     for(let i=(row.node.children||[]).length-1;i>=0;i--)stack.push({node:row.node.children[i],depth:row.depth+1,parent:index});
   }
-  const query=processView.query.toLocaleLowerCase(),all=!query||processGroupName(group).toLocaleLowerCase().includes(query);
+  const query=processView.query.toLocaleLowerCase(),all=!query||`${processGroupName(group)} ${group.id}`.toLocaleLowerCase().includes(query);
   const matches=new Set();
   rows.forEach((row,index)=>{if(all||`${row.node.pid} ${row.node.binary} ${row.node.command} ${row.node.cwd||''}`.toLocaleLowerCase().includes(query))matches.add(index);});
   // Search keeps ancestors visible to explain where a matching process belongs.
@@ -42,11 +45,12 @@ function renderProcesses() {
   $('processWorkspace').hidden=!selected;$('processEmpty').hidden=!!selected;
   $('processRetry').hidden=!!data&&!processView.error;
   $('processEmptyTitle').textContent=processView.error?'暂时无法读取进程':processView.query?'没有匹配的进程':!ready?'正在等待进程监控':'暂未观测到活动进程';
-  $('processEmptyHint').textContent=processView.error?`${processView.error}。请检查主机上的 Tetragon 服务与连接配置，页面会自动重试。`:processView.query?'试试进程名称、PID、命令中的关键词或容器 ID。':!ready?'监控连接并完成同步后，进程关系会自动显示。':'新进程出现后会自动更新；也可以开启“包含宿主机”查看主机进程。';
+  $('processEmptyHint').textContent=processView.error?`${processView.error}。请检查主机上的 Tetragon 服务与连接配置，页面会自动重试。`:processView.query?'试试进程名称、PID、命令中的关键词、容器名称或 ID。':!ready?'监控连接并完成同步后，进程关系会自动显示。':'新进程出现后会自动更新；也可以开启“包含宿主机”查看主机进程。';
   $('processGroupCount').textContent=String(filtered.length);
-  updateProcessHTML('processContainers',filtered.map(({group})=>`<button data-process-group="${esc(group.id)}" aria-pressed="${group.id===processView.selected}"><span class="process-group-symbol" aria-hidden="true">${group.id==='@host'?'H':'C'}</span><span><strong>${esc(processGroupName(group))}</strong><small>${group.process_count} 个活动进程</small></span><span aria-hidden="true">›</span></button>`).join(''));
+  updateProcessHTML('processContainers',filtered.map(({group})=>`<button data-process-group="${esc(group.id)}" aria-pressed="${group.id===processView.selected}"><span class="process-group-symbol" aria-hidden="true">${group.id==='@host'?'H':'C'}</span><span><strong>${esc(processGroupName(group))}</strong>${group.id==='@host'?'':`<small class="process-container-id" title="${esc(group.id)}">${esc(group.id)}</small>`}<small>${group.process_count} 个活动进程</small></span><span aria-hidden="true">›</span></button>`).join(''));
   if(!selected){updateProcessHTML('processTree','');return;}
   $('processTreeTitle').textContent=processGroupName(selected.group);
+  $('processTreeID').textContent=selected.group.id==='@host'?'':selected.group.id;
   $('processTreeHint').textContent=processView.error||!ready?'上次采集的数据 · 连接恢复后更新':processView.query?'搜索结果保留父进程，方便追踪关系。':'按父子关系排列 · 点击箭头收起分支';
   const limit=500,rows=selected.rows.slice(0,limit);
   updateProcessHTML('processTree',rows.map(({node,depth})=>`<tr><td><div class="process-command" style="--depth:${Math.min(depth,8)}"><button class="process-toggle" data-process-toggle="${esc(node.exec_id)}" aria-label="${processView.collapsed.has(node.exec_id)?'展开':'收起'} PID ${node.pid} 的子进程" aria-expanded="${!!processView.query||!processView.collapsed.has(node.exec_id)}" ${!node.children?.length||processView.query?'disabled':''}>${node.children?.length?(processView.collapsed.has(node.exec_id)&&!processView.query?'›':'⌄'):'·'}</button><span><strong title="${esc(node.binary)}">${esc(node.binary.split('/').pop()||node.binary)}</strong><code>${esc(node.command)}</code>${node.cwd?`<small>工作目录 ${esc(node.cwd)}</small>`:''}</span></div></td><td class="mono">${node.pid}</td><td class="mono">${node.uid}</td><td>${node.started_at?esc(new Date(node.started_at).toLocaleString('zh-CN')):'—'}</td></tr>`).join(''));
@@ -76,11 +80,12 @@ function stopProcessPoll() {
 }
 window.ProcessUI={
   open(){renderProcesses();loadProcesses();},close:stopProcessPoll,
-  reset(){stopProcessPoll();Object.assign(processView,{data:null,error:'',selected:null,collapsed:new Set(),query:'',host:false});$('processSearch').value='';$('processHost').checked=false;renderProcesses();}
+  reset(){stopProcessPoll();Object.assign(processView,{data:null,error:'',selected:null,collapsed:new Set(),query:'',host:false,sort:'count-desc'});$('processSearch').value='';$('processHost').checked=false;$('processSort').value=processView.sort;renderProcesses();}
 };
 $('processRefresh').addEventListener('click',loadProcesses);
 $('processRetry').addEventListener('click',loadProcesses);
 $('processSearch').addEventListener('input',event=>{processView.query=event.target.value.trim();renderProcesses();});
+$('processSort').addEventListener('change',event=>{processView.sort=event.target.value;renderProcesses();});
 $('processHost').addEventListener('change',event=>{stopProcessPoll();processView.host=event.target.checked;processView.data=null;renderProcesses();loadProcesses();});
 $('processExpand').addEventListener('click',()=>{processView.collapsed.clear();renderProcesses();});
 $('processContainers').addEventListener('click',event=>{const button=event.target.closest('[data-process-group]');if(button){processView.selected=button.dataset.processGroup;renderProcesses();}});

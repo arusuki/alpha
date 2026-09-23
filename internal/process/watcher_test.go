@@ -514,6 +514,9 @@ func TestProcessHandlerServesForest(t *testing.T) {
 	})
 
 	handler := NewHandler(watcher)
+	handler.names.read = func(context.Context) (map[string]string, error) {
+		return map[string]string{"abc123": "test-container"}, nil
+	}
 	status, value, err := dispatch(handler, "GET", "/api/process/forest")
 	if err != nil || status != 200 {
 		t.Fatalf("status = %d, err = %v; want 200", status, err)
@@ -525,6 +528,9 @@ func TestProcessHandlerServesForest(t *testing.T) {
 	forest, ok := body["forest"].(*Forest)
 	if !ok || len(forest.Containers) != 1 || forest.Containers[0].ProcessCount != 1 {
 		t.Fatalf("forest = %+v, want one container with one process", body["forest"])
+	}
+	if forest.Containers[0].Name != "test-container" {
+		t.Fatal("handler did not resolve container name")
 	}
 	if _, ok := body["status"].(Status); !ok {
 		t.Fatalf("status = %T, want a process.Status", body["status"])

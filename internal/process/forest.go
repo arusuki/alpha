@@ -27,6 +27,7 @@ type Process struct {
 // Container groups the process forest observed inside one container.
 type Container struct {
 	ID           string     `json:"id"`
+	Name         string     `json:"name"`
 	ProcessCount int        `json:"process_count"`
 	Roots        []*Process `json:"roots"`
 }
@@ -51,17 +52,18 @@ type Options struct {
 // node is the mutable view of a process while it is active. It keeps the
 // identity needed to splice the tree when a process exits.
 type node struct {
-	execID     string
-	parentExec string
-	container  string
-	pid        uint32
-	uid        uint32
-	binary     string
-	arguments  string
-	cwd        string
-	start      time.Time
-	parent     *node
-	children   []*node
+	execID        string
+	parentExec    string
+	container     string
+	containerName string
+	pid           uint32
+	uid           uint32
+	binary        string
+	arguments     string
+	cwd           string
+	start         time.Time
+	parent        *node
+	children      []*node
 	// absent counts consecutive reconciliations in which the source's process
 	// cache did not list this process.
 	absent int
@@ -131,6 +133,7 @@ func (b *Builder) Observe(p *tetragon.Process) {
 	}
 	n.parentExec = p.GetParentExecId()
 	n.container = containerID(p)
+	n.containerName = p.GetPod().GetContainer().GetName()
 	n.pid = p.GetPid().GetValue()
 	n.uid = p.GetUid().GetValue()
 	n.binary = p.GetBinary()
@@ -401,6 +404,7 @@ func (b *Builder) Snapshot(opts Options) *Forest {
 	}
 	roots := map[string][]*node{}
 	counts := map[string]int{}
+	names := map[string]string{}
 	order := []string{}
 	for _, n := range b.nodes {
 		id := effective[n]
@@ -410,13 +414,16 @@ func (b *Builder) Snapshot(opts Options) *Forest {
 			order = append(order, id)
 		}
 		counts[id]++
+		if n.containerName != "" && (names[id] == "" || n.containerName < names[id]) {
+			names[id] = n.containerName
+		}
 		if parent := n.parent; parent == nil || effective[parent] != id {
 			roots[id] = append(roots[id], n)
 		}
 	}
 	for _, id := range order {
 		sortNodes(roots[id])
-		container := &Container{ID: id, ProcessCount: counts[id], Roots: []*Process{}}
+		container := &Container{ID: id, Name: names[id], ProcessCount: counts[id], Roots: []*Process{}}
 		for _, root := range roots[id] {
 			container.Roots = append(container.Roots, renderSubtree(root, effective, id))
 		}

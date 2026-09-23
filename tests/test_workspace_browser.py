@@ -61,10 +61,10 @@ class Handler(BaseHTTPRequestHandler):
             if unavailable:
                 return self.respond(dict(error='未启用容器进程监控'), 503)
             forest = dict(captured_at='2026-09-14T08:30:00Z', containers=[
-                dict(id='training-container', process_count=3, roots=[process(101, '/bin/bash', [
+                dict(id='training-container', name='Zebra-training', process_count=3, roots=[process(101, '/bin/bash', [
                     process(102, '/usr/bin/python', command='python train.py --data /workspace'),
                     process(103, '/usr/bin/worker', command='<img src=x onerror=alert(1)>')])]),
-                dict(id='web-container', process_count=1, roots=[process(201, '/usr/bin/nginx')])])
+                dict(id='web-container', name='Alpha-web', process_count=1, roots=[process(201, '/usr/bin/nginx')])])
             if 'host=1' in self.path:
                 forest['host'] = dict(id='', process_count=1, roots=[process(1, '/sbin/init')])
             return self.respond(dict(status=dict(connected=True, bootstrapped=True), forest=forest))
@@ -154,6 +154,23 @@ try:
         assert page.locator('#processTotalCount').inner_text() == '4'
         assert page.locator('#processTree tr').count() == 3
         assert page.locator('#processTree img').count() == 0
+        training = page.locator('[data-process-group="training-container"]')
+        assert training.locator('strong').inner_text() == 'Zebra-training'
+        assert training.locator('.process-container-id').inner_text() == 'training-container'
+        assert page.locator('#processTreeTitle').inner_text() == 'Zebra-training'
+        assert page.locator('#processTreeID').inner_text() == 'training-container'
+        for order, first in [('count-asc', 'web-container'), ('count-desc', 'training-container'),
+                             ('name-asc', 'web-container'), ('name-desc', 'training-container')]:
+            page.locator('#processSort').select_option(order)
+            assert page.locator('[data-process-group]').first.get_attribute('data-process-group') == first
+            assert page.evaluate('processView.selected') == 'training-container', 'sorting must preserve selection'
+        page.locator('#processSearch').fill('Alpha-web')
+        assert page.locator('[data-process-group]').count() == 1
+        assert page.locator('#processTreeTitle').inner_text() == 'Alpha-web'
+        page.locator('#processSearch').fill('training-container')
+        assert page.locator('#processTreeTitle').inner_text() == 'Zebra-training'
+        page.locator('#processSearch').fill('')
+        page.locator('#processSort').select_option('count-desc')
         page.locator('[data-process-toggle=exec-101]').focus()
         page.evaluate('loadProcesses()')
         assert page.locator('[data-process-toggle=exec-101]').evaluate('(e) => e === document.activeElement')

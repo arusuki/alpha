@@ -155,6 +155,9 @@ h1 { font-weight:700; letter-spacing:-.045em; }
 .process-toolbar { display:flex; justify-content:space-between; gap:20px; align-items:center; margin:25px 0 19px; }
 .process-toolbar .search-field { flex:1; max-width:430px; }
 .process-toolbar>span { color:#9694a6; font-size:.68rem; }
+.process-sort { display:flex; align-items:center; gap:8px; font-size:.72rem; flex-shrink:0; }
+.process-sort select { width:auto; font-size:.72rem; }
+.process-container-id { display:block; color:var(--muted); font-family:monospace; font-size:.61rem; overflow-wrap:anywhere; }
 .process-workspace { display:grid; grid-template-columns:235px minmax(0,1fr); gap:20px; align-items:start; }
 .process-containers { overflow:hidden; }
 .process-containers .panel-heading { padding:21px 18px; }

@@ -13,9 +13,12 @@ import (
 // reports that monitoring is unavailable instead of serving an empty forest.
 type Handler struct {
 	Watcher *Watcher
+	names   *containerNames
 }
 
-func NewHandler(watcher *Watcher) *Handler { return &Handler{Watcher: watcher} }
+func NewHandler(watcher *Watcher) *Handler {
+	return &Handler{Watcher: watcher, names: &containerNames{read: readDockerNames}}
+}
 
 // IsRoute reports whether path belongs to this module, mirroring agent.IsRoute.
 func IsRoute(path string) bool { return strings.HasPrefix(path, "/api/process/") }
@@ -30,5 +33,8 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return 0, nil, httpapi.NewError(503, "未启用容器进程监控")
 	}
 	forest, status := s.Watcher.Snapshot(r.URL.Query().Get("host") == "1")
+	if len(forest.Containers) > 0 {
+		s.names.apply(r.Context(), forest.Containers)
+	}
 	return 200, map[string]any{"status": status, "forest": forest}, nil
 }
