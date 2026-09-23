@@ -117,6 +117,8 @@ for test in tests/test_*.js; do node "$test" || exit; done
 
 浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py`、`python3 tests/test_agent_browser.py`、`python3 tests/test_cleanup_browser.py`、`python3 tests/test_workspace_browser.py` 和 `python3 tests/test_auth_browser.py`，验证目录下钻、报告生成、追问、导出，以及登录开屏的逐笔绘制、跳过/重播、减少动态效果、总面板、模块导航、进程监控、权限和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
 
+Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_cleanup_overlay.py` 使用本地 `ubuntu:latest`（可用 `PROJECT_ALPHA_CLEANUP_TEST_IMAGE` 指定）创建并自动移除专用测试容器和镜像，不拉取镜像、不操作已有业务容器。验证真实 whiteout、合并视图删除与空间释放、重复删除、镜像保留，以及未挂载、只读、嵌套挂载和符号链接保护。
+
 测试数据位于 `tests/fixtures/snapshot.json`，通过 `go run ./examples --output tests/fixtures/snapshot.json` 重新生成。
 
 ## 参考

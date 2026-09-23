@@ -23,6 +23,7 @@ type cleanupHelperRequest struct {
 	Paths          []string `json:"paths"`
 	ProtectedTrees []string `json:"protected_trees"`
 	ProtectedRoots []string `json:"protected_roots"`
+	WritableLayers []string `json:"writable_layers"`
 }
 type cleanupHelperEvent struct {
 	Type   string `json:"type"`
@@ -175,13 +176,16 @@ func runSudoCleanup(ctx context.Context, password []byte, request cleanupHelperR
 			return fmt.Errorf("删除进度与本次所选路径不匹配")
 		}
 		message := ""
-		if event.Code != "remove_failed" && event.Error != "" {
+		if event.Code != "remove_failed" && event.Code != "preflight_failed" && event.Error != "" {
 			return fmt.Errorf("删除辅助程序返回矛盾状态")
 		}
 		if event.Status == "failed" {
 			switch event.Code {
-			case "protected":
-				message = "提权后检查未通过，路径受保护或包含挂载点；未执行本批删除"
+			case "preflight_failed":
+				if event.Error == "" {
+					return fmt.Errorf("删除辅助程序未返回检查失败原因")
+				}
+				message = "删除前检查失败：" + event.Error + "；本批未执行删除"
 			case "cancelled":
 				message = "删除已停止，可能已删除部分内容，请检查实际路径"
 			case "remove_failed":
@@ -245,27 +249,20 @@ func serveCleanupHelper(parent context.Context, input io.Reader, output io.Write
 	if err != nil {
 		return fmt.Errorf("无法核对挂载点")
 	}
-	mounts, err := parseMountTable(mountFile)
+	mounts, err := readCleanupMounts(mountFile)
 	mountFile.Close()
 	if err != nil {
 		return fmt.Errorf("无法核对挂载点")
 	}
-	invalid := false
-	for i, path := range request.Paths {
-		if validateCleanupLocation(request.ProtectedTrees, request.ProtectedRoots, mounts, path) != nil {
-			invalid = true
-		}
-		for _, other := range request.Paths[:i] {
-			if within(path, other) || within(other, path) {
-				invalid = true
-			}
-		}
+	targets, preflightErr := prepareCleanupTargets(request, mounts)
+	if preflightErr == nil {
+		defer closeCleanupTargets(targets)
 	}
-	for _, path := range request.Paths {
+	for i, path := range request.Paths {
 		event := cleanupHelperEvent{Type: "result", Path: path, Status: "deleted"}
-		if invalid {
-			event.Status, event.Code = "failed", "protected"
-		} else if err := removeCleanupPath(ctx, path); err != nil {
+		if preflightErr != nil {
+			event.Status, event.Code, event.Error = "failed", "preflight_failed", preflightErr.Error()
+		} else if err := targets[i].remove(ctx); err != nil {
 			event.Status, event.Code = "failed", "remove_failed"
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				event.Code = "cancelled"

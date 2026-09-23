@@ -213,3 +213,34 @@ func TestCleanupHelperStopsOnParentPipeEOF(t *testing.T) {
 		t.Fatal("helper survived parent pipe EOF")
 	}
 }
+
+func TestSudoCleanupDoesNotFallBackToUnmountedUpperLayer(t *testing.T) {
+	root := t.TempDir()
+	upper, host := filepath.Join(root, "diff"), filepath.Join(root, "host-cache")
+	cache := filepath.Join(upper, "root/.cache")
+	for _, path := range []string{cache, host} {
+		if err := os.MkdirAll(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(path, "keep"), []byte("keep"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := cleanupHelperRequest{Paths: []string{host, cache}, WritableLayers: []string{upper}}
+	count := 0
+	err := runSudoCleanup(context.Background(), []byte(cleanupTestPassword), request, func(path, status, message string) error {
+		count++
+		if status != "failed" || !strings.Contains(message, "合并挂载") || !strings.Contains(message, "本批未执行删除") || strings.Contains(message, "可能已删除部分内容") {
+			t.Errorf("unexpected preflight result: %s %s", status, message)
+		}
+		return nil
+	}, fakeSudoCommand(t, "password"))
+	if err != nil || count != 2 {
+		t.Fatal(count, err)
+	}
+	for _, path := range []string{cache, host} {
+		if _, err := os.Stat(filepath.Join(path, "keep")); err != nil {
+			t.Fatal("deleted data before overlay preflight finished", err)
+		}
+	}
+}

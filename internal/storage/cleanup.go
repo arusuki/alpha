@@ -58,6 +58,11 @@ func (s *Service) DeleteReportPaths(ctx context.Context, actor, id string, paths
 	}
 	request := cleanupHelperRequest{Paths: paths}
 	request.ProtectedTrees, request.ProtectedRoots = cleanupProtectedPaths(snapshot, s.DB.Directory, config.Value.Exclude)
+	for _, c := range snapshot.Containers {
+		if c.UpperPath != nil && *c.UpperPath != "" {
+			request.WritableLayers = appendUnique(request.WritableLayers, *c.UpperPath)
+		}
+	}
 	return runSudoCleanup(ctx, password, request, result, nil)
 }
 
@@ -93,6 +98,13 @@ func cleanupProtectedPaths(snapshot *Snapshot, dataDir string, excludes []string
 	for _, c := range snapshot.Containers {
 		if c.UpperPath != nil && *c.UpperPath != "" {
 			roots = append(roots, *c.UpperPath)
+			// Docker installs these mounts in the container's namespace. They
+			// need not appear below the host's merged mount in mountinfo.
+			for _, mount := range c.Mounts {
+				if filepath.IsAbs(mount.Destination) {
+					trees = append(trees, filepath.Join(*c.UpperPath, mount.Destination))
+				}
+			}
 		}
 	}
 	return trees, roots
@@ -146,14 +158,24 @@ func removeCleanupPath(ctx context.Context, p string) error {
 		return &os.PathError{Op: "打开父目录（openat2）", Path: filepath.Dir(p), Err: err}
 	}
 	defer unix.Close(parent)
+	return removeCleanupEntry(ctx, parent, filepath.Base(p), p, false)
+}
+
+func removeCleanupEntry(ctx context.Context, parent int, name, p string, missingOK bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	var st unix.Stat_t
-	if err = unix.Fstatat(parent, filepath.Base(p), &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+	if err := unix.Fstatat(parent, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if missingOK && os.IsNotExist(err) {
+			return nil // Already absent from the merged view, e.g. a whiteout.
+		}
 		return &os.PathError{Op: "检查删除目标", Path: p, Err: err}
 	}
 	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return &os.PathError{Op: "检查删除目标", Path: p, Err: fmt.Errorf("报告路径已变为符号链接")}
 	}
-	return removeCleanupAt(ctx, parent, filepath.Base(p), p)
+	return removeCleanupAt(ctx, parent, name, p)
 }
 
 // p is only used in diagnostics. All filesystem operations stay anchored to
