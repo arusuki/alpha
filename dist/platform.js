@@ -52,7 +52,7 @@ async function enter(session) {
   snapshot=null;usage=null;selected=null;query='';ownerFilter=null;stateFilter='all';tablePage=0;$('resultContent').hidden=true;$('firstScan').hidden=false;
   $('sourceBadge').textContent='尚未扫描';
   $('hostInfo').textContent='尚未完成扫描 · 启用 Docker 自动发现后开始扫描';message('');
-  $('firstScanHint').textContent=session.user.role==='admin'?'在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。':'管理员完成首次扫描后，这里会显示容器与用户的磁盘用量。';
+  $('firstScanHint').textContent=session.user.role==='admin'?'完成扫描后可独立分析 Host 容量；如需分析容器，请在扫描配置中启用 Docker 自动发现。':'管理员完成首次扫描后，这里会显示 Host 和容器的空间用量。';
   showPage('dashboard',false);window.history?.replaceState(null,'','#dashboard');try{await syncState();}finally{schedulePoll();}
 }
 function schedulePoll() {

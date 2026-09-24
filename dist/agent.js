@@ -1,9 +1,24 @@
 'use strict';
-const agentView={nextConcurrency:3,groups:new Map(),concurrency:null,scope:'main',followActive:true,scopeCounts:new Map(),scrollPositions:new Map(),epoch:0,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()};
+const agentView={reportScope:'container',nextConcurrency:{host:3,container:3},groups:new Map(),concurrency:null,scope:'main',followActive:true,scopeCounts:new Map(),scrollPositions:new Map(),epoch:0,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()};
 const agentStatusNames={queued:'等待分析',scanning:'补查目录中',running:'正在生成分析',cancelling:'正在停止',completed:'分析完成',failed:'分析失败',cancelled:'分析已停止',interrupted:'分析已中断'};
-const agentToolNames={get_overview:'核对整体占用',list_containers:'查看容器排行',list_owners:'查看用户归属',get_container:'核对容器存储来源',get_directory:'读取目录明细',scan_directory:'补查大目录与文件'};
+const agentToolNames={get_overview:'核对整体占用',list_containers:'查看容器排行',list_owners:'查看用户归属',get_container:'核对容器存储来源',get_directory:'读取目录明细',scan_directory:'补查大目录与文件',get_host_directory:'读取 Host 目录明细'};
 const agentBusy=session=>session && ['queued','scanning','running','cancelling'].includes(session.status);
 const agentAllowed=()=>platform.user?.role==='admin';
+const agentScopeName=scope=>scope==='host'?'Host':'容器';
+const agentScopeSessions=()=>agentView.sessions.filter(session=>session.report_scope===agentView.reportScope);
+const hostReportReady=()=>!!snapshot?.resources?.some(resource=>resource.kinds?.includes('host'));
+const agentFollowupExamples={
+  host:[
+    ['重点目录','继续梳理当前 Host 扫描范围内占用最大的目录和文件，按实际占用降序列出，并说明未扫描或归属不明的部分。'],
+    ['按时间整理','补查重点 Host 目录的文件日期，按 90 天以内、90–180 天、180 天及以上 mtime 分组，各组内按实际占用降序；不要把 mtime 或 ctime 当创建时间。'],
+    ['清理候选清单','整理 Host 范围内可重建缓存、日志和临时文件候选，列出精确路径、候选占用、证据和需要核实的条件，不执行清理。']
+  ],
+  container:[
+    ['数据集与模型','继续梳理可写层的数据集和模型，按大小降序列出；明确已覆盖范围与未知项。'],
+    ['按时间整理','补查重点数据资产的文件日期，按 90 天以内、90–180 天、180 天及以上 mtime 分组，各组内按实际占用降序；不要把 mtime 或 ctime 当创建时间。'],
+    ['清理候选清单','整理可重建缓存、日志和编辑器检查点候选，列出负责人、精确路径、候选占用、证据和需要核实的条件，不执行清理。']
+  ]
+};
 
 // Render a deliberately small Markdown subset. All content is escaped first;
 // raw HTML, images and model-supplied links never become active DOM content.
@@ -41,11 +56,27 @@ function reportMarkdown(text){
 }
 function agentControls(){
   const busy=agentBusy(agentView.session),pending=agentView.posting||agentView.reading;
+  const hostReady=hostReportReady();
+  $('agentConcurrency').value=agentView.nextConcurrency[agentView.reportScope];
   $('agentConcurrency').disabled=pending||busy;
   $('reportConcurrency').disabled=pending||busy;
-  $('startAgentReport').disabled=busy||pending||!snapshot||!platform.loaded||!!platform.resultLoad||!!platform.changesLoad;
+  $('hostReportConcurrency').disabled=pending||busy;
+  $('startAgentReport').disabled=busy||pending||!snapshot||!platform.loaded||!!platform.resultLoad||!!platform.changesLoad||(agentView.reportScope==='host'&&!hostReady);
   $('generateReport').disabled=!agentAllowed()||!snapshot||!platform.loaded||!!platform.resultLoad||!!platform.changesLoad||agentView.posting;
-  $('agentSourceHint').textContent=snapshot&&platform.loaded?`基于当前${platform.followLatest?'':'历史'}扫描 · ${snapshot.host} · ${snapshot.finished_at}；补查结果同步到空间用量。`:'完成扫描后，即可基于当前记录生成总报告。';
+  $('generateHostReport').disabled=$('generateReport').disabled||!hostReady;
+  const source=snapshot&&platform.loaded?`基于当前${platform.followLatest?'':'历史'}扫描 · ${snapshot.host} · ${snapshot.finished_at}；补查结果同步到空间用量。`:'';
+  $('agentSourceHint').textContent=source||'完成扫描后，即可基于当前记录生成容器报告。';
+  $('hostAgentSourceHint').textContent=source&&!hostReady?'当前扫描未包含 Host 目录，请在扫描配置中添加宿主机目录并重新扫描。':source||'完成扫描后，即可基于当前记录生成 Host 报告。';
+  $('agentHostScope').setAttribute('aria-pressed',String(agentView.reportScope==='host'));
+  $('agentContainerScope').setAttribute('aria-pressed',String(agentView.reportScope==='container'));
+  $('agentTitle').textContent=agentScopeName(agentView.reportScope)+'空间诊断';
+  $('agentGroupLabel').textContent=agentView.reportScope==='host'?'分组 Agent · Host 目录':'分组 Agent · 每组最多 4 个容器';
+  $('agentRunHint').textContent=agentView.reportScope==='host'?'按 Host 目录分组分析，空位自动补充下一组。':'每组独立分析，空位自动补充下一组。';
+  $('agentQuestion').placeholder=agentView.reportScope==='host'?'例如：继续查看 Host 扫描范围内最大的目录有哪些文件':'例如：继续查看最大的可写层中有哪些数据集';
+  document.querySelectorAll('[data-agent-question]').forEach((button,index)=>{
+    const [label,prompt]=agentFollowupExamples[agentView.reportScope][index];
+    button.textContent=label;button.dataset.agentQuestion=prompt;
+  });
   $('agentHistory').disabled=pending;$('reloadReports').disabled=pending;
   $('stopAgent').hidden=!busy;$('stopAgent').disabled=agentView.posting||agentView.session?.status==='cancelling';
   $('downloadReport').disabled=agentView.reading||!agentView.messages.some(m=>m.role==='assistant');
@@ -91,11 +122,12 @@ function renderAgentSession(job){
   agentControls();
 }
 function renderAgentHistory(){
-  const options=agentView.sessions.map(s=>`<option value="${esc(s.id)}">${esc(dateTime(s.created_at)+' · '+s.title+' · '+(agentStatusNames[s.status]||s.status))}</option>`).join('')||'<option value="">暂无分析记录</option>';
+  const options=agentScopeSessions().map(s=>`<option value="${esc(s.id)}">${esc(dateTime(s.created_at)+' · '+s.title+' · '+(agentStatusNames[s.status]||s.status))}</option>`).join('')||'<option value="">暂无分析记录</option>';
   if($('agentHistory').innerHTML!==options)$('agentHistory').innerHTML=options;
   $('agentHistory').value=agentView.session?.id||'';
 }
 function rememberAgentSession(session){
+  if(session.report_scope!==agentView.reportScope)throw Error('报告类型与当前分析栏目不匹配');
   agentView.session=session;
   agentView.sessions=[session,...agentView.sessions.filter(s=>s.id!==session.id)].sort((a,b)=>b.updated_at-a.updated_at);
   renderAgentHistory();
@@ -129,11 +161,16 @@ function agentGroupStatus(group){
   return group.status;
 }
 const agentGroupStatusNames={queued:'等待中',running:'分析中',completed:'已完成',failed:'失败',cancelled:'已停止',interrupted:'已中断',not_started:'未开始'};
+function agentGroupTargets(group){
+  const targets=agentView.reportScope==='host'?group.directories:group.containers;
+  return Array.isArray(targets)?targets.map(item=>typeof item==='string'?item:item.path||item.name||item.id):[];
+}
 function renderAgentSidebar(){
   const groups=[...agentView.groups.values()];
   const html=groups.map(group=>{
     const status=agentGroupStatus(group),selected=agentView.tab==='conversation'&&agentView.scope===group.id;
-    return `<button type="button" class="agent-group-button" data-agent-group="${esc(group.id)}" aria-pressed="${selected}"><span class="agent-group-heading"><strong>Agent ${group.number}</strong><span class="agent-group-status" data-status="${status}">${agentGroupStatusNames[status]}</span></span><small>${group.containers.length} 个容器</small><span class="agent-group-containers">${group.containers.map(c=>`<span title="${esc(c.name||c.id)}">${esc(c.name||c.id)}</span>`).join('')}</span></button>`;
+    const targets=agentGroupTargets(group);
+    return `<button type="button" class="agent-group-button" data-agent-group="${esc(group.id)}" aria-pressed="${selected}"><span class="agent-group-heading"><strong>Agent ${group.number}</strong><span class="agent-group-status" data-status="${status}">${agentGroupStatusNames[status]}</span></span><small>${targets.length} 个${agentView.reportScope==='host'?'目录':'容器'}</small><span class="agent-group-containers">${targets.map(target=>`<span title="${esc(target)}">${esc(target)}</span>`).join('')}</span></button>`;
   }).join('');
   if($('agentGroupList').innerHTML!==html)$('agentGroupList').innerHTML=html;
   $('agentGroupSection').hidden=!groups.length;
@@ -145,12 +182,12 @@ function renderAgentSidebar(){
   $('agentReportReady').textContent=agentView.messages.some(m=>m.role==='assistant')?'可查看':agentBusy(agentView.session)?'待生成':'未生成';
   const group=agentView.groups.get(agentView.scope);
   $('agentScopeTitle').textContent=agentView.tab==='report'?'完整报告':group?`Agent ${group.number}`:'总览与追问';
-  $('agentScopeHint').textContent=agentView.tab==='report'?'各组分析结果汇总':group?`${agentGroupStatusNames[agentGroupStatus(group)]} · ${group.containers.map(c=>c.name||c.id).join('、')}`:'查看任务、最终回复，或继续追问';
+  $('agentScopeHint').textContent=agentView.tab==='report'?'各组分析结果汇总':group?`${agentGroupStatusNames[agentGroupStatus(group)]} · ${agentGroupTargets(group).join('、')}`:'查看任务、最终回复，或继续追问';
   const tools=[...agentView.tools.values()].filter(t=>t.scope===agentView.scope).length;
   $('agentActivityCount').textContent=tools?`${tools} 次工具调用`:'';
   const hasContent=agentView.scopeCounts.get(agentView.scope)>0;
   $('agentScopeEmpty').hidden=agentView.tab==='report'?agentView.messages.some(m=>m.role==='assistant'):hasContent;
-  $('agentScopeEmpty').textContent=agentView.tab==='report'?(agentBusy(agentView.session)?'分析完成后，完整报告会显示在这里。':'未能生成完整报告，可在左侧查看已完成的分组结果。'):group?(agentGroupStatus(group)==='queued'?'等待空闲名额，任一 Agent 结束后自动开始。':agentGroupStatus(group)==='not_started'?'本次分析已结束，这个 Agent 尚未开始。':agentGroupStatus(group)==='running'?'正在准备分析这些容器…':`此 Agent ${agentGroupStatusNames[agentGroupStatus(group)]}，尚未收到可展示的回复。`):'准备开始诊断…';
+  $('agentScopeEmpty').textContent=agentView.tab==='report'?(agentBusy(agentView.session)?'分析完成后，完整报告会显示在这里。':'未能生成完整报告，可在左侧查看已完成的分组结果。'):group?(agentGroupStatus(group)==='queued'?'等待空闲名额，任一 Agent 结束后自动开始。':agentGroupStatus(group)==='not_started'?'本次分析已结束，这个 Agent 尚未开始。':agentGroupStatus(group)==='running'?`正在准备分析这些${agentView.reportScope==='host'?'目录':'容器'}…`:`此 Agent ${agentGroupStatusNames[agentGroupStatus(group)]}，尚未收到可展示的回复。`):'准备开始诊断…';
   $('agentWorkspace').hidden=!agentView.session;
   renderAgentRetry();
 }
@@ -319,38 +356,61 @@ async function readAgentSession(){
   }catch(error){if(current())agentError(error);}
   finally{if(current()){agentView.reading=false;agentControls();connectAgentStream();scheduleAgentPoll();}}
 }
-async function selectAgentSession(session){
+function clearAgentSelection(){
   clearTimeout(agentView.timer);closeAgentStream();agentView.selection++;agentView.cursor=0;agentView.messages=[];agentView.reading=false;agentView.requests.clear();agentView.tools.clear();agentView.seen.clear();agentView.tab='conversation';resetAgentGroups();
   $('agentReports').innerHTML='';$('agentActivityLog').innerHTML='';$('agentActivity').hidden=true;$('agentQuestion').value='';agentError('');
+  agentView.session=null;renderAgentHistory();renderAgentSession();
+}
+async function selectAgentSession(session){
+  if(session.report_scope!==agentView.reportScope)throw Error('报告类型与当前分析栏目不匹配');
+  clearAgentSelection();
   rememberAgentSession(session);renderAgentSession();await readAgentSession();
+}
+async function selectAgentReportScope(scope){
+  if(!['host','container'].includes(scope)||agentView.posting)return;
+  if(scope===agentView.reportScope)return;
+  agentView.reportScope=scope;clearAgentSelection();
+  const sessions=agentScopeSessions(),selected=sessions.find(agentBusy)||sessions[0];
+  if(selected)await selectAgentSession(selected);
 }
 async function loadAgentHistory(){
   const epoch=agentView.epoch;
   const result=await api('/api/agent/sessions');if(epoch!==agentView.epoch)return;
+  if(!Array.isArray(result.sessions)||result.sessions.some(session=>!['','host','container'].includes(session.report_scope)))throw Error('分析记录格式无效');
   agentView.sessions=result.sessions;renderAgentHistory();
 }
-async function openAgentReports(){
+async function openAgentReports(scope=agentView.reportScope){
   if(!agentAllowed()||agentView.posting)return;
   if(!$('agentDialog').open)$('agentDialog').showModal();
   const epoch=agentView.epoch;agentError('');
   try{
+    await selectAgentReportScope(scope);if(epoch!==agentView.epoch)return;
     await loadAgentHistory();if(epoch!==agentView.epoch)return;
     if(agentView.session)await readAgentSession();
-    else if(agentView.sessions.length)await selectAgentSession(agentView.sessions.find(agentBusy)||agentView.sessions[0]);
+    else if(agentScopeSessions().length)await selectAgentSession(agentScopeSessions().find(agentBusy)||agentScopeSessions()[0]);
     else renderAgentSession();
   }catch(error){if(epoch===agentView.epoch)agentError(error);}
 }
-async function generateDiskReport(){
+async function generateDiskReport(scope='container'){
   if(!agentAllowed()||!snapshot||!platform.loaded||agentView.posting||platform.resultLoad||platform.changesLoad)return;
-  const concurrency=Number(agentView.nextConcurrency);
+  if(scope==='host'&&!hostReportReady()){if(!$('agentDialog').open)$('agentDialog').showModal();agentError('当前扫描未包含 Host 目录，请在扫描配置中添加宿主机目录并重新扫描。');return;}
+  const concurrency=Number(agentView.nextConcurrency[scope]);
   if(!Number.isInteger(concurrency)||concurrency<1||concurrency>16){if(!$('agentDialog').open)$('agentDialog').showModal();agentError('最大并行 Agent 数必须为 1–16 的整数');return;}
-  const source={snapshot_id:platform.loaded,revision:snapshot.revision,concurrency},epoch=agentView.epoch;
+  const source={snapshot_id:platform.loaded,revision:snapshot.revision,concurrency,scope},epoch=agentView.epoch;
   agentView.posting=true;agentError('');agentControls();
   if(!$('agentDialog').open)$('agentDialog').showModal();
   try{
+    agentView.reportScope=scope;clearAgentSelection();
     await loadAgentHistory();if(epoch!==agentView.epoch)return;
     const active=agentView.sessions.find(agentBusy);
-    if(active){await selectAgentSession(active);return;}
+    if(active){
+      if(['host','container'].includes(active.report_scope)){
+        agentView.reportScope=active.report_scope;
+        await selectAgentSession(active);
+        if(active.report_scope!==scope)agentError(`已有${agentScopeName(active.report_scope)}报告正在分析，请等待完成或停止后再生成${agentScopeName(scope)}报告。`);
+      }else agentError('已有其他 Agent 任务正在运行，请等待任务结束后再生成报告。');
+      return;
+    }
     const config=await api('/api/agent/settings');if(epoch!==agentView.epoch)return;
     if(!config.value.model||!config.value.endpoint)throw Error('请先在“模型设置”配置接口和模型，再生成报告。');
     const session=await api('/api/agent/reports',{method:'POST',body:JSON.stringify(source)});
@@ -376,7 +436,7 @@ async function postAgentAction(action,body){
 }
 function downloadAgentReport(){
   const s=agentView.session;if(!s||!agentView.messages.some(m=>m.role==='assistant'))return;
-  const parts=[`# 空间分析记录\n\n生成时间：${dateTime(s.created_at)}\n\n模型：${s.model}\n\n扫描记录：${s.snapshot_id||'已删除'}\n\n状态：${agentStatusNames[s.status]||s.status}`];
+  const parts=[`# ${agentScopeName(s.report_scope)}空间分析记录\n\n生成时间：${dateTime(s.created_at)}\n\n模型：${s.model}\n\n扫描记录：${s.snapshot_id||'已删除'}\n\n状态：${agentStatusNames[s.status]||s.status}`];
   let answered=false;
   for(const m of agentView.messages){
     if(m.role==='assistant'){parts.push(m.content);answered=true;}
@@ -384,18 +444,22 @@ function downloadAgentReport(){
     else if(m.role==='status')parts.push(m.content);
   }
   const url=URL.createObjectURL(new Blob([parts.join('\n\n---\n\n')+'\n'],{type:'text/markdown;charset=utf-8'}));
-  const link=document.createElement('a');link.href=url;link.download=`空间消耗报告-${s.id.slice(0,8)}.md`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  const link=document.createElement('a');link.href=url;link.download=`${agentScopeName(s.report_scope)}空间报告-${s.id.slice(0,8)}.md`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 window.AgentUI={controls:agentControls,reset(){
   clearTimeout(agentView.timer);closeAgentStream();
-  Object.assign(agentView,{epoch:agentView.epoch+1,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()});
-  resetAgentGroups();setAgentConcurrency(3);
+  Object.assign(agentView,{reportScope:'container',epoch:agentView.epoch+1,selection:0,sessions:[],session:null,messages:[],cursor:0,timer:null,posting:false,reading:false,error:'',stream:null,tab:'conversation',requests:new Map(),tools:new Map(),seen:new Set()});
+  resetAgentGroups();setAgentConcurrency(3,'host');setAgentConcurrency(3,'container');
   if($('agentDialog').open)$('agentDialog').close();
   $('agentReports').innerHTML='';$('agentActivityLog').innerHTML='';$('agentActivity').hidden=true;$('agentQuestion').value='';
   agentError('');renderAgentHistory();renderAgentSession();
 }};
-$('generateReport').addEventListener('click',generateDiskReport);
-$('viewReports').addEventListener('click',openAgentReports);
+$('generateReport').addEventListener('click',()=>generateDiskReport('container'));
+$('generateHostReport').addEventListener('click',()=>generateDiskReport('host'));
+$('viewReports').addEventListener('click',()=>openAgentReports('container'));
+$('viewHostReports').addEventListener('click',()=>openAgentReports('host'));
+$('agentHostScope').addEventListener('click',()=>selectAgentReportScope('host').catch(agentError));
+$('agentContainerScope').addEventListener('click',()=>selectAgentReportScope('container').catch(agentError));
 $('closeAgent').addEventListener('click',()=>$('agentDialog').close());
 $('agentDialog').addEventListener('close',()=>{clearTimeout(agentView.timer);closeAgentStream();});
 $('agentConversationTab').addEventListener('click',()=>selectAgentScope('main'));
@@ -403,7 +467,7 @@ $('agentGroupList').addEventListener('click',event=>{const button=event.target.c
 $('agentFollowCurrent').addEventListener('click',()=>{agentView.followActive=true;followRunningAgent();renderAgentSidebar();});
 $('agentReportTab').addEventListener('click',()=>{agentView.followActive=false;agentSetTab('report');});
 $('agentJumpLatest').addEventListener('click',()=>{agentSetTab('conversation');$('agentActivityLog').scrollTop=$('agentActivityLog').scrollHeight;});
-$('reloadReports').addEventListener('click',openAgentReports);
+$('reloadReports').addEventListener('click',()=>openAgentReports(agentView.reportScope));
 $('agentHistory').addEventListener('change',()=>{const session=agentView.sessions.find(s=>s.id===$('agentHistory').value);if(session)selectAgentSession(session);});
 $('stopAgent').addEventListener('click',()=>postAgentAction('cancel',{}));
 $('agentRetry').addEventListener('click',retryAgentGroups);
@@ -413,11 +477,13 @@ $('agentFollowup').addEventListener('submit',e=>{e.preventDefault();const messag
 document.querySelectorAll('[data-agent-question]').forEach(button=>button.addEventListener('click',()=>{$('agentQuestion').value=button.dataset.agentQuestion;$('agentQuestion').focus();}));
 
 // This limit belongs to the next diagnosis; running plans keep their saved limit.
-function setAgentConcurrency(value){
-  agentView.nextConcurrency=value;
-  $('agentConcurrency').value=value;$('reportConcurrency').value=value;
+function setAgentConcurrency(value,scope=agentView.reportScope){
+  agentView.nextConcurrency[scope]=value;
+  $(scope==='host'?'hostReportConcurrency':'reportConcurrency').value=value;
+  if(agentView.reportScope===scope)$('agentConcurrency').value=value;
 }
 $('agentConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value));
-$('reportConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value));
-$('startAgentReport').addEventListener('click',generateDiskReport);
-setAgentConcurrency(3);
+$('reportConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value,'container'));
+$('hostReportConcurrency').addEventListener('input',event=>setAgentConcurrency(event.target.value,'host'));
+$('startAgentReport').addEventListener('click',()=>generateDiskReport(agentView.reportScope));
+setAgentConcurrency(3,'host');setAgentConcurrency(3,'container');

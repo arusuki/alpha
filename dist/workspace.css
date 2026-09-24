@@ -299,6 +299,7 @@ footer { margin-top:32px; color:#a5a3b3; font-size:.61rem; padding-top:20px; }
 @media(max-width:600px) { .snapshot-cache-panel .panel-heading { align-items:flex-start; flex-direction:column; } }
 
 /* Report extraction and explicit filesystem cleanup. */
+.cleanup-source-sections{display:grid;gap:14px}.cleanup-source-section{padding:18px 20px;border:1px solid var(--line);border-radius:12px;background:#fbfcfe}.cleanup-source-section[data-active=true]{border-color:#aabded;background:#f7f9ff}.cleanup-source-section h3{font-size:.94rem;margin:4px 0 5px}.cleanup-source-section p{font-size:.75rem;color:var(--muted)}.cleanup-source-section .cleanup-source{margin:14px 0 0}.cleanup-workspace-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:24px 0 6px;padding-top:20px;border-top:1px solid var(--line)}.cleanup-workspace-heading h3{font-size:.94rem}.cleanup-workspace-heading>div{display:flex;gap:8px}
 .cleanup-source,.cleanup-toolbar{display:flex;align-items:end;gap:14px;flex-wrap:wrap;margin:20px 0}
 .cleanup-source label{flex:1;min-width:240px}.cleanup-source select{width:100%}
 .cleanup-toolbar label{display:grid;gap:6px}.cleanup-toolbar input[type=search]{min-width:240px}
@@ -324,4 +325,4 @@ footer { margin-top:32px; color:#a5a3b3; font-size:.61rem; padding-top:20px; }
 .cleanup-agent-output .form-note{margin:6px 0 0}
 #cleanupDeleteDialog{width:min(680px,calc(100vw - 32px))}.cleanup-delete-paths{max-height:50vh;overflow:auto}.cleanup-delete-paths p{padding:12px;background:#f6f5fb;border-radius:8px;line-height:1.6}
 #cleanupHistoryDialog{width:min(520px,calc(100vw - 32px))}
-@media(max-width:720px){.cleanup-source>*{width:100%}.cleanup-toolbar label{flex:1}.cleanup-toolbar #cleanupSelection{margin-left:0}.cleanup-toolbar input[type=search]{min-width:0;width:100%}}
+@media(max-width:720px){.cleanup-source-section{padding:16px}.cleanup-source>*{width:100%}.cleanup-toolbar label{flex:1}.cleanup-toolbar #cleanupSelection{margin-left:0}.cleanup-toolbar input[type=search]{min-width:0;width:100%}}

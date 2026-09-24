@@ -47,7 +47,7 @@ report = '''# 空间消耗总报告
 <img src=x onerror="window.reportInjected=true">
 '''
 
-session = dict(id=session_id, title='空间消耗总报告', status='running', model='test-model',
+session = dict(id=session_id, title='空间消耗总报告', report_scope='container', status='running', model='test-model',
                provider='responses', snapshot_id=record_id, created_at=1789373000, updated_at=1789373000)
 messages, writes, sessions = [], [], []
 lock = threading.RLock()
@@ -176,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
             writes.append((self.path, body))
             assert self.headers['X-CSRF-Token'] == 'test'
             if self.path == '/api/agent/reports':
-                assert body == dict(snapshot_id=record_id, revision=7, concurrency=2)
+                assert body == dict(snapshot_id=record_id, revision=7, concurrency=2, scope='container')
                 sessions.append(session)
                 messages.append(dict(id=1, role='user', content='生成空间消耗总报告'))
                 trace('report_plan', dict(concurrency=2, groups=[dict(id=f'group-{g+1}', number=g+1, containers=[dict(id=f'c{i}', name=f'worker-{i}') for i in range(g*4, min(g*4+4, 9))]) for g in range(3)]))

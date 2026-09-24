@@ -101,11 +101,17 @@
     </div>
     <section id="page-overview" class="platform-page" hidden>
       <div class="snapshot-line"><div><span id="sourceBadge" class="badge">尚未扫描</span><span>磁盘实际占用 · 扫描快照</span></div><span id="scheduleStatus">手动扫描</span></div>
-      <section class="agent-entry panel" data-admin aria-label="Agent 辅助分析">
-        <div><span class="eyebrow">AGENT ANALYSIS</span><h2>让 Agent 梳理空间去向</h2><p>每 4 个容器一组，聚焦大文件与目录，归并为可删除、有争议、必须保留和放错位置四类。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成总报告。</small></div>
-        <div class="agent-entry-actions"><label class="agent-concurrency-field">最大并行 Agent 数<input id="reportConcurrency" type="number" min="1" max="16" step="1" value="3" aria-label="新报告最大并行 Agent 数"></label><button id="generateReport" class="primary" disabled>生成空间报告</button><button id="viewReports">查看分析记录</button></div>
-      </section>
-      <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先发现这台机器上的容器</h2><p id="firstScanHint">在扫描配置中启用 Docker 自动发现，再开始扫描。这里会按容器和所属用户显示磁盘用量。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
+      <div class="agent-entry-sections" data-admin>
+        <section class="agent-entry panel" aria-label="Host 容量分析">
+          <div><span class="eyebrow">HOST ANALYSIS</span><h2>Host 容量分析</h2><p>梳理宿主机目录与大文件，定位容器之外的空间占用和清理候选。</p><small id="hostAgentSourceHint">完成扫描后，即可基于当前记录生成 Host 报告。</small></div>
+          <div class="agent-entry-actions"><label class="agent-concurrency-field">最大并行 Agent 数<input id="hostReportConcurrency" type="number" min="1" max="16" step="1" value="3" aria-label="Host 报告最大并行 Agent 数"></label><button id="generateHostReport" class="primary" disabled>生成 Host 报告</button><button id="viewHostReports">查看 Host 记录</button></div>
+        </section>
+        <section class="agent-entry panel" aria-label="容器 Agent 分析">
+          <div><span class="eyebrow">CONTAINER AGENT ANALYSIS</span><h2>容器 Agent 分析</h2><p>每 4 个容器一组，聚焦大文件与目录，归并为可删除、有争议、必须保留和放错位置四类。</p><small id="agentSourceHint">完成扫描后，即可基于当前记录生成容器报告。</small></div>
+          <div class="agent-entry-actions"><label class="agent-concurrency-field">最大并行 Agent 数<input id="reportConcurrency" type="number" min="1" max="16" step="1" value="3" aria-label="容器报告最大并行 Agent 数"></label><button id="generateReport" class="primary" disabled>生成容器报告</button><button id="viewReports">查看容器记录</button></div>
+        </section>
+      </div>
+      <div id="firstScan" class="first-scan"><div class="empty-symbol" aria-hidden="true">▦</div><h2>先扫描这台机器的空间</h2><p id="firstScanHint">完成扫描后可独立分析 Host 容量；如需分析容器，请在扫描配置中启用 Docker 自动发现。</p><button data-page="scan-settings" data-admin>配置扫描</button></div>
       <div id="resultContent" hidden>
         <section id="storageOverview" class="panel storage-overview" aria-label="磁盘空间分布"></section>
         <section class="stats" aria-label="空间用量概览">
@@ -136,8 +142,12 @@
       </div>
     </section>
 <section id="page-cleanup" class="platform-page management-panel" hidden>
-  <div class="section-heading"><div><h2>从报告到目录清理</h2><p>让 Agent 阅读完整报告，提取全部条目和说明，再选择需要删除的目录或文件。</p></div><button id="cleanupRefresh">刷新报告</button></div>
-  <div class="cleanup-source"><label>完整报告<select id="cleanupReport"><option value="">正在读取报告…</option></select></label><button id="cleanupExtract" class="primary" disabled>提取报告条目</button><button id="cleanupCancel" hidden>停止提取</button><button id="cleanupRemoveHistory" hidden>删除提取记录</button></div>
+  <div class="section-heading"><div><h2>从报告到目录清理</h2><p>分别提取 Host 与容器 Agent 报告中的条目，再选择需要删除的目录或文件。</p></div><button id="cleanupRefresh">刷新报告</button></div>
+  <div class="cleanup-source-sections">
+    <section id="cleanupHostSection" class="cleanup-source-section" aria-labelledby="cleanupHostTitle"><div><span class="eyebrow">HOST REPORT</span><h3 id="cleanupHostTitle">Host 容量报告</h3><p>宿主机目录和文件的清理候选。</p></div><div class="cleanup-source"><label>Host 完整报告<select id="cleanupHostReport"><option value="">正在读取报告…</option></select></label><button id="cleanupHostExtract" class="primary" disabled>提取 Host 条目</button></div></section>
+    <section id="cleanupContainerSection" class="cleanup-source-section" aria-labelledby="cleanupContainerTitle"><div><span class="eyebrow">CONTAINER AGENT REPORT</span><h3 id="cleanupContainerTitle">容器 Agent 报告</h3><p>容器目录和文件的清理候选。</p></div><div class="cleanup-source"><label>容器完整报告<select id="cleanupReport"><option value="">正在读取报告…</option></select></label><button id="cleanupExtract" class="primary" disabled>提取容器条目</button></div></section>
+  </div>
+  <div class="cleanup-workspace-heading"><h3 id="cleanupWorkspaceTitle">提取与清理</h3><div><button id="cleanupCancel" hidden>停止提取</button><button id="cleanupRemoveHistory" hidden>删除提取记录</button></div></div>
   <p id="cleanupSourceHint" class="form-note"></p><p id="cleanupStatus" role="status" class="form-note"></p><p id="cleanupError" role="alert" class="error-text"></p>
   <section id="cleanupAgentPanel" class="cleanup-agent-panel" aria-labelledby="cleanupAgentTitle" hidden><div class="section-heading"><div><h3 id="cleanupAgentTitle">Agent 提取过程</h3><p>实时查看模型输出及其公开返回的思考内容。Responses 思考摘要需在 Agent 设置中开启并由模型提供。</p></div><span id="cleanupAgentConnection" class="form-note" role="status"></span></div><div id="cleanupAgentLog" class="cleanup-agent-log" role="log" aria-live="off"></div></section>
   <div class="cleanup-toolbar"><label>分类<select id="cleanupCategory"><option value="">全部分类</option><option value="1">可立即删除</option><option value="2">存在争议</option><option value="3">必须保留</option><option value="4">放错位置</option></select></label><label>搜索条目<input id="cleanupSearch" type="search" placeholder="路径、用途或说明"></label><span id="cleanupSelection" role="status">未选择条目</span><button id="cleanupDelete" class="danger" disabled>删除所选</button></div>
@@ -206,17 +216,18 @@
 </dialog>
 <dialog id="agentDialog" class="agent-dialog" aria-labelledby="agentTitle">
   <div class="dialog-heading"><div><span class="eyebrow">AGENT ANALYSIS</span><h2 id="agentTitle">空间诊断</h2></div><button id="closeAgent" aria-label="关闭分析报告">✕</button></div>
+  <div class="agent-report-scope" role="group" aria-label="报告类型"><button id="agentHostScope" type="button" aria-pressed="false">Host 容量分析</button><button id="agentContainerScope" type="button" aria-pressed="true">容器 Agent 分析</button></div>
   <div class="agent-toolbar"><label>分析记录<select id="agentHistory"><option value="">暂无分析记录</option></select></label><button id="reloadReports">刷新记录</button><button id="downloadReport" disabled>导出 Markdown</button><button id="agentModelSettings">模型设置</button></div>
-  <div class="agent-run-config"><label class="agent-concurrency-field">新诊断最大并行 Agent 数<input id="agentConcurrency" type="number" min="1" max="16" step="1" value="3"></label><small>每组独立分析，空位自动补充下一组。</small><button id="startAgentReport" type="button">开始新诊断</button></div>
+  <div class="agent-run-config"><label class="agent-concurrency-field">新诊断最大并行 Agent 数<input id="agentConcurrency" type="number" min="1" max="16" step="1" value="3"></label><small id="agentRunHint">每组独立分析，空位自动补充下一组。</small><button id="startAgentReport" type="button">开始新诊断</button></div>
   <p id="agentReportSource" class="form-note"></p>
   <div class="agent-status-line"><strong id="agentRunStatus" role="status" aria-live="polite">准备分析</strong><button id="stopAgent" hidden>停止分析</button></div>
   <p id="agentError" class="error-text" role="alert"></p>
-  <p id="agentEmpty" class="agent-empty">在空间用量页点击“生成空间报告”，Agent 会先定位占用大头，再按需补查目录，生成报告。分析在后台进行，可随时关闭此窗口。</p>
+  <p id="agentEmpty" class="agent-empty">在空间用量页生成报告，Agent 会定位占用大头、补查目录并整理清理候选。分析在后台进行，可随时关闭此窗口。</p>
   <div id="agentWorkspace" class="agent-workspace" hidden>
     <aside class="agent-sidebar" aria-label="诊断 Agent 列表">
       <button id="agentConversationTab" class="agent-sidebar-link" aria-pressed="true">总览与追问</button>
       <button id="agentReportTab" class="agent-sidebar-link" aria-pressed="false">完整报告 <small id="agentReportReady">待生成</small></button>
-      <div id="agentGroupSection" hidden><p class="agent-sidebar-label">分组 Agent · 每组最多 4 个容器</p><p id="agentConcurrencyStatus" class="agent-concurrency-status"></p><div id="agentGroupList" class="agent-group-list"></div></div>
+      <div id="agentGroupSection" hidden><p id="agentGroupLabel" class="agent-sidebar-label">分组 Agent · 每组最多 4 个容器</p><p id="agentConcurrencyStatus" class="agent-concurrency-status"></p><div id="agentGroupList" class="agent-group-list"></div></div>
       <button id="agentFollowCurrent" class="agent-follow-current" aria-pressed="true" hidden>跟随当前 Agent</button>
     </aside>
     <div class="agent-conversation-pane">

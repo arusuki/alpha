@@ -1,5 +1,5 @@
 'use strict';
-const cleanupView={reports:[],reportID:'',session:null,phase:'extract',entries:[],selected:new Set(),collapsed:new Set(),sortDirections:{},epoch:0,selection:0,timer:null,stream:null,traceReady:false,readingTrace:false,cursor:0,requests:new Map(),posting:false,loading:false,visible:false};
+const cleanupView={reports:[],reportScope:'container',reportID:'',selectedReports:{host:'',container:''},session:null,phase:'extract',entries:[],selected:new Set(),collapsed:new Set(),sortDirections:{},epoch:0,selection:0,timer:null,stream:null,traceReady:false,readingTrace:false,cursor:0,requests:new Map(),posting:false,loading:false,visible:false};
 const cleanupCategories=['','可立即删除','存在争议','必须保留','放错位置'];
 const cleanupStatuses={pending:'待处理',deleted:'已清理',failed:'删除失败',deleting:'删除中 / 结果待核对',uncertain:'结果待核对'};
 const cleanupTraceWindowChars=32000;
@@ -21,14 +21,18 @@ function cleanupSorted(rows,category){
 }
 function cleanupRow(row){return `<tr><td><input type="checkbox" data-cleanup-entry="${esc(row.id)}" aria-label="选择 ${esc(row.path)}" ${cleanupView.selected.has(row.id)?'checked':''} ${!cleanupSelectable(row)?'disabled':''}></td><td><span class="mono cleanup-path">${esc(row.path)}</span><span class="sub">${esc((row.detail.locations||[]).join('；'))}</span></td><td>${esc(row.detail.kind||'')}</td><td class="amount">${fmt(row.detail.bytes)}</td><td>${esc(row.summary)}<details><summary>原报告说明</summary><p>${esc(row.detail.summary||'')} ${esc(row.detail.reason||'')}</p></details></td><td>${esc(cleanupStatuses[row.status]||row.status)}${row.error?`<span class="sub${row.status==='deleted'?'':' error-text'}">${esc(row.error)}</span>`:''}</td></tr>`;}
 function cleanupControls(){
-  const blocked=cleanupView.posting||cleanupView.loading;
-  $('cleanupReport').disabled=blocked;$('cleanupRefresh').disabled=blocked;
-  $('cleanupExtract').disabled=blocked||!cleanupView.reportID||cleanupBusy()||cleanupView.session?.status==='completed'||cleanupView.phase==='delete';
-  $('cleanupExtract').textContent=cleanupView.phase==='delete'||cleanupView.session?.status==='completed'?'已提取全部条目':cleanupBusy()?'正在提取…':'提取报告条目';
+  const blocked=cleanupView.posting||cleanupView.loading,busy=cleanupBusy(),extracted=cleanupView.phase==='delete'||cleanupView.session?.status==='completed';
+  $('cleanupReport').disabled=blocked;$('cleanupHostReport').disabled=blocked;$('cleanupRefresh').disabled=blocked;
+  for(const [scope,buttonID,defaultText] of [['host','cleanupHostExtract','提取 Host 条目'],['container','cleanupExtract','提取容器条目']]){
+    const id=cleanupView.selectedReports[scope],report=cleanupView.reports.find(row=>String(row.report_id)===id&&row.report_scope===scope),current=cleanupView.reportScope===scope&&cleanupView.reportID===id;
+    $(buttonID).disabled=blocked||!report||(current&&(busy||extracted));
+    if(!current)$(buttonID).textContent=report?.cleanup_id?'查看条目 / 进度':'选择报告';
+    else $(buttonID).textContent=extracted?'已提取全部条目':busy?'正在提取…':defaultText;
+  }
   $('cleanupCancel').textContent=cleanupView.phase==='delete'?'停止删除':'停止提取';
-  $('cleanupCancel').hidden=!cleanupBusy();$('cleanupCancel').disabled=blocked||cleanupView.session?.status==='cancelling';
-  $('cleanupRemoveHistory').hidden=!cleanupView.session;$('cleanupRemoveHistory').disabled=blocked||cleanupBusy();
-  $('cleanupDelete').disabled=blocked||!cleanupView.selected.size||cleanupBusy();
+  $('cleanupCancel').hidden=!busy;$('cleanupCancel').disabled=blocked||cleanupView.session?.status==='cancelling';
+  $('cleanupRemoveHistory').hidden=!cleanupView.session;$('cleanupRemoveHistory').disabled=blocked||busy;
+  $('cleanupDelete').disabled=blocked||!cleanupView.selected.size||busy;
   $('cleanupSelection').textContent=cleanupView.selected.size?`已选择 ${cleanupView.selected.size} 项（每次最多 100 项）`:'未选择条目';
   const visible=cleanupVisibleSelectable(),checked=visible.filter(row=>cleanupView.selected.has(row.id)).length;
   $('cleanupSelectAll').disabled=blocked||!visible.length;
@@ -37,13 +41,18 @@ function cleanupControls(){
 }
 function renderCleanup(){
   const report=cleanupView.reports.find(row=>String(row.report_id)===cleanupView.reportID),session=cleanupView.session;
-  $('cleanupSourceHint').textContent=report?`${dateTime(report.created_at)} · 源扫描 ${report.snapshot_id||'已删除（可查看报告条目，不能删除实际目录）'}`:'尚无完整报告。请先在空间用量页生成空间报告。';
+  const name=cleanupView.reportScope==='host'?'Host':'容器 Agent';
+  $('cleanupWorkspaceTitle').textContent=`${name} · 提取与清理`;
+  $('cleanupAgentTitle').textContent=`${name} · Agent 提取过程`;
+  $('cleanupHostSection').setAttribute('data-active',String(cleanupView.reportScope==='host'));
+  $('cleanupContainerSection').setAttribute('data-active',String(cleanupView.reportScope==='container'));
+  $('cleanupSourceHint').textContent=report?`${dateTime(report.created_at)} · ${name} 报告 · 源扫描 ${report.snapshot_id||'已删除（可查看报告条目，不能删除实际目录）'}`:`尚无${name}完整报告。请先在空间用量页生成报告。`;
   $('cleanupStatus').textContent=cleanupView.phase==='delete'?`${cleanupBusy()?'正在后台删除，离开页面后仍会继续。':'删除任务已结束。'} 已清理 ${cleanupView.entries.filter(row=>row.status==='deleted').length} 项，失败 ${cleanupView.entries.filter(row=>row.status==='failed').length} 项，待核对 ${cleanupView.entries.filter(row=>['deleting','uncertain'].includes(row.status)).length} 项。${session?.error||''} 请重新扫描以更新空间统计。`:cleanupBusy()?'Agent 正在读取完整报告并提取全部四类条目，离开页面后仍会继续。':session?.status==='completed'?`已提取 ${cleanupView.entries.length} 项。`:(session?.error||'');
   const rows=cleanupFiltered(),filteredCategory=$('cleanupCategory').value,searching=!!$('cleanupSearch').value.trim();
   const categories=cleanupCategories.map((_,category)=>category).slice(1).filter(category=>(!filteredCategory||String(category)===filteredCategory)&&(!searching||rows.some(row=>row.category===category)));
   $('cleanupEntries').innerHTML=cleanupView.entries.length&&categories.length?categories.map(category=>{
     const group=cleanupSorted(rows.filter(row=>row.category===category),category),direction=cleanupView.sortDirections[category]||'desc';
-    return `<details class="cleanup-group" data-cleanup-category="${category}" ${cleanupView.collapsed.has(category)?'':'open'}><summary><strong>${esc(cleanupCategories[category])}</strong><span>${group.length} 项</span></summary><div class="table-scroll"><table class="cleanup-table"><thead><tr><th scope="col">选择</th><th scope="col">物理路径 / 容器位置</th><th scope="col">用途</th><th scope="col" aria-sort="${direction==='desc'?'descending':'ascending'}"><button type="button" data-cleanup-sort="${category}" aria-label="按实际占用${direction==='desc'?'从低到高':'从高到低'}排序">实际占用 <span aria-hidden="true">${direction==='desc'?'↓':'↑'}</span></button></th><th scope="col">简要说明</th><th scope="col">处理状态</th></tr></thead><tbody>${group.map(cleanupRow).join('')||'<tr><td colspan="6" class="empty">此分类暂无条目。</td></tr>'}</tbody></table></div></details>`;
+    return `<details class="cleanup-group" data-cleanup-category="${category}" ${cleanupView.collapsed.has(category)?'':'open'}><summary><strong>${esc(cleanupCategories[category])}</strong><span>${group.length} 项</span></summary><div class="table-scroll"><table class="cleanup-table"><thead><tr><th scope="col">选择</th><th scope="col">${cleanupView.reportScope==='host'?'Host 物理路径 / 来源':'物理路径 / 容器位置'}</th><th scope="col">用途</th><th scope="col" aria-sort="${direction==='desc'?'descending':'ascending'}"><button type="button" data-cleanup-sort="${category}" aria-label="按实际占用${direction==='desc'?'从低到高':'从高到低'}排序">实际占用 <span aria-hidden="true">${direction==='desc'?'↓':'↑'}</span></button></th><th scope="col">简要说明</th><th scope="col">处理状态</th></tr></thead><tbody>${group.map(cleanupRow).join('')||'<tr><td colspan="6" class="empty">此分类暂无条目。</td></tr>'}</tbody></table></div></details>`;
   }).join(''): `<p class="cleanup-empty">${cleanupBusy()?'正在提取，完成后展示全部条目。':session?.status==='completed'?'没有符合条件的条目。':'选择完整报告后提取条目。'}</p>`;
   cleanupControls();
 }
@@ -51,6 +60,8 @@ function cleanupApply(result){
   if(!result.session||!['extract','delete'].includes(result.phase)||!Array.isArray(result.entries))throw Error('目录提取结果格式无效');
   const entries=result.entries.map(row=>{const detail=JSON.parse(row.detail);if(!row.id||typeof row.path!=='string'||typeof row.summary!=='string'||!cleanupCategories[row.category]||!detail)throw Error('报告条目格式无效');return {...row,detail};});
   cleanupView.session=result.session;cleanupView.phase=result.phase;cleanupView.entries=entries;
+  const report=cleanupView.reports.find(row=>String(row.report_id)===cleanupView.reportID);
+  if(report){report.cleanup_id=result.session.id;report.cleanup_status=result.session.status;report.phase=result.phase;}
   if(cleanupView.phase!=='extract'||!cleanupBusy()){closeCleanupStream();cleanupFinishPending();}
   const ids=new Set(entries.filter(cleanupSelectable).map(row=>row.id));cleanupView.selected=new Set([...cleanupView.selected].filter(id=>ids.has(id)));
   renderCleanup();
@@ -178,9 +189,12 @@ async function readCleanup(){
   try{const result=await api(`/api/agent/cleanups/${id}`);if(epoch===cleanupView.epoch&&selection===cleanupView.selection){cleanupApply(result);$('cleanupError').textContent='';}}
   finally{if(epoch===cleanupView.epoch&&selection===cleanupView.selection)cleanupPoll();}
 }
-async function selectCleanupReport(){
-  clearTimeout(cleanupView.timer);cleanupView.selection++;resetCleanupTrace();cleanupView.reportID=$('cleanupReport').value;cleanupView.session=null;cleanupView.phase='extract';cleanupView.entries=[];cleanupView.selected.clear();cleanupView.collapsed.clear();cleanupView.sortDirections={};$('cleanupError').textContent='';
+async function selectCleanupReport(scope=cleanupView.reportScope){
+  if(!['host','container'].includes(scope))throw Error('报告类型无效');
+  const reportID=$(scope==='host'?'cleanupHostReport':'cleanupReport').value;
+  clearTimeout(cleanupView.timer);cleanupView.selection++;resetCleanupTrace();cleanupView.reportScope=scope;cleanupView.reportID=reportID;cleanupView.selectedReports[scope]=reportID;cleanupView.session=null;cleanupView.phase='extract';cleanupView.entries=[];cleanupView.selected.clear();cleanupView.collapsed.clear();cleanupView.sortDirections={};$('cleanupError').textContent='';
   const report=cleanupView.reports.find(row=>String(row.report_id)===cleanupView.reportID);
+  if(report&&report.report_scope!==scope)throw Error('报告类型与当前清理栏目不匹配');
   if(report?.cleanup_id){cleanupView.session={id:report.cleanup_id,status:report.cleanup_status};cleanupView.phase=report.phase;}
   renderCleanup();if(cleanupView.session){await readCleanup();await readCleanupTrace();}
 }
@@ -189,10 +203,16 @@ async function loadCleanupReports(){
   const epoch=cleanupView.epoch;cleanupView.loading=true;cleanupControls();
   try{
     const result=await api('/api/agent/cleanup-reports');if(epoch!==cleanupView.epoch)return;
+    if(!Array.isArray(result.reports)||result.reports.some(row=>!['host','container'].includes(row.report_scope)))throw Error('清理报告列表格式无效');
     cleanupView.reports=result.reports;
-    $('cleanupReport').innerHTML=result.reports.map(row=>`<option value="${row.report_id}">${esc(dateTime(row.created_at))} · ${esc(row.title)} · ${esc((row.snapshot_id||'已删除').slice(0,8))}</option>`).join('')||'<option value="">暂无完整报告</option>';
-    if(result.reports.some(row=>String(row.report_id)===cleanupView.reportID))$('cleanupReport').value=cleanupView.reportID;
-    await selectCleanupReport();
+    for(const [scope,selectID] of [['host','cleanupHostReport'],['container','cleanupReport']]){
+      const rows=result.reports.filter(row=>row.report_scope===scope),selected=cleanupView.selectedReports[scope];
+      $(selectID).innerHTML=rows.map(row=>`<option value="${row.report_id}">${esc(dateTime(row.created_at))} · ${esc(row.title)} · ${esc((row.snapshot_id||'已删除').slice(0,8))}</option>`).join('')||'<option value="">暂无完整报告</option>';
+      if(rows.some(row=>String(row.report_id)===selected))$(selectID).value=selected;
+      cleanupView.selectedReports[scope]=$(selectID).value;
+    }
+    const scope=cleanupView.selectedReports[cleanupView.reportScope]?cleanupView.reportScope:cleanupView.selectedReports.host?'host':'container';
+    await selectCleanupReport(scope);
   }catch(error){if(epoch===cleanupView.epoch)$('cleanupError').textContent=error.message;}
   finally{if(epoch===cleanupView.epoch){cleanupView.loading=false;cleanupControls();}}
 }
@@ -208,6 +228,19 @@ async function cleanupAction(action){
     if(epoch===cleanupView.epoch){await readCleanup();await readCleanupTrace();}
   }catch(error){if(epoch===cleanupView.epoch)$('cleanupError').textContent=error.message;}
   finally{if(epoch===cleanupView.epoch){cleanupView.posting=false;cleanupControls();cleanupPoll();}}
+}
+async function openCleanupScope(scope){
+  if(cleanupView.posting||cleanupView.loading)return;
+  const epoch=cleanupView.epoch;cleanupView.loading=true;cleanupControls();
+  try{await selectCleanupReport(scope);}
+  catch(error){if(epoch===cleanupView.epoch)$('cleanupError').textContent=error.message;}
+  finally{if(epoch===cleanupView.epoch){cleanupView.loading=false;cleanupControls();}}
+}
+async function extractCleanupScope(scope){
+  if(cleanupView.posting||cleanupView.loading)return;
+  if(cleanupView.reportScope!==scope||cleanupView.reportID!==$(scope==='host'?'cleanupHostReport':'cleanupReport').value){await openCleanupScope(scope);return;}
+  if($(scope==='host'?'cleanupHostExtract':'cleanupExtract').disabled)return;
+  await cleanupAction('extract');
 }
 function openCleanupHistoryDialog(){
   if(!cleanupView.session||cleanupBusy()||cleanupView.posting)return;
@@ -254,14 +287,15 @@ async function deleteCleanupSelection(){
   finally{if(epoch===cleanupView.epoch){cleanupView.posting=false;cleanupControls();$('cleanupDeleteConfirm').disabled=false;$('cleanupDeleteClose').disabled=false;$('cleanupSudoPassword').value='';$('cleanupSudoPassword').disabled=false;cleanupPoll();}}
 }
 window.CleanupUI={open(){cleanupView.visible=true;loadCleanupReports();},close(){cleanupView.visible=false;clearTimeout(cleanupView.timer);closeCleanupStream();if($('cleanupHistoryDialog').open)$('cleanupHistoryDialog').close();},reset(){
-  clearTimeout(cleanupView.timer);resetCleanupTrace();Object.assign(cleanupView,{reports:[],reportID:'',session:null,phase:'extract',entries:[],selected:new Set(),collapsed:new Set(),sortDirections:{},epoch:cleanupView.epoch+1,selection:0,timer:null,stream:null,traceReady:false,readingTrace:false,cursor:0,requests:new Map(),posting:false,loading:false,visible:false});
+  clearTimeout(cleanupView.timer);resetCleanupTrace();Object.assign(cleanupView,{reports:[],reportScope:'container',reportID:'',selectedReports:{host:'',container:''},session:null,phase:'extract',entries:[],selected:new Set(),collapsed:new Set(),sortDirections:{},epoch:cleanupView.epoch+1,selection:0,timer:null,stream:null,traceReady:false,readingTrace:false,cursor:0,requests:new Map(),posting:false,loading:false,visible:false});
   if($('cleanupDeleteDialog').open)$('cleanupDeleteDialog').close();
   if($('cleanupHistoryDialog').open)$('cleanupHistoryDialog').close();
-  $('cleanupReport').innerHTML='<option value="">暂无完整报告</option>';$('cleanupSearch').value='';$('cleanupCategory').value='';$('cleanupError').textContent='';$('cleanupDeletePaths').innerHTML='';$('cleanupDeleteError').textContent='';$('cleanupDeleteConfirm').disabled=false;$('cleanupDeleteClose').disabled=false;$('cleanupSudoPassword').value='';$('cleanupSudoPassword').disabled=false;$('cleanupHistoryError').textContent='';$('cleanupHistoryConfirm').disabled=false;$('cleanupHistoryClose').disabled=false;renderCleanup();
+  $('cleanupReport').innerHTML='<option value="">暂无完整报告</option>';$('cleanupHostReport').innerHTML='<option value="">暂无完整报告</option>';$('cleanupSearch').value='';$('cleanupCategory').value='';$('cleanupError').textContent='';$('cleanupDeletePaths').innerHTML='';$('cleanupDeleteError').textContent='';$('cleanupDeleteConfirm').disabled=false;$('cleanupDeleteClose').disabled=false;$('cleanupSudoPassword').value='';$('cleanupSudoPassword').disabled=false;$('cleanupHistoryError').textContent='';$('cleanupHistoryConfirm').disabled=false;$('cleanupHistoryClose').disabled=false;renderCleanup();
 }};
 $('cleanupRefresh').addEventListener('click',loadCleanupReports);
-$('cleanupReport').addEventListener('change',()=>{cleanupView.loading=true;cleanupControls();selectCleanupReport().catch(error=>{$('cleanupError').textContent=error.message;}).finally(()=>{cleanupView.loading=false;cleanupControls();});});
-$('cleanupExtract').addEventListener('click',()=>cleanupAction('extract'));
+for(const [scope,selectID] of [['host','cleanupHostReport'],['container','cleanupReport']])$(selectID).addEventListener('change',()=>openCleanupScope(scope));
+$('cleanupExtract').addEventListener('click',()=>extractCleanupScope('container'));
+$('cleanupHostExtract').addEventListener('click',()=>extractCleanupScope('host'));
 $('cleanupCancel').addEventListener('click',()=>cleanupAction('cancel'));
 $('cleanupRemoveHistory').addEventListener('click',openCleanupHistoryDialog);
 $('cleanupHistoryConfirm').addEventListener('click',removeCleanupHistory);

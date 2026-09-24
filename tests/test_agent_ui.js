@@ -9,30 +9,34 @@ function element(id){
 }
 const record='b'.repeat(32),id='a'.repeat(32),calls=[];
 const streams=[];
+const suggestionButtons=Array.from({length:3},()=>({dataset:{},textContent:'',disabled:false,addEventListener(){}}));
 let sessions=[],messages=[],hold=null,settings={model:'test',endpoint:'http://model.test'},failure=null,download=null;
-const session={id,title:'空间消耗总报告',status:'completed',snapshot_id:record,model:'test',created_at:1,updated_at:2};
-const sandbox={EventSource:class{constructor(url){this.url=url;this.listeners={};streams.push(this);}addEventListener(k,f){this.listeners[k]=f;}close(){this.closed=true;}},console,window:{},$:element,platform:{user:{role:'admin'},loaded:record,followLatest:true},snapshot:{revision:7,host:'host',finished_at:'2026-09-14'},document:{querySelectorAll:()=>[],createElement:()=>({click(){}})},URL:{createObjectURL(blob){download=blob;return 'blob:test';},revokeObjectURL(){}},Blob,setTimeout:()=>1,clearTimeout(){},dateTime:String,showPage(){},esc:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api:async(path,options={})=>{
+const session={id,title:'空间消耗总报告',report_scope:'container',status:'completed',snapshot_id:record,model:'test',created_at:1,updated_at:2};
+const sandbox={EventSource:class{constructor(url){this.url=url;this.listeners={};streams.push(this);}addEventListener(k,f){this.listeners[k]=f;}close(){this.closed=true;}},console,window:{},$:element,platform:{user:{role:'admin'},loaded:record,followLatest:true},snapshot:{revision:7,host:'host',finished_at:'2026-09-14'},document:{querySelectorAll:selector=>selector==='[data-agent-question]'?suggestionButtons:[],createElement:()=>({click(){}})},URL:{createObjectURL(blob){download=blob;return 'blob:test';},revokeObjectURL(){}},Blob,setTimeout:()=>1,clearTimeout(){},dateTime:String,showPage(){},esc:value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api:async(path,options={})=>{
   calls.push({path,options});if(hold&&hold.path===path)return new Promise(resolve=>{hold.resolve=resolve;});
   if(failure&&path===failure.path)throw Error(failure.message);
   if(path==='/api/agent/settings')return {value:settings};
   if(path==='/api/agent/sessions')return {sessions:[...sessions]};
   if(path==='/api/agent/reports'){
-    assert.deepEqual(JSON.parse(options.body),{snapshot_id:record,revision:7,concurrency:3});sessions=[{...session}];
+    const source=JSON.parse(options.body);assert.equal(source.snapshot_id,record);assert.equal(source.revision,7);assert(['host','container'].includes(source.scope));assert.equal(source.concurrency,source.scope==='host'?5:3);
+    session.report_scope=source.scope;sessions=[{...session}];
     messages=[{id:1,role:'user',content:'server report request'},{id:2,role:'tool_start',tool_name:'scan_directory',content:JSON.stringify({call_id:'c',arguments:'{"path":"/data/<unsafe>"}'})},{id:3,role:'assistant',created_at:3,content:'# 总报告\n\n| 路径 | 大小 |\n| --- | --- |\n| `/data` | **1 GiB** |\n\n<script>alert(1)</script>\n![x](https://example.test/x)'}];
     return {...session};
   }
   if(path.endsWith('/messages')){messages.push({id:messages.length+1,role:'user',content:JSON.parse(options.body).message},{id:messages.length+2,role:'assistant',content:'已进一步分析'});return {...session};}
   if(path.endsWith('/cancel')){session.status='cancelled';return {ok:true};}
-  if(path.startsWith('/api/agent/sessions/'+id+'?after=')){
-    const after=Number(path.split('after=')[1]),batch=messages.filter(m=>m.id>after).slice(0,2);
-    return {session:{...session},messages:batch,next_after:batch.at(-1)?.id||after,has_more:messages.some(m=>m.id>(batch.at(-1)?.id||after)),active_job:null};
+  if(path.startsWith('/api/agent/sessions/')&&path.includes('?after=')){
+    const selectedID=path.split('/')[4].split('?')[0],selected=selectedID===id?session:sessions.find(row=>row.id===selectedID)||session;
+    const after=Number(path.split('after=')[1]),source=selectedID===id?messages:[],batch=source.filter(m=>m.id>after).slice(0,2);
+    return {session:{...selected},messages:batch,next_after:batch.at(-1)?.id||after,has_more:source.some(m=>m.id>(batch.at(-1)?.id||after)),active_job:null};
   }
   throw Error('Unexpected API '+path);
 }};
 vm.createContext(sandbox);vm.runInContext(fs.readFileSync('dist/agent.js','utf8'),sandbox);
 const run=code=>vm.runInContext(code,sandbox),flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
-  run('agentControls()');assert(!element('generateReport').disabled);
+  run('agentControls()');assert(!element('generateReport').disabled);assert(element('generateHostReport').disabled);
+  assert(element('hostAgentSourceHint').textContent.includes('添加宿主机目录'));
   run('setAgentConcurrency(0)');await run('generateDiskReport()');assert(element('agentError').textContent.includes('1–16'));assert.equal(calls.length,0);
   run('setAgentConcurrency(3)');assert.equal(element('reportConcurrency').value,3);
   await run('generateDiskReport()');
@@ -164,5 +168,22 @@ const run=code=>vm.runInContext(code,sandbox),flush=()=>new Promise(resolve=>set
   staleStream.listeners.session({data:JSON.stringify({session,messages:[{id:999,role:'user',content:'private after logout'}],next_after:999,has_more:false})});
   assert.equal(element('agentActivityLog').innerHTML,'','closed streams must not restore private content');
   sandbox.platform.user={role:'viewer'};const total=calls.length;run('agentControls()');await run('generateDiskReport()');await run('openAgentReports()');assert(element('generateReport').disabled);assert.equal(calls.length,total);
+  sandbox.platform.user={role:'admin'};run('window.AgentUI.reset()');sessions=[];session.status='completed';session.snapshot_id=record;
+  sandbox.snapshot.resources=[{path:'/srv',kinds:['host'],containers:[]}];
+  run('setAgentConcurrency(5,"host")');assert.equal(element('hostReportConcurrency').value,5);assert.equal(element('reportConcurrency').value,3);
+  await run('generateDiskReport("host")');assert.equal(run('agentView.reportScope'),'host');assert.equal(element('agentConcurrency').value,5);
+  assert(element('agentQuestion').placeholder.includes('Host 扫描范围'));assert.equal(suggestionButtons[0].textContent,'重点目录');assert(suggestionButtons[0].dataset.agentQuestion.includes('Host 扫描范围'));
+  assert.equal(JSON.parse(calls.filter(c=>c.path==='/api/agent/reports').at(-1).options.body).scope,'host');
+  run('appendAgentMessages('+JSON.stringify([{id:200,role:'report_plan',content:JSON.stringify({scope:'host',concurrency:5,groups:[{id:'host-group',number:1,directories:[{path:'/srv/<private>',name:'srv'}]}]})}])+')');
+  assert(element('agentGroupList').innerHTML.includes('/srv/&lt;private&gt;'));assert(element('agentGroupList').innerHTML.includes('1 个目录'));
+  const containerHistory={id:'c'.repeat(32),title:'仅容器报告',report_scope:'container',status:'completed',snapshot_id:record,model:'test',created_at:1,updated_at:1};
+  sessions.push(containerHistory,{id:'d'.repeat(32),title:'自定义会话',report_scope:'',status:'completed',created_at:1,updated_at:1});
+  await run('loadAgentHistory()');
+  assert(!element('agentHistory').innerHTML.includes('仅容器报告'),'Host 历史不能混入容器报告');
+  await run('selectAgentReportScope("container")');
+  assert.equal(run('agentView.reportScope'),'container');assert(element('agentHistory').innerHTML.includes('仅容器报告'));
+  assert.equal(element('agentQuestion').placeholder,'例如：继续查看最大的可写层中有哪些数据集');assert.equal(suggestionButtons[0].textContent,'数据集与模型');assert(suggestionButtons[0].dataset.agentQuestion.includes('可写层'));
+  assert(!element('agentHistory').innerHTML.includes('Host'),'容器历史不能混入 Host 报告');
+  assert(!element('agentHistory').innerHTML.includes('自定义会话'),'自定义会话不能混入报告历史');
   console.log('Agent UI checks passed: selected-record reports, paging, Markdown escaping, followups, exports, progress/cancel, deleted records, configuration errors, duplicate clicks and stale responses after logout.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -11,6 +11,10 @@ from playwright.sync_api import sync_playwright
 repo = Path(__file__).resolve().parents[1]
 user = dict(id='admin', username='admin', role='admin')
 session = dict(id='a' * 32, status='running', snapshot_id='b' * 32, error='')
+host_session = dict(id='h' * 32, status='completed', snapshot_id='b' * 32, error='', report_scope='host')
+host_entries = [dict(id='8' * 32, path='/srv/host-cache', category=1, summary='Host 缓存',
+                     detail=json.dumps(dict(bytes=8192, locations=['Host：/srv'], kind='缓存', summary='缓存目录', reason='可重建')),
+                     status='pending', error='')]
 entries = [dict(id=str(i) * 32, path=f'/data/{name}', category=i,
                 summary='用途 <script>unsafe()</script>；处理前请核对依赖',
                 detail=json.dumps(dict(bytes=4096 * i, locations=['容器：/workspace/' + name],
@@ -18,6 +22,7 @@ entries = [dict(id=str(i) * 32, path=f'/data/{name}', category=i,
                 status='pending', error='')
            for i, name in enumerate(['cache', 'uncertain', 'keep', 'misplaced'], 1)]
 extracted = False
+host_extracted = False
 reads = 0
 deleting = False
 delete_attempts = 0
@@ -55,9 +60,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/state':
             return self.respond(dict(jobs=[], directory_jobs=[], latest_id=None, active=None, interval_minutes=0))
         if path == '/api/agent/cleanup-reports':
-            return self.respond(dict(reports=[dict(report_id=1, title='空间消耗总报告',
+            return self.respond(dict(reports=[dict(report_id=2, title='Host 空间报告', report_scope='host',
+                snapshot_id=host_session['snapshot_id'], created_at=1789372801,
+                cleanup_id=host_session['id'] if host_extracted else None, cleanup_status=host_session['status'], phase='extract'),
+                dict(report_id=1, title='空间消耗总报告', report_scope='container',
                 snapshot_id=session['snapshot_id'], created_at=1789372800,
                 cleanup_id=session['id'] if extracted else None, cleanup_status=session['status'], phase='delete' if deleting else 'extract')]))
+        if path == '/api/agent/cleanups/' + host_session['id']:
+            return self.respond(dict(session=host_session, report_id=2, phase='extract', entries=host_entries))
+        if path == '/api/agent/sessions/' + host_session['id']:
+            return self.respond(dict(session=host_session, messages=[], next_after=0, has_more=False, active_job=None))
         if path == '/api/agent/cleanups/' + session['id']:
             reads += 1
             if (deleting and reads >= 2) or (not deleting and trace_release.is_set()):
@@ -105,12 +117,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        global extracted, user, deleting, reads, delete_attempts
+        global extracted, host_extracted, user, deleting, reads, delete_attempts
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         password = body.pop('sudo_password', None)
         writes.append((self.path, body))
         assert self.headers.get('X-CSRF-Token') == 'test'
         if self.path == '/api/agent/cleanups':
+            if body == dict(report_id=2):
+                host_extracted = True
+                return self.respond(host_session, 202)
             assert body == dict(report_id=1)
             extracted = True
             return self.respond(session, 202)
@@ -293,6 +308,32 @@ try:
         page.wait_for_function('!document.getElementById("cleanupExtract").disabled')
         assert page.locator('#cleanupRemoveHistory').is_hidden()
         assert page.locator('#cleanupReport option').count() == 1
+        assert page.locator('#cleanupHostReport option').count() == 1
+        page.locator('#cleanupHostExtract').click()
+        page.wait_for_function('cleanupView.reportScope === "host"')
+        assert 'Host' in page.locator('#cleanupWorkspaceTitle').inner_text()
+        assert page.locator('[data-cleanup-entry]').count() == 0
+        page.locator('#cleanupHostExtract').click()
+        page.wait_for_function('document.querySelector("[data-cleanup-entry]")?.getAttribute("data-cleanup-entry") === "' + '8' * 32 + '"')
+        assert ('/api/agent/cleanups', dict(report_id=2)) in writes
+        assert page.locator('#cleanupHostExtract').is_disabled()
+        page.locator('#cleanupExtract').click()
+        page.wait_for_function('cleanupView.reportScope === "container"')
+        assert '容器 Agent' in page.locator('#cleanupWorkspaceTitle').inner_text()
+        assert page.locator('[data-cleanup-entry]').count() == 0
+        page.locator('#cleanupHostExtract').click()
+        page.wait_for_function('document.querySelector("[data-cleanup-entry]")?.getAttribute("data-cleanup-entry") === "' + '8' * 32 + '"')
+        # Both scopes now have one completed extraction: switch using real clicks.
+        page.locator('#cleanupExtract').click()
+        page.wait_for_function('cleanupView.reportScope === "container" && !cleanupView.loading')
+        page.locator('#cleanupExtract').click()
+        page.wait_for_function('cleanupView.session?.status === "completed" && !cleanupView.posting')
+        extraction_count = sum(url == '/api/agent/cleanups' for url, _ in writes)
+        page.locator('#cleanupHostExtract').click()
+        page.wait_for_function('cleanupView.reportScope === "host" && !cleanupView.loading')
+        page.locator('#cleanupExtract').click()
+        page.wait_for_function('cleanupView.reportScope === "container" && !cleanupView.loading')
+        assert sum(url == '/api/agent/cleanups' for url, _ in writes) == extraction_count
         assert not errors, errors
         browser.close()
         print('Cleanup browser checks passed: extraction, streaming, selection, filesystem deletion, history deletion, reload and mobile.')
