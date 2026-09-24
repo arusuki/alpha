@@ -216,41 +216,39 @@ func lockHome(u account) (*os.File, error) {
 	return f, nil
 }
 
-// Use exec with credentials instead of running Go code after fork or changing
-// the manager's process-wide credentials. Private requests travel over stdin so
-// proxy credentials never appear in the worker's command line.
+// Run privileged setup in a disposable re-executed process, never by running Go
+// code after fork or changing the manager's credentials. Private requests travel
+// over stdin so proxy credentials never appear in the worker's command line.
 type workerRequest struct {
 	Action              string
 	User                account
 	Options             options
 	PID                 int
 	Source, Destination string
+	DropPrivileges      bool
 }
 
 func runWorker(req workerRequest, asUser bool) error {
-	// Pin the running executable before dropping credentials. Re-exec through
-	// an inherited FD also works when the binary's parent directories are only
-	// searchable by the invoking user (as the original fork-based tool did).
-	executable, err := os.Open("/proc/self/exe")
-	if err != nil {
-		return err
-	}
-	defer executable.Close()
+	// Execute while still privileged. Dropping credentials in SysProcAttr would
+	// require the service account to have execute permission on the binary itself,
+	// even through an inherited FD (e.g. a root-owned 0700 deployment fails).
+	// /proc/self/exe also avoids requiring access through private parent directories.
+	req.DropPrivileges = asUser
 	data, err := json.Marshal(req)
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("/proc/self/fd/3", "--internal-worker")
-	cmd.ExtraFiles = []*os.File{executable}
+	cmd := exec.Command("/proc/self/exe", "--internal-worker")
 	cmd.Stdin = bytes.NewReader(data)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if asUser {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: req.User.UID, Gid: req.User.GID, Groups: req.User.Groups}}
-		cmd.Dir = req.User.Home
 		cmd.Env = userEnv(req.User)
 	}
-	if err = cmd.Run(); err != nil {
+	if err = cmd.Start(); err != nil {
+		return fmt.Errorf("无法启动操作子进程：%w", err)
+	}
+	if err = cmd.Wait(); err != nil {
 		return fmt.Errorf("操作失败，详见上方错误：%w", err)
 	}
 	return nil
@@ -262,6 +260,11 @@ func workerMain() error {
 	}
 	switch r.Action {
 	case "prepare", "show-proxy":
+		if r.DropPrivileges {
+			if err := dropWorkerPrivileges(r.User); err != nil {
+				return err
+			}
+		}
 		if os.Geteuid() == 0 || os.Geteuid() != int(r.User.UID) || os.Getegid() != int(r.User.GID) {
 			return errors.New("配置操作必须以 docker-rootless 用户身份执行")
 		}
@@ -280,6 +283,35 @@ func workerMain() error {
 	default:
 		return errors.New("未知内部操作")
 	}
+}
+
+// Only call from the disposable worker, before any configuration access. Use
+// syscall's process-wide credential setters: raw unix.Set* calls would only
+// change the calling OS thread in a multithreaded Go process.
+func dropWorkerPrivileges(u account) error {
+	if u.UID == 0 || u.GID == 0 {
+		return errors.New("配置操作必须降权到非 root 用户和组")
+	}
+	groups := make([]int, len(u.Groups))
+	for i, gid := range u.Groups {
+		if gid == 0 {
+			return errors.New("配置操作不允许保留 root 附加组")
+		}
+		groups[i] = int(gid)
+	}
+	if err := syscall.Setgroups(groups); err != nil {
+		return fmt.Errorf("设置配置子进程附加组失败：%w", err)
+	}
+	if err := syscall.Setresgid(int(u.GID), int(u.GID), int(u.GID)); err != nil {
+		return fmt.Errorf("设置配置子进程 GID 失败：%w", err)
+	}
+	if err := syscall.Setresuid(int(u.UID), int(u.UID), int(u.UID)); err != nil {
+		return fmt.Errorf("设置配置子进程 UID 失败：%w", err)
+	}
+	if err := os.Chdir(u.Home); err != nil {
+		return fmt.Errorf("进入配置子进程家目录失败：%w", err)
+	}
+	return nil
 }
 
 func subidRange(text, name string, uid uint32, occupied []uint64) (uint64, bool, error) {

@@ -9,7 +9,7 @@ go build -o bin/rootless-docker ./cmd/rootless-docker
 ./bin/rootless-docker --help
 ```
 
-配置文件操作在降权后的独立子进程中执行，热挂载在单独的挂载工作进程中执行。部署时可将二进制安装到 `/usr/local/bin/rootless-docker`。
+配置子进程先启动，再将全部线程的 UID/GID 与附加组切换为专用用户，完成降权后才读写配置；二进制无需向专用用户开放执行权限。热挂载在单独的挂载工作进程中执行。部署时可将二进制安装到 `/usr/local/bin/rootless-docker`。
 
 ## 使用
 
@@ -176,6 +176,16 @@ ROOTLESS_INTEGRATION=1 go test ./internal/rootless -run '^TestInstalledConfigVal
 ```bash
 ROOTLESS_NETWORK_INTEGRATION=1 go test ./internal/rootless -run '^TestRealHostLoopback$' -v
 ```
+
+真实降权测试通过 RootlessKit 的 subordinate UID/GID 映射运行，覆盖 `0700` 二进制、配置文件属主及多个 Go 线程的权限清除。只使用临时目录，不创建宿主机用户或服务；不要作为宿主机 root 运行：
+
+```bash
+go test -c -o /tmp/project-alpha-rootless.test ./internal/rootless
+ROOTLESS_WORKER_INTEGRATION=1 rootlesskit \
+  /tmp/project-alpha-rootless.test -test.run '^TestWorkerPrivilegeIntegration$' -test.v
+```
+
+也可使用 `CGO_ENABLED=0 go test -c ...` 构建测试程序，验证不依赖 libc 的降权路径。
 
 真实 socket 挂载测试只使用临时目录及隔离的 user/mount namespace，不操作 Docker 或创建系统用户；不要直接作为宿主机 root 运行：
 
