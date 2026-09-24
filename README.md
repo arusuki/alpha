@@ -5,6 +5,7 @@
 ## 代码结构
 
 - `cmd/project-alpha`：程序入口，处理进程信号并启动应用。
+- `cmd/rootless-docker`、`internal/rootless`：独立 rootless Docker 管理命令、socket 热挂载和交互测试容器；不接入 Web。
 - `internal/app`：命令分发、模块装配和 HTTP 服务生命周期。
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
@@ -52,6 +53,20 @@ SQLite 保存账号、配置和任务；Agent API Key 加密后存入 SQLite，�
 ```
 
 CLI 与 API 使用同一套配置校验：`max_depth` 为 0–32，`max_nodes` 为 100–100000，`docker_timeout` 为 5–3600 秒；扫描及排除目录必须为绝对路径。
+
+## 独立 rootless Docker 工具
+
+原 `rootless` 目录的管理工具与交互测试脚本已用 Go 实现为独立命令，支持专用用户/服务初始化、代理与宿主机回环配置、服务管理、Docker CLI 透传，以及向已有运行容器热挂载 socket。
+
+```bash
+go build -o bin/rootless-docker ./cmd/rootless-docker
+sudo ./bin/rootless-docker init
+sudo ./bin/rootless-docker add <容器名或ID>
+sudo ./bin/rootless-docker docker ps -a
+sudo ./bin/rootless-docker test exec
+```
+
+需要 Linux 宿主机、systemd、Docker Engine 和 rootless 依赖。配置及数据保存在专用用户家目录，不使用平台数据库。容器或 rootless daemon 重启后需重新执行 `add`；`test` 子命令会自动重新挂载。完整命令、代理配置、权限边界与验证方式见 [rootless Docker 工具](docs/rootless-docker.md)。
 
 ## 容器进程监控
 
