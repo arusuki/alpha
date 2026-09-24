@@ -20,12 +20,19 @@ import (
 const sudoCleanupPrompt = "[project-alpha-cleanup-password]"
 
 type cleanupHelperRequest struct {
-	Paths          []string `json:"paths"`
-	ProtectedTrees []string `json:"protected_trees"`
-	ProtectedRoots []string `json:"protected_roots"`
-	WritableLayers []string `json:"writable_layers"`
+	Paths          []string           `json:"paths"`
+	ProtectedTrees []string           `json:"protected_trees"`
+	ProtectedRoots []string           `json:"protected_roots"`
+	Containers     []cleanupContainer `json:"containers"`
+	DockerRoot     string             `json:"docker_root"`
 }
+type cleanupStats struct {
+	Sockets     int `json:"skipped_sockets,omitempty"`
+	CharDevices int `json:"skipped_char_devices,omitempty"`
+}
+
 type cleanupHelperEvent struct {
+	cleanupStats
 	Type   string `json:"type"`
 	Path   string `json:"path,omitempty"`
 	Status string `json:"status,omitempty"`
@@ -176,6 +183,9 @@ func runSudoCleanup(ctx context.Context, password []byte, request cleanupHelperR
 			return fmt.Errorf("删除进度与本次所选路径不匹配")
 		}
 		message := ""
+		if event.Sockets < 0 || event.CharDevices < 0 {
+			return fmt.Errorf("删除辅助程序返回无效跳过数量")
+		}
 		if event.Code != "remove_failed" && event.Code != "preflight_failed" && event.Error != "" {
 			return fmt.Errorf("删除辅助程序返回矛盾状态")
 		}
@@ -198,6 +208,9 @@ func runSudoCleanup(ctx context.Context, password []byte, request cleanupHelperR
 			}
 		} else if event.Code != "" {
 			return fmt.Errorf("删除辅助程序返回矛盾状态")
+		}
+		if event.Status == "deleted" && event.Sockets+event.CharDevices > 0 {
+			message = fmt.Sprintf("已清理；保留 socket %d 个、字符设备 %d 个及其所在目录", event.Sockets, event.CharDevices)
 		}
 		if err := result(event.Path, event.Status, message); err != nil {
 			return err
@@ -254,7 +267,7 @@ func serveCleanupHelper(parent context.Context, input io.Reader, output io.Write
 	if err != nil {
 		return fmt.Errorf("无法核对挂载点")
 	}
-	targets, preflightErr := prepareCleanupTargets(request, mounts)
+	targets, preflightErr := prepareCleanupTargets(ctx, request, mounts, exec.CommandContext)
 	if preflightErr == nil {
 		defer closeCleanupTargets(targets)
 	}
@@ -262,7 +275,7 @@ func serveCleanupHelper(parent context.Context, input io.Reader, output io.Write
 		event := cleanupHelperEvent{Type: "result", Path: path, Status: "deleted"}
 		if preflightErr != nil {
 			event.Status, event.Code, event.Error = "failed", "preflight_failed", preflightErr.Error()
-		} else if err := targets[i].remove(ctx); err != nil {
+		} else if err := targets[i].remove(ctx, &event.cleanupStats); err != nil {
 			event.Status, event.Code = "failed", "remove_failed"
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				event.Code = "cancelled"

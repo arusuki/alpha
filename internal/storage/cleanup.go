@@ -56,11 +56,11 @@ func (s *Service) DeleteReportPaths(ctx context.Context, actor, id string, paths
 			return nil
 		}
 	}
-	request := cleanupHelperRequest{Paths: paths}
+	request := cleanupHelperRequest{Paths: paths, DockerRoot: httpapi.String(snapshot.Docker["root"])}
 	request.ProtectedTrees, request.ProtectedRoots = cleanupProtectedPaths(snapshot, s.DB.Directory, config.Value.Exclude)
 	for _, c := range snapshot.Containers {
 		if c.UpperPath != nil && *c.UpperPath != "" {
-			request.WritableLayers = appendUnique(request.WritableLayers, *c.UpperPath)
+			request.Containers = append(request.Containers, cleanupContainer{ID: c.ID, Upper: *c.UpperPath})
 		}
 	}
 	return runSudoCleanup(ctx, password, request, result, nil)
@@ -150,7 +150,7 @@ func openCleanupDir(parent int, name string, noCrossMount bool) (int, error) {
 	return unix.Openat2(parent, name, &unix.OpenHow{Flags: unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC, Resolve: resolve})
 }
 
-func removeCleanupPath(ctx context.Context, p string) error {
+func removeCleanupPath(ctx context.Context, p string, stats *cleanupStats) error {
 	// Anchor every operation to directory descriptors; no shell, symlink traversal
 	// or path-based recursive RemoveAll. openat2 also rejects nested bind mounts.
 	parent, err := openCleanupDir(unix.AT_FDCWD, filepath.Dir(p), false)
@@ -158,10 +158,10 @@ func removeCleanupPath(ctx context.Context, p string) error {
 		return &os.PathError{Op: "打开父目录（openat2）", Path: filepath.Dir(p), Err: err}
 	}
 	defer unix.Close(parent)
-	return removeCleanupEntry(ctx, parent, filepath.Base(p), p, false)
+	return removeCleanupEntry(ctx, parent, filepath.Base(p), p, false, stats)
 }
 
-func removeCleanupEntry(ctx context.Context, parent int, name, p string, missingOK bool) error {
+func removeCleanupEntry(ctx context.Context, parent int, name, p string, missingOK bool, stats *cleanupStats) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -175,12 +175,15 @@ func removeCleanupEntry(ctx context.Context, parent int, name, p string, missing
 	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
 		return &os.PathError{Op: "检查删除目标", Path: p, Err: fmt.Errorf("报告路径已变为符号链接")}
 	}
-	return removeCleanupAt(ctx, parent, name, p)
+	// Keep the selected directory itself: permissions, sticky bit, ACLs and
+	// open directory descriptors must remain usable after clearing its contents.
+	return cleanupAt(ctx, parent, name, p, true, stats)
 }
 
 // p is only used in diagnostics. All filesystem operations stay anchored to
 // parent/name, including children whose full display path is assembled below.
-func removeCleanupAt(ctx context.Context, parent int, name, p string) error {
+func cleanupAt(ctx context.Context, parent int, name, p string, keepDirectory bool, stats *cleanupStats) error {
+	skippedBefore := stats.Sockets + stats.CharDevices
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -190,10 +193,14 @@ func removeCleanupAt(ctx context.Context, parent int, name, p string) error {
 	}
 	if before.Mode&unix.S_IFMT != unix.S_IFDIR {
 		switch before.Mode & unix.S_IFMT {
-		case unix.S_IFREG, unix.S_IFLNK, unix.S_IFSOCK, unix.S_IFIFO:
+		case unix.S_IFREG, unix.S_IFLNK, unix.S_IFIFO:
 			// Unlink only the directory entry: never open/connect to IPC files.
+		case unix.S_IFSOCK:
+			stats.Sockets++
+			return nil
 		case unix.S_IFCHR:
-			return &os.PathError{Op: "检查文件", Path: p, Err: fmt.Errorf("目录包含字符设备，已停止删除")}
+			stats.CharDevices++
+			return nil
 		case unix.S_IFBLK:
 			return &os.PathError{Op: "检查文件", Path: p, Err: fmt.Errorf("目录包含块设备，已停止删除")}
 		default:
@@ -220,7 +227,7 @@ func removeCleanupAt(ctx context.Context, parent int, name, p string) error {
 	for {
 		names, err := dir.Readdirnames(128)
 		for _, child := range names {
-			if err := removeCleanupAt(ctx, fd, child, filepath.Join(p, child)); err != nil {
+			if err := cleanupAt(ctx, fd, child, filepath.Join(p, child), false, stats); err != nil {
 				return err
 			}
 		}
@@ -237,6 +244,9 @@ func removeCleanupAt(ctx context.Context, parent int, name, p string) error {
 	}
 	if current.Dev != opened.Dev || current.Ino != opened.Ino {
 		return &os.PathError{Op: "复查目录", Path: p, Err: fmt.Errorf("删除期间目录已替换")}
+	}
+	if keepDirectory || stats.Sockets+stats.CharDevices > skippedBefore {
+		return nil
 	}
 	if err := unix.Unlinkat(parent, name, unix.AT_REMOVEDIR); err != nil {
 		return &os.PathError{Op: "删除目录", Path: p, Err: err}

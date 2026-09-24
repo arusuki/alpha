@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,8 +109,8 @@ func TestSudoCleanupOneBatchAndNoSecretPersistence(t *testing.T) {
 				if len(rows) != 1 || rows[0] != target+"deleted" {
 					t.Fatal(rows)
 				}
-				if _, err := os.Stat(target); !os.IsNotExist(err) {
-					t.Fatal("target remains", err)
+				if entries, err := os.ReadDir(target); err != nil || len(entries) != 0 {
+					t.Fatal("selected directory was not preserved empty", entries, err)
 				}
 			}
 		})
@@ -214,7 +215,7 @@ func TestCleanupHelperStopsOnParentPipeEOF(t *testing.T) {
 	}
 }
 
-func TestSudoCleanupDoesNotFallBackToUnmountedUpperLayer(t *testing.T) {
+func TestSudoCleanupRejectsInvalidContainerMetadataBeforeDeletion(t *testing.T) {
 	root := t.TempDir()
 	upper, host := filepath.Join(root, "diff"), filepath.Join(root, "host-cache")
 	cache := filepath.Join(upper, "root/.cache")
@@ -226,11 +227,11 @@ func TestSudoCleanupDoesNotFallBackToUnmountedUpperLayer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	request := cleanupHelperRequest{Paths: []string{host, cache}, WritableLayers: []string{upper}}
+	request := cleanupHelperRequest{Paths: []string{host, cache}, DockerRoot: root, Containers: []cleanupContainer{{ID: "invalid-id", Upper: upper}}}
 	count := 0
 	err := runSudoCleanup(context.Background(), []byte(cleanupTestPassword), request, func(path, status, message string) error {
 		count++
-		if status != "failed" || !strings.Contains(message, "合并挂载") || !strings.Contains(message, "本批未执行删除") || strings.Contains(message, "可能已删除部分内容") {
+		if status != "failed" || !strings.Contains(message, "标识无效") || !strings.Contains(message, "本批未执行删除") || strings.Contains(message, "可能已删除部分内容") {
 			t.Errorf("unexpected preflight result: %s %s", status, message)
 		}
 		return nil
@@ -242,5 +243,36 @@ func TestSudoCleanupDoesNotFallBackToUnmountedUpperLayer(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(path, "keep")); err != nil {
 			t.Fatal("deleted data before overlay preflight finished", err)
 		}
+	}
+}
+
+func TestSudoCleanupRecordsSkippedSocket(t *testing.T) {
+	target := t.TempDir()
+	listener, err := net.Listen("unix", filepath.Join(target, "socket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if err := os.WriteFile(filepath.Join(target, "remove"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	err = runSudoCleanup(context.Background(), []byte(cleanupTestPassword), cleanupHelperRequest{Paths: []string{target}}, func(path, status, message string) error {
+		count++
+		if path != target || status != "deleted" || message != "已清理；保留 socket 1 个、字符设备 0 个及其所在目录" {
+			t.Errorf("skipped socket not recorded: %s %s %s", path, status, message)
+		}
+		return nil
+	}, fakeSudoCommand(t, "password"))
+	if err != nil || count != 1 {
+		t.Fatal(count, err)
+	}
+	connection, err := net.Dial("unix", filepath.Join(target, "socket"))
+	if err != nil {
+		t.Fatal("cleanup disconnected the preserved socket", err)
+	}
+	connection.Close()
+	if _, err := os.Stat(filepath.Join(target, "remove")); !os.IsNotExist(err) {
+		t.Fatal("ordinary file was not removed", err)
 	}
 }

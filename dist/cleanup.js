@@ -1,7 +1,7 @@
 'use strict';
 const cleanupView={reports:[],reportID:'',session:null,phase:'extract',entries:[],selected:new Set(),collapsed:new Set(),sortDirections:{},epoch:0,selection:0,timer:null,stream:null,traceReady:false,readingTrace:false,cursor:0,requests:new Map(),posting:false,loading:false,visible:false};
 const cleanupCategories=['','可立即删除','存在争议','必须保留','放错位置'];
-const cleanupStatuses={pending:'待处理',deleted:'已删除',failed:'删除失败',deleting:'删除中 / 结果待核对',uncertain:'结果待核对'};
+const cleanupStatuses={pending:'待处理',deleted:'已清理',failed:'删除失败',deleting:'删除中 / 结果待核对',uncertain:'结果待核对'};
 const cleanupTraceWindowChars=32000;
 const cleanupAllowed=()=>platform.user?.role==='admin';
 const cleanupBusy=()=>['queued','running','scanning','cancelling'].includes(cleanupView.session?.status);
@@ -19,7 +19,7 @@ function cleanupSorted(rows,category){
     return (direction==='desc'?right-left:left-right)||a.path.localeCompare(b.path);
   });
 }
-function cleanupRow(row){return `<tr><td><input type="checkbox" data-cleanup-entry="${esc(row.id)}" aria-label="选择 ${esc(row.path)}" ${cleanupView.selected.has(row.id)?'checked':''} ${!cleanupSelectable(row)?'disabled':''}></td><td><span class="mono cleanup-path">${esc(row.path)}</span><span class="sub">${esc((row.detail.locations||[]).join('；'))}</span></td><td>${esc(row.detail.kind||'')}</td><td class="amount">${fmt(row.detail.bytes)}</td><td>${esc(row.summary)}<details><summary>原报告说明</summary><p>${esc(row.detail.summary||'')} ${esc(row.detail.reason||'')}</p></details></td><td>${esc(cleanupStatuses[row.status]||row.status)}${row.error?`<span class="sub error-text">${esc(row.error)}</span>`:''}</td></tr>`;}
+function cleanupRow(row){return `<tr><td><input type="checkbox" data-cleanup-entry="${esc(row.id)}" aria-label="选择 ${esc(row.path)}" ${cleanupView.selected.has(row.id)?'checked':''} ${!cleanupSelectable(row)?'disabled':''}></td><td><span class="mono cleanup-path">${esc(row.path)}</span><span class="sub">${esc((row.detail.locations||[]).join('；'))}</span></td><td>${esc(row.detail.kind||'')}</td><td class="amount">${fmt(row.detail.bytes)}</td><td>${esc(row.summary)}<details><summary>原报告说明</summary><p>${esc(row.detail.summary||'')} ${esc(row.detail.reason||'')}</p></details></td><td>${esc(cleanupStatuses[row.status]||row.status)}${row.error?`<span class="sub${row.status==='deleted'?'':' error-text'}">${esc(row.error)}</span>`:''}</td></tr>`;}
 function cleanupControls(){
   const blocked=cleanupView.posting||cleanupView.loading;
   $('cleanupReport').disabled=blocked;$('cleanupRefresh').disabled=blocked;
@@ -38,7 +38,7 @@ function cleanupControls(){
 function renderCleanup(){
   const report=cleanupView.reports.find(row=>String(row.report_id)===cleanupView.reportID),session=cleanupView.session;
   $('cleanupSourceHint').textContent=report?`${dateTime(report.created_at)} · 源扫描 ${report.snapshot_id||'已删除（可查看报告条目，不能删除实际目录）'}`:'尚无完整报告。请先在空间用量页生成空间报告。';
-  $('cleanupStatus').textContent=cleanupView.phase==='delete'?`${cleanupBusy()?'正在后台删除，离开页面后仍会继续。':'删除任务已结束。'} 已删除 ${cleanupView.entries.filter(row=>row.status==='deleted').length} 项，失败 ${cleanupView.entries.filter(row=>row.status==='failed').length} 项，待核对 ${cleanupView.entries.filter(row=>['deleting','uncertain'].includes(row.status)).length} 项。${session?.error||''} 请重新扫描以更新空间统计。`:cleanupBusy()?'Agent 正在读取完整报告并提取全部四类条目，离开页面后仍会继续。':session?.status==='completed'?`已提取 ${cleanupView.entries.length} 项。`:(session?.error||'');
+  $('cleanupStatus').textContent=cleanupView.phase==='delete'?`${cleanupBusy()?'正在后台删除，离开页面后仍会继续。':'删除任务已结束。'} 已清理 ${cleanupView.entries.filter(row=>row.status==='deleted').length} 项，失败 ${cleanupView.entries.filter(row=>row.status==='failed').length} 项，待核对 ${cleanupView.entries.filter(row=>['deleting','uncertain'].includes(row.status)).length} 项。${session?.error||''} 请重新扫描以更新空间统计。`:cleanupBusy()?'Agent 正在读取完整报告并提取全部四类条目，离开页面后仍会继续。':session?.status==='completed'?`已提取 ${cleanupView.entries.length} 项。`:(session?.error||'');
   const rows=cleanupFiltered(),filteredCategory=$('cleanupCategory').value,searching=!!$('cleanupSearch').value.trim();
   const categories=cleanupCategories.map((_,category)=>category).slice(1).filter(category=>(!filteredCategory||String(category)===filteredCategory)&&(!searching||rows.some(row=>row.category===category)));
   $('cleanupEntries').innerHTML=cleanupView.entries.length&&categories.length?categories.map(category=>{

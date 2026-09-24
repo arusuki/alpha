@@ -64,6 +64,7 @@ class Handler(BaseHTTPRequestHandler):
                 session['status'] = 'completed'
                 if deleting:
                     entries[0]['status'] = 'deleted'
+                    entries[0]['error'] = '已清理；保留 socket 1 个、字符设备 2 个及其所在目录'
             return self.respond(dict(session=session, report_id=1, phase='delete' if deleting else 'extract',
                                      entries=entries if session['status'] == 'completed' else []))
         if path == '/api/agent/sessions/' + session['id']:
@@ -244,8 +245,10 @@ try:
         page.wait_for_function('!document.getElementById("cleanupDeleteDialog").open')
         page.wait_for_function("cleanupView.session.status === 'completed' && cleanupView.entries[0].status === 'deleted'")
         assert page.locator('[data-cleanup-entry]').is_disabled()
-        assert '已删除' in page.locator('#cleanupEntries').inner_text()
-        assert '已删除 1 项' in page.locator('#cleanupStatus').inner_text()
+        assert '已清理' in page.locator('#cleanupEntries').inner_text()
+        assert '已清理 1 项' in page.locator('#cleanupStatus').inner_text()
+        assert '保留 socket 1 个、字符设备 2 个及其所在目录' in page.locator('#cleanupEntries').inner_text()
+        assert page.locator('#cleanupEntries .error-text').count() == 0
         page.locator('#cleanupSearch').fill('')
         assert page.locator('[data-cleanup-entry]:disabled').count() == 1
         page.reload()
