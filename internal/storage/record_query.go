@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -19,7 +20,9 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 	allowed := map[string][]string{
 		"overview": {}, "containers": {"query", "sort_by", "offset", "limit"},
 		"owners": {"offset", "limit"}, "container": {"container"}, "directory": {"path", "offset", "limit"},
-		"nodes": {"paths"},
+		"nodes": {"paths"}, "host_roots": {"offset", "limit"},
+		"host_directory": {"path", "offset", "limit"}, "host_nodes": {"paths"},
+		"host_coverage": {"roots", "paths", "offset", "limit"},
 	}
 	keys, ok := allowed[operation]
 	if !ok {
@@ -41,6 +44,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 		SortBy                 string `json:"sort_by"`
 		Offset, Limit          int
 		Paths                  []string
+		Roots                  []string
 	}
 	args.Limit = 30
 	args.SortBy = "exclusive"
@@ -57,6 +61,8 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 	t := &recordView{snapshot: snapshot, usage: buildUsage(snapshot)}
 	result, err := func() (object, error) {
 		switch operation {
+		case "host_coverage":
+			return t.hostCoverage(args.Roots, args.Paths, args.Offset, args.Limit)
 		case "overview":
 			return t.overview(), nil
 		case "containers":
@@ -95,6 +101,51 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 		case "owners":
 			rows := t.usage.rankedOwners()
 			return object{"snapshot_id": t.snapshot.JobID, "total": len(rows), "items": rows[min(args.Offset, len(rows)):min(args.Offset+args.Limit, len(rows))], "cross_owner_shared": t.usage.CrossOwner}, nil
+		case "host_roots":
+			paths := []string{}
+			seen := map[string]bool{}
+			for _, resource := range t.snapshot.Resources {
+				for _, kind := range resource.Kinds {
+					if kind == "host" && filepath.IsAbs(resource.Path) && filepath.Clean(resource.Path) == resource.Path && !seen[resource.Path] {
+						seen[resource.Path] = true
+						paths = append(paths, resource.Path)
+					}
+				}
+			}
+			// Nested explicit roots cover the same physical subtree. Keep the
+			// outer root once, even when it was recorded later in Resources.
+			sort.Slice(paths, func(i, j int) bool {
+				if len(paths[i]) == len(paths[j]) {
+					return paths[i] < paths[j]
+				}
+				return len(paths[i]) < len(paths[j])
+			})
+			rows := []object{}
+			for _, p := range paths {
+				covered := false
+				for _, row := range rows {
+					if within(p, row["path"].(string)) {
+						covered = true
+						break
+					}
+				}
+				if covered {
+					continue
+				}
+				name, allocated := filepath.Base(p), int64(0)
+				if node := t.usage.Nodes[p]; node != nil {
+					name, allocated = node.Name, t.usage.HostAllocated[p]
+				}
+				rows = append(rows, object{"path": p, "name": name, "host_allocated": allocated})
+			}
+			sort.Slice(rows, func(i, j int) bool {
+				left, right := rows[i]["host_allocated"].(int64), rows[j]["host_allocated"].(int64)
+				if left == right {
+					return rows[i]["path"].(string) < rows[j]["path"].(string)
+				}
+				return left > right
+			})
+			return object{"snapshot_id": t.snapshot.JobID, "total": len(rows), "items": rows[min(args.Offset, len(rows)):min(args.Offset+args.Limit, len(rows))], "has_more": args.Offset+args.Limit < len(rows)}, nil
 		case "container":
 			var row *ContainerUsage
 			for _, r := range t.usage.Containers {
@@ -118,7 +169,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			}
 			return object{"snapshot_id": t.snapshot.JobID, "observed_at": t.snapshot.FinishedAt, "usage": row, "sources": sources, "note": "挂载源可能共享或互相包含，不能直接把 sources 相加"}, nil
 
-		case "directory", "nodes":
+		case "directory", "nodes", "host_directory", "host_nodes":
 			job, err := s.Job(id)
 			if err != nil {
 				return nil, err
@@ -127,7 +178,7 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			if err = json.Unmarshal([]byte(httpapi.JSONText(job["config"])), &config); err != nil {
 				return nil, err
 			}
-			if operation == "nodes" {
+			if operation == "nodes" || operation == "host_nodes" {
 				// Resolve a batch against one immutable revision. Report validation
 				// must not reload and rebuild the whole record for every finding.
 				items := []object{}
@@ -136,6 +187,13 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 					checked, err := validateDetailPath(requested, config, s.DB.Directory)
 					if err != nil {
 						item["error"] = err.Error()
+					} else if operation == "host_nodes" {
+						node := t.usage.resolve(checked)
+						summary := hostNodeSummary(t.usage, node)
+						if node != nil && node.Path != checked {
+							summary["host_only"] = false
+						}
+						item["node"] = summary
 					} else {
 						item["node"] = nodeSummary(t.usage.resolve(checked))
 					}
@@ -147,7 +205,12 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			if err != nil {
 				return nil, httpapi.NewError(400, err.Error())
 			}
-			result := directoryResult(snapshot, t.usage, path, args.Offset, args.Limit)
+			var result object
+			if operation == "host_directory" {
+				result = hostDirectoryResult(snapshot, t.usage, path, args.Offset, args.Limit)
+			} else {
+				result = directoryResult(snapshot, t.usage, path, args.Offset, args.Limit)
+			}
 			if observation, ok := snapshot.DirectoryAnalyses[path]; ok {
 				result["analysis"] = observation.Analysis
 				result["analysis_observed_at"] = observation.ObservedAt
@@ -196,18 +259,51 @@ func nodeSummary(n *Node) object {
 	}
 	return object{"name": n.Name, "path": n.Path, "kind": n.Kind, "allocated": n.Allocated, "apparent": n.Apparent, "files": n.Files, "errors": n.Errors, "excluded_entries": n.Excluded, "permission_denied": n.PermissionDenied, "omitted_entries": n.Omitted, "omitted_references": n.OmittedReferences, "reference": n.Reference, "reason": n.Reason, "scanning": n.Scanning, "size_unknown": n.SizeUnknown, "known": !n.SizeUnknown && !n.Scanning && n.Kind != "unreadable" && n.Kind != "excluded"}
 }
+func hostNodeSummary(u *usageIndex, n *Node) object {
+	result := nodeSummary(n)
+	result["host_allocated"] = int64(0)
+	result["container_allocated"] = int64(0)
+	result["host_only"] = false
+	if n != nil {
+		result["host_allocated"] = u.HostAllocated[n.Path]
+		result["container_allocated"] = u.ContainerAllocated[n.Path]
+		result["host_only"] = u.HostOnly[n.Path] && (n.Kind == "directory" || n.Kind == "file")
+		if blocker, ok := u.HostBlockers[n.Path]; ok {
+			result["host_only_blocker"] = blocker
+		}
+	}
+	return result
+}
 func directoryResult(s *Snapshot, u *usageIndex, path string, offset, limit int) object {
+	return directoryResultWithHost(s, u, path, offset, limit, false)
+}
+func hostDirectoryResult(s *Snapshot, u *usageIndex, path string, offset, limit int) object {
+	result := directoryResultWithHost(s, u, path, offset, limit, true)
+	if node, ok := result["node"].(object); ok && node["path"] != path {
+		node["host_only"] = false
+	}
+	return result
+}
+func directoryResultWithHost(s *Snapshot, u *usageIndex, path string, offset, limit int, host bool) object {
 	n := u.resolve(path)
-	result := object{"snapshot_id": s.JobID, "observed_at": s.FinishedAt, "requested_path": path, "node": nodeSummary(n), "offset": offset, "limit": limit}
+	summarize := func(n *Node) object { return nodeSummary(n) }
+	if host {
+		summarize = func(n *Node) object { return hostNodeSummary(u, n) }
+	}
+	result := object{"snapshot_id": s.JobID, "observed_at": s.FinishedAt, "requested_path": path, "node": summarize(n), "offset": offset, "limit": limit}
 	if n == nil {
 		return result
 	}
 	children := append([]*Node{}, n.Children...)
 	sort.Slice(children, func(i, j int) bool {
-		if children[i].Allocated == children[j].Allocated {
+		left, right := children[i].Allocated, children[j].Allocated
+		if host {
+			left, right = u.HostAllocated[children[i].Path], u.HostAllocated[children[j].Path]
+		}
+		if left == right {
 			return children[i].Path < children[j].Path
 		}
-		return children[i].Allocated > children[j].Allocated
+		return left > right
 	})
 	result["total_entries"] = len(children)
 	residual := n.Allocated
@@ -215,12 +311,19 @@ func directoryResult(s *Snapshot, u *usageIndex, path string, offset, limit int)
 		residual -= child.Allocated
 	}
 	result["self_and_omitted_allocated"] = max(int64(0), residual)
+	if host {
+		hostResidual := u.HostAllocated[n.Path]
+		for _, child := range children {
+			hostResidual -= u.HostAllocated[child.Path]
+		}
+		result["self_and_omitted_host_allocated"] = max(int64(0), hostResidual)
+	}
 	entries := []object{}
 	for i := min(offset, len(children)); i < min(offset+limit, len(children)); i++ {
 		child := children[i]
-		entry := nodeSummary(child)
+		entry := summarize(child)
 		if child.Kind == "reference" {
-			entry["reference_target"] = nodeSummary(u.resolve(child.Path))
+			entry["reference_target"] = summarize(u.resolve(child.Path))
 		}
 		entries = append(entries, entry)
 	}

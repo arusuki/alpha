@@ -16,6 +16,17 @@ import (
 // Only the report workflow calls this capability, never a model tool. Serialize
 // with scans and record deletion so evidence cannot disappear during a batch.
 func (s *Service) DeleteReportPaths(ctx context.Context, actor, id string, paths []string, password []byte, result func(string, string, string) error) error {
+	return s.deleteReportPaths(ctx, actor, id, paths, password, result, false)
+}
+
+// Host report paths need one final ownership check under the same storage lock
+// that excludes scans throughout the deletion. A check before queueing the
+// asynchronous cleanup cannot prevent an intervening exploration publication.
+func (s *Service) DeleteHostReportPaths(ctx context.Context, actor, id string, paths []string, password []byte, result func(string, string, string) error) error {
+	return s.deleteReportPaths(ctx, actor, id, paths, password, result, true)
+}
+
+func (s *Service) deleteReportPaths(ctx context.Context, actor, id string, paths []string, password []byte, result func(string, string, string) error, hostOnly bool) error {
 	defer clear(password)
 	s.Manager.mu.Lock()
 	defer s.Manager.mu.Unlock()
@@ -31,6 +42,22 @@ func (s *Service) DeleteReportPaths(ctx context.Context, actor, id string, paths
 	snapshot, err := s.ReadSnapshot(id)
 	if err != nil {
 		return err
+	}
+	var liveDockerProtected []string
+	if hostOnly {
+		usage := buildUsage(snapshot)
+		for _, p := range paths {
+			node := usage.Nodes[p]
+			if node == nil || (node.Kind != "directory" && node.Kind != "file") || node.Scanning || node.SizeUnknown ||
+				!usage.HostOnly[p] || usage.ContainerAllocated[p] != 0 || usage.HostAllocated[p] != node.Allocated {
+				return httpapi.NewError(409, "Host 路径归属已变化或无法核实，请重新扫描后生成报告："+p)
+			}
+		}
+		liveDockerProtected, err = validateLiveDockerHostPaths(ctx, paths,
+			httpapi.String(snapshot.Docker["endpoint"]), httpapi.String(snapshot.Docker["root_canonical"]), httpapi.String(snapshot.Docker["id"]), nil)
+		if err != nil {
+			return err
+		}
 	}
 	config, err := s.DB.config()
 	if err != nil {
@@ -58,6 +85,13 @@ func (s *Service) DeleteReportPaths(ctx context.Context, actor, id string, paths
 	}
 	request := cleanupHelperRequest{Paths: paths, DockerRoot: httpapi.String(snapshot.Docker["root"])}
 	request.ProtectedTrees, request.ProtectedRoots = cleanupProtectedPaths(snapshot, s.DB.Directory, config.Value.Exclude)
+	if hostOnly {
+		request.ProtectedTrees = append(request.ProtectedTrees, dockerRootAliases(defaultDockerDataRoot)...)
+		if root := httpapi.String(snapshot.Docker["root_canonical"]); root != "" {
+			request.ProtectedTrees = append(request.ProtectedTrees, root)
+		}
+		request.ProtectedTrees = append(request.ProtectedTrees, liveDockerProtected...)
+	}
 	for _, c := range snapshot.Containers {
 		if c.UpperPath != nil && *c.UpperPath != "" {
 			request.Containers = append(request.Containers, cleanupContainer{ID: c.ID, Upper: *c.UpperPath})
@@ -124,13 +158,13 @@ func validateCleanupLocation(trees, roots []string, mounts []MountInfo, p string
 		}
 	}
 	for _, root := range trees {
-		root = fsutil.Canonical(root)
-		if within(p, root) || within(root, p) {
+		canonical := fsutil.Canonical(root)
+		if within(p, root) || within(root, p) || within(p, canonical) || within(canonical, p) {
 			return reject()
 		}
 	}
 	for _, root := range roots {
-		if within(fsutil.Canonical(root), p) {
+		if within(root, p) || within(fsutil.Canonical(root), p) {
 			return reject()
 		}
 	}

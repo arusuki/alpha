@@ -21,23 +21,24 @@ import (
 )
 
 type Node struct {
-	Scanning          bool             `json:"scanning,omitempty"`
-	SizeUnknown       bool             `json:"size_unknown,omitempty"`
-	DeviceAllocated   map[string]int64 `json:"device_allocated,omitempty"`
-	Name              string           `json:"name"`
-	Path              string           `json:"path"`
-	Kind              string           `json:"kind"`
-	Allocated         int64            `json:"allocated"`
-	Apparent          int64            `json:"apparent"`
-	Files             int64            `json:"files"`
-	Errors            int64            `json:"errors"`
-	Children          []*Node          `json:"children"`
-	Omitted           int64            `json:"omitted_entries,omitempty"`
-	Reference         string           `json:"reference,omitempty"`
-	Reason            string           `json:"reason,omitempty"`
-	Excluded          int64            `json:"excluded_entries,omitempty"`
-	PermissionDenied  int64            `json:"permission_denied,omitempty"`
-	OmittedReferences int64            `json:"omitted_references,omitempty"`
+	Scanning                bool             `json:"scanning,omitempty"`
+	SizeUnknown             bool             `json:"size_unknown,omitempty"`
+	DeviceAllocated         map[string]int64 `json:"device_allocated,omitempty"`
+	Name                    string           `json:"name"`
+	Path                    string           `json:"path"`
+	Kind                    string           `json:"kind"`
+	Allocated               int64            `json:"allocated"`
+	Apparent                int64            `json:"apparent"`
+	Files                   int64            `json:"files"`
+	Errors                  int64            `json:"errors"`
+	Children                []*Node          `json:"children"`
+	Omitted                 int64            `json:"omitted_entries,omitempty"`
+	Reference               string           `json:"reference,omitempty"`
+	Reason                  string           `json:"reason,omitempty"`
+	Excluded                int64            `json:"excluded_entries,omitempty"`
+	PermissionDenied        int64            `json:"permission_denied,omitempty"`
+	OmittedReferences       int64            `json:"omitted_references,omitempty"`
+	OmittedReferenceTargets []string         `json:"omitted_reference_targets,omitempty"`
 }
 type Warning struct {
 	Path    string `json:"path"`
@@ -58,6 +59,8 @@ type Scanner struct {
 	Progress                              func(object) error
 	ContainerProgress                     *containerProgress
 	seen                                  map[inode]string
+	retained                              map[string]bool
+	omittedTargets                        map[string]map[string]bool
 	required                              map[string]bool
 	skip                                  map[string]bool
 	devices                               map[uint64]string
@@ -150,6 +153,8 @@ func newScanner(c Config, mounts []MountInfo, progress func(object) error) *Scan
 	}
 	s := &Scanner{Config: c, Mounts: mounts, Progress: progress, seen: map[inode]string{}, required: map[string]bool{}, skip: map[string]bool{}, devices: map[uint64]string{}, deviceAllocated: map[uint64]int64{}, virtualDevices: map[uint64]bool{}, Errors: []Warning{}, started: time.Now()}
 	s.capacities = map[uint64]scanCapacity{}
+	s.retained = map[string]bool{}
+	s.omittedTargets = map[string]map[string]bool{}
 	for _, m := range mounts {
 		if virtualFilesystem(m.FS) {
 			s.skip[m.Path] = true
@@ -310,6 +315,7 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 		names       []string
 	}
 	root, dir := s.begin(path, true)
+	s.retained[path] = true
 	s.Nodes++
 	first := frame{node: root, record: s.currentRecord, dir: dir, keep: true}
 	if s.DetailRoots[path] {
@@ -331,6 +337,7 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 		var branch *Node
 		for i := len(stack) - 1; i >= 0; i-- {
 			n := copyNode(stack[i].node)
+			n.OmittedReferenceTargets = s.foldedReferenceTargets(n.Path)
 			n.Scanning = true
 			if branch != nil {
 				aggregate(n, branch)
@@ -397,6 +404,7 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 			keepDetail := detailDirectory && counts[detailDepth] < detailLimits[detailDepth] && s.Nodes < maxRetainedDetailNodes
 			keep := f.keep && (s.required[path] || keepDetail || (f.depth < s.Config.MaxDepth && s.Nodes < int64(s.Config.MaxNodes)))
 			if keep {
+				s.retained[path] = true
 				s.Nodes++
 				if detailDirectory {
 					counts[detailDepth]++
@@ -416,6 +424,7 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 			continue
 		}
 		completed := *f
+		completed.node.OmittedReferenceTargets = s.foldedReferenceTargets(completed.node.Path)
 		if completed.keep && completed.record.Path != "" {
 			s.Ledger[completed.record.Path] = completed.record
 		}
@@ -429,6 +438,12 @@ func (s *Scanner) walk(ctx context.Context, path string) (*Node, error) {
 		if !completed.keep && completed.node.Kind == "reference" {
 			s.OmittedReferences++
 			completed.node.OmittedReferences++
+			for i := len(stack) - 1; i >= 0; i-- {
+				if stack[i].keep {
+					s.foldReference(stack[i].node.Path, completed.node.Reference)
+					break
+				}
+			}
 		}
 		if len(stack) > 0 {
 			parent := stack[len(stack)-1].node
@@ -561,7 +576,7 @@ func (s *Scanner) filesystems() []object {
 	return result
 }
 
-const snapshotVersion = 3
+const snapshotVersion = 5
 
 type Snapshot struct {
 	Accounting        []InodeRecord                `json:"incremental_accounting,omitempty"`

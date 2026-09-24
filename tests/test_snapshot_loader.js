@@ -76,9 +76,16 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
   cancelled.abort();await assert.rejects(cancelPromise,e=>e.name==='AbortError');assert(workers[1].terminated);
   stallDownload=false;releaseDownload();
   source='{broken';await assert.rejects(read({signal:new AbortController().signal,onProgress(){}}),/JSON/);
-  for (const version of [1,2,4]) {
+  for (const version of [1,2,3,4,6]) {
     source=JSON.stringify({...data,schema_version:version});
     await assert.rejects(read({signal:new AbortController().signal,onProgress(){}}),/快照/);
+  }
+  for (const targets of [undefined,['relative'],['/a','/a'],['/b','/a']]) {
+    const invalid=clone(data);
+    invalid.tree.omitted_references=1;
+    invalid.tree.omitted_reference_targets=targets;
+    source=JSON.stringify(invalid);
+    await assert.rejects(read({signal:new AbortController().signal,onProgress(){}}),/折叠引用/);
   }
   for (const path of [['revision'],['scan','omitted_references'],['containers',0,'writable_layer'],['filesystems',0,'scanned']]) {
     const invalid=clone(data), key=path[path.length-1];

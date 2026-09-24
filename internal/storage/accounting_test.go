@@ -211,7 +211,7 @@ func TestScanCLIWritesWritableLayerAndDiskReconciliation(t *testing.T) {
 	}
 	mustWrite(t, filepath.Join(upper, "data"), make([]byte, 8192))
 	records := []object{{"Id": strings.Repeat("a", 64), "Name": "/stopped", "State": object{"Status": "exited"}, "GraphDriver": object{"Data": object{"UpperDir": upper}}, "SizeRw": 999999}}
-	script := "#!/bin/sh\ncase \"$1\" in\ninfo) echo '" + httpapi.JSONText(object{"DockerRootDir": root}) + "' ;;\nps) echo '" + strings.Repeat("a", 64) + "\tstopped' ;;\ncontainer) echo '" + httpapi.JSONText(records) + "' ;;\nvolume) ;;\n*) exit 1 ;;\nesac\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"--host\" ]; then shift 2; fi\ncase \"$1\" in\ninfo) echo '" + httpapi.JSONText(object{"ID": "fixture-daemon", "DockerRootDir": root}) + "' ;;\nps) echo '" + strings.Repeat("a", 64) + "\tstopped' ;;\ncontainer) echo '" + httpapi.JSONText(records) + "' ;;\nvolume) ;;\n*) exit 1 ;;\nesac\n"
 	mustWrite(t, filepath.Join(cli, "docker"), []byte(script))
 	if err := os.Chmod(filepath.Join(cli, "docker"), 0700); err != nil {
 		t.Fatal(err)

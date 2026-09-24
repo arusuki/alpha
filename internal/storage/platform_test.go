@@ -383,7 +383,7 @@ func TestSnapshotFormatAndOwnerOverride(t *testing.T) {
 	if err := json.Unmarshal(raw, &unsupported); err != nil {
 		t.Fatal(err)
 	}
-	for _, version := range []int{0, 1, 2, snapshotVersion + 1} {
+	for _, version := range []int{0, 1, 2, 3, 4, snapshotVersion + 1} {
 		unsupported.SchemaVersion = version
 		if err := atomicWrite(filepath.Join(dir, "snapshot.json"), &unsupported); err != nil {
 			t.Fatal(err)

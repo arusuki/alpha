@@ -4,7 +4,27 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"path/filepath"
+	"slices"
 )
+
+func validateSnapshotDocker(docker object) error {
+	if len(docker) == 0 {
+		return nil
+	}
+	endpoint, endpointOK := docker["endpoint"].(string)
+	id, idOK := docker["id"].(string)
+	root, rootOK := docker["root"].(string)
+	canonical, canonicalOK := docker["root_canonical"].(string)
+	if !endpointOK || !idOK || id == "" || !rootOK || !filepath.IsAbs(root) || filepath.Clean(root) != root ||
+		!canonicalOK || !filepath.IsAbs(canonical) || filepath.Clean(canonical) != canonical {
+		return fmt.Errorf("扫描记录中的 Docker 身份或数据目录无效，请使用新的数据目录重新扫描")
+	}
+	if _, err := dockerEndpointSocket(endpoint); err != nil {
+		return fmt.Errorf("扫描记录中的 Docker endpoint 无效，请使用新的数据目录重新扫描: %w", err)
+	}
+	return nil
+}
 
 // Keep the recursive frontier outside the node lookup. An ordinary JOIN lets
 // SQLite scan every node in the record for each descendant, holding up both
@@ -26,6 +46,7 @@ func sameStoredNode(a, b *Node) bool {
 		a.Allocated == b.Allocated && a.Apparent == b.Apparent && a.Files == b.Files && a.Errors == b.Errors &&
 		a.Omitted == b.Omitted && a.Reference == b.Reference && a.Reason == b.Reason &&
 		a.Excluded == b.Excluded && a.PermissionDenied == b.PermissionDenied && a.OmittedReferences == b.OmittedReferences &&
+		slices.Equal(a.OmittedReferenceTargets, b.OmittedReferenceTargets) &&
 		(a.DeviceAllocated == nil) == (b.DeviceAllocated == nil) && maps.Equal(a.DeviceAllocated, b.DeviceAllocated)
 }
 
@@ -69,7 +90,10 @@ func (d *Store) storedSnapshot(id string) (*Snapshot, error) {
 		return nil, err
 	}
 	if result.SchemaVersion != snapshotVersion {
-		return nil, fmt.Errorf("不支持的扫描结果版本：%d", result.SchemaVersion)
+		return nil, fmt.Errorf("不支持的扫描结果版本：%d，需要版本 %d；请使用新的数据目录重新扫描", result.SchemaVersion, snapshotVersion)
+	}
+	if err := validateSnapshotDocker(result.Docker); err != nil {
+		return nil, err
 	}
 	nodes := map[string]*Node{}
 	for _, v := range values {
@@ -99,6 +123,9 @@ func (d *Store) storedSnapshot(id string) (*Snapshot, error) {
 	result.Tree, result.JobID, result.Revision = nodes[root], id, revision
 	if result.Tree == nil {
 		return nil, fmt.Errorf("扫描记录缺少根节点")
+	}
+	if err := validateIncrementalNodes(nodes); err != nil {
+		return nil, err
 	}
 	return &result, nil
 }

@@ -2,6 +2,8 @@
 
 `storage.Service` 是 Web 和 Agent 共用的业务入口：`Snapshot` 读取公开快照，`Changes` 读取版本差量，`Query` 查询目录和用量，`Explore` 在原记录上启动增量探索。服务不保存模型配置、会话或工具调用历史。
 
+Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，供 Host 清理前复核。格式版本与不兼容数据的处理见 [README](../README.md#配置与数据)。
+
 ## Web 接口
 
 读取接口要求登录，探索要求管理员权限、JSON 请求体和 `X-CSRF-Token`。
@@ -34,4 +36,10 @@
 
 应用层把 `storage.Service` 注入 `agent.Records`。模型工具只负责参数形状、工具预算、权限复查和任务等待：查询委托给 `Query`，`scan_directory` 委托给同一个 `Explore`。每次工具查询重新读取记录，因此可以看到用户手动探索的结果；工具探索也立即对 Web 可见。
 
+Host 查询包括 `host_roots`、`host_directory` 和 `host_nodes`：只规划显式配置的 Host 扫描根，返回 `host_allocated`、`container_allocated`、`host_only`，并以 `host_only_blocker` 说明无法核实归属的路径和原因。报告只接受归属完整的物理路径；具体判定见 [存储统计口径](accounting.md)。
+
+`omitted_reference_targets` 保存折叠引用的目标证据。局部扫描保留外部引用约束、未核实的旧引用及容器资源边界；全盘 `attribution_limited` 警告不会直接否决无关的 Host 路径。
+
 `directory_analyses` 随快照保存各目录的文件后缀、最大文件和 mtime 统计，包含观察时间；与新探索相交的旧统计失效。扫描只读取文件元数据，统计口径见 [存储统计口径](accounting.md)。
+
+`host_coverage` 是只读对账查询，接受 `roots`、已列物理路径 `paths` 及分页参数。按路径并集计量，返回 `host_allocated = covered_allocated + docker_allocated + remaining_allocated`；`remaining` 按容量排序，区分 `unlisted`（可列入的 Host 路径）、`folded`（父目录自身及折叠项）和 `residual`（其他剩余）。混合目录继续下钻找 Host 子项，Docker 管理目录单列且不建议补扫；分页不会改变全量合计。查询不触发扫描。

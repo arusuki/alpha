@@ -83,6 +83,7 @@ func scanPhysical(ctx context.Context, request helperRequest, progress func(obje
 	}
 	for _, r := range request.Seed {
 		s.seen[inode{r.Device, r.Inode}] = r.Path
+		s.retained[r.Path] = true
 	}
 	for _, p := range request.RetainPaths {
 		for {

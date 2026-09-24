@@ -99,8 +99,26 @@ func expandDirectory(ctx context.Context, base *Snapshot, c Config, path string,
 	if err != nil {
 		return nil, err
 	}
-	for path := range merger.claims {
-		inspection.RetainPaths = append(inspection.RetainPaths, path)
+	// Keep previously displayed descendants identifiable, even if this scan's
+	// depth or node budget would fold them. Otherwise a checkpoint includes
+	// their measured bytes in an opaque subtotal and the merge adds the same
+	// historical children again as though they had not yet been visited.
+	for p := range merger.baseNodes {
+		if within(p, path) {
+			inspection.RetainPaths = append(inspection.RetainPaths, p)
+		}
+	}
+	for p := range merger.claims {
+		if merger.baseNodes[p] == nil {
+			inspection.RetainPaths = append(inspection.RetainPaths, p)
+		}
+	}
+	// Resource boundaries must survive a shallow scan even when the baseline
+	// has folded them. Otherwise their bytes become an unclaimed parent subtotal.
+	for _, resource := range base.Resources {
+		if within(resource.Path, path) {
+			inspection.RetainPaths = append(inspection.RetainPaths, resource.Path)
+		}
 	}
 	for _, r := range merger.outsideAccounting {
 		if n := merger.baseNodes[r.Path]; n != nil && n.Kind != "reference" {
@@ -296,12 +314,24 @@ func (m *directoryMerge) merge(physical *physicalScan, complete bool) (*Snapshot
 
 // During traversal, measured children consume the unassigned historical bytes.
 // Only the final observation may remove unvisited entries or shrink the total.
+// Observations must retain historical child paths so a missing child means
+// unvisited, never already measured but folded by the display budget.
 func mergeDirectoryObservation(old, raw *Node) *Node {
 	n := copyNode(raw)
 	n.Scanning = true
 	if old == nil {
 		return n
 	}
+	// Unvisited aliases still constrain ownership until a complete observation.
+	targets := map[string]bool{}
+	for _, p := range append(append([]string{}, old.OmittedReferenceTargets...), raw.OmittedReferenceTargets...) {
+		targets[p] = true
+	}
+	n.OmittedReferenceTargets = nil
+	for p := range targets {
+		n.OmittedReferenceTargets = append(n.OmittedReferenceTargets, p)
+	}
+	sort.Strings(n.OmittedReferenceTargets)
 	previous := map[string]*Node{}
 	for _, child := range old.Children {
 		previous[child.Path] = child
@@ -350,6 +380,18 @@ func numberInt64(v any) int64 {
 }
 func validateIncrementalNodes(nodes map[string]*Node) error {
 	for _, n := range nodes {
+		localReferences := n.OmittedReferences
+		for _, child := range n.Children {
+			localReferences -= child.OmittedReferences
+		}
+		if localReferences > 0 && len(n.OmittedReferenceTargets) == 0 {
+			return fmt.Errorf("折叠引用缺少目标证据：%s；请使用新的数据目录重新扫描", n.Path)
+		}
+		for i, target := range n.OmittedReferenceTargets {
+			if validateIncrementalPath(target) != nil || (i > 0 && target <= n.OmittedReferenceTargets[i-1]) {
+				return fmt.Errorf("折叠引用证据无效：%s", n.Path)
+			}
+		}
 		allocated, apparent := int64(0), int64(0)
 		for _, child := range n.Children {
 			allocated += child.Allocated

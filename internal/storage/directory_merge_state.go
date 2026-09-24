@@ -49,6 +49,11 @@ func newDirectoryMerge(base *Snapshot, path string) (*directoryMerge, error) {
 		if n.Reference != "" && within(n.Reference, path) {
 			m.claims[n.Reference] = true
 		}
+		for _, target := range n.OmittedReferenceTargets {
+			if within(target, path) {
+				m.claims[target] = true
+			}
+		}
 	}
 	for _, r := range base.Accounting {
 		if within(r.Path, path) {

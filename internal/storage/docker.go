@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,13 @@ func runDocker(ctx context.Context, args []string, timeout int) (string, error) 
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", args...)
+	if len(args) >= 2 && args[0] == "--host" {
+		// Once discovery resolves its local endpoint, ignore ambient context
+		// changes for every subsequent Docker query in this scan.
+		cmd.Env = slices.DeleteFunc(os.Environ(), func(entry string) bool {
+			return strings.HasPrefix(entry, "DOCKER_HOST=") || strings.HasPrefix(entry, "DOCKER_CONTEXT=")
+		})
+	}
 	// Workers share their isolated group with Docker so the manager can stop all
 	// descendants. Standalone scans own a separate group for each CLI invocation.
 	if ctx.Value(workerProcessGroup{}) != true {
@@ -82,6 +90,18 @@ func appendUnique(values []string, s string) []string {
 	}
 	return append(values, s)
 }
+
+func dockerEndpointSocket(endpoint string) (string, error) {
+	if !strings.HasPrefix(endpoint, "unix://") {
+		return "", fmt.Errorf("Docker endpoint 必须是本机 unix:// 套接字")
+	}
+	path := strings.TrimPrefix(endpoint, "unix://")
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00?#%") {
+		return "", fmt.Errorf("Docker endpoint 必须包含规范的本机套接字绝对路径")
+	}
+	return path, nil
+}
+
 func discoverWithProgress(ctx context.Context, label string, timeout int, command dockerCommand, progress func(object) error) (object, []Container, []Resource, []Warning, error) {
 	containers := []Container{}
 	resources := []Resource{}
@@ -134,19 +154,27 @@ func discoverWithProgress(ctx context.Context, label string, timeout int, comman
 		}
 		endpoint = contexts[0].Endpoints["docker"].Host
 	}
-	if !strings.HasPrefix(endpoint, "unix://") {
-		return fail(fmt.Errorf("run on the Docker host with a local unix:// endpoint; remote Docker paths cannot be scanned locally"))
+	if _, err := dockerEndpointSocket(endpoint); err != nil {
+		return fail(fmt.Errorf("run on the Docker host with a local unix:// endpoint; remote Docker paths cannot be scanned locally: %w", err))
+	}
+	baseCommand := command
+	command = func(ctx context.Context, args []string, timeout int) (string, error) {
+		return baseCommand(ctx, append([]string{"--host", endpoint}, args...), timeout)
 	}
 	prepared++
 	if err := report("正在读取 Docker 存储配置"); err != nil {
 		return fail(err)
 	}
-	var info struct{ DockerRootDir, Driver, ServerVersion string }
+	var info struct{ ID, DockerRootDir, Driver, ServerVersion string }
 	if err := readJSON([]string{"info", "--format", "{{json .}}"}, &info); err != nil {
 		return fail(err)
 	}
-	metadata := object{"root": nil, "driver": nil, "version": nil}
-	for key, value := range map[string]string{"root": info.DockerRootDir, "driver": info.Driver, "version": info.ServerVersion} {
+	if info.ID == "" || !filepath.IsAbs(info.DockerRootDir) || filepath.Clean(info.DockerRootDir) != info.DockerRootDir {
+		return fail(fmt.Errorf("Docker 返回无效的 daemon 身份或数据目录"))
+	}
+	metadata := object{"id": info.ID, "endpoint": endpoint, "root": info.DockerRootDir,
+		"root_canonical": fsutil.Canonical(info.DockerRootDir), "driver": nil, "version": nil}
+	for key, value := range map[string]string{"driver": info.Driver, "version": info.ServerVersion} {
 		if value != "" {
 			metadata[key] = value
 		}

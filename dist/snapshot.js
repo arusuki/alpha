@@ -2,8 +2,10 @@
 // Shared by the UI and the background snapshot worker.
 const SnapshotData = (() => {
   function validate(data, report = () => {}) {
-    if (!data || data.schema_version !== 3 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照。');
+    if (!data || data.schema_version !== 5 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照，请使用新的数据目录重新扫描。');
     if (!data.scan || !Number.isSafeInteger(data.scan.omitted_references) || data.scan.omitted_references < 0 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw Error('扫描统计或版本格式无效。');
+    if (!data.docker || typeof data.docker !== 'object' || Array.isArray(data.docker) ||
+        (Object.keys(data.docker).length && (typeof data.docker.id !== 'string' || !data.docker.id || typeof data.docker.endpoint !== 'string' || !data.docker.endpoint.startsWith('unix:///') || typeof data.docker.root !== 'string' || !data.docker.root.startsWith('/') || typeof data.docker.root_canonical !== 'string' || !data.docker.root_canonical.startsWith('/')))) throw Error('Docker 身份或数据目录格式无效。');
     report({stage:'validate',done:0,total:null,unit:'节点',detail:'校验目录树结构与空间汇总'});
     const stack = [[data.tree, 0]], paths = new Set(), ids = new Set();
     let count = 0;
@@ -12,6 +14,8 @@ const SnapshotData = (() => {
       const [n, depth] = stack.pop();
       if (!n || typeof n.path !== 'string' || typeof n.name !== 'string' || !bytes(n.allocated) || !bytes(n.apparent) || !bytes(n.files) || !bytes(n.errors) || !Array.isArray(n.children) || paths.has(n.path) || depth > 256 || ++count > 250000) throw Error('目录树结构无效，或超过 25 万节点 / 256 层限制。');
       paths.add(n.path);
+      if (n.omitted_reference_targets !== undefined && (!Array.isArray(n.omitted_reference_targets) || n.omitted_reference_targets.some((p,i,a) => typeof p !== 'string' || !p.startsWith('/') || (i > 0 && p <= a[i-1])))) throw Error('折叠引用证据无效。');
+      if ((n.omitted_references || 0) > n.children.reduce((sum,c) => sum + (c.omitted_references || 0),0) && !n.omitted_reference_targets?.length) throw Error('折叠引用缺少目标证据，请使用新的数据目录重新扫描。');
       if (count % 1024 === 0) report({stage:'validate',done:count,total:null,unit:'节点',detail:'校验目录树结构与空间汇总',current:n.path});
       if (n.children.reduce((sum, c) => sum + (c && c.allocated || 0), 0) > n.allocated || n.children.reduce((sum, c) => sum + (c && c.apparent || 0), 0) > n.apparent) throw Error('扫描汇总与子目录用量不一致，无法可靠计算容器归属。');
       for (const c of n.children) stack.push([c, depth+1]);

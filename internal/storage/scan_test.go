@@ -161,11 +161,17 @@ func TestSnapshotAtomicAndCancellation(t *testing.T) {
 func dockerFixture(t *testing.T, upper bool) dockerCommand {
 	t.Helper()
 	return func(ctx context.Context, args []string, timeout int) (string, error) {
+		if len(args) >= 2 && args[0] == "--host" {
+			if args[1] != "unix:///var/run/docker.sock" && args[1] != "unix:///run/user/1000/docker.sock" {
+				t.Fatalf("discovery used the wrong local Docker endpoint: %v", args)
+			}
+			args = args[2:]
+		}
 		switch args[0] {
 		case "context":
 			return `[{"Endpoints":{"docker":{"Host":"unix:///var/run/docker.sock"}}}]`, nil
 		case "info":
-			return `{"DockerRootDir":"/docker","Driver":"overlay2","ServerVersion":"28"}`, nil
+			return `{"ID":"fixture-daemon","DockerRootDir":"/docker","Driver":"overlay2","ServerVersion":"28"}`, nil
 		case "ps":
 			return strings.Repeat("a", 64) + "\talice", nil
 		case "container":
@@ -187,9 +193,12 @@ func TestDockerDiscovery(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "")
 	t.Setenv("DOCKER_CONTEXT", "")
 	for _, upper := range []bool{true, false} {
-		_, containers, resources, warnings, err := discoverWithProgress(context.Background(), "team.user", 30, dockerFixture(t, upper), nil)
+		metadata, containers, resources, warnings, err := discoverWithProgress(context.Background(), "team.user", 30, dockerFixture(t, upper), nil)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if metadata["endpoint"] != "unix:///var/run/docker.sock" || metadata["id"] != "fixture-daemon" || metadata["root"] != "/docker" || metadata["root_canonical"] != "/docker" {
+			t.Fatalf("Docker identity was not persisted: %v", metadata)
 		}
 		c := containers[0]
 		if c.Owner != "alice" || c.State != "exited" || c.SizeRW == nil || *c.SizeRW != 42 || strings.Contains(httpapi.JSONText(containers), "SECRET") {
@@ -205,9 +214,32 @@ func TestDockerDiscovery(t *testing.T) {
 			t.Fatal("resource discovery or fallback failed")
 		}
 	}
+	t.Setenv("DOCKER_HOST", "unix:///run/user/1000/docker.sock")
+	metadata, _, _, _, err := discoverWithProgress(context.Background(), "team.user", 30, dockerFixture(t, true), nil)
+	if err != nil || metadata["endpoint"] != "unix:///run/user/1000/docker.sock" {
+		t.Fatalf("custom local Docker endpoint was not preserved: %v %v", metadata, err)
+	}
 	t.Setenv("DOCKER_HOST", "ssh://server")
 	if _, _, _, _, err := discoverWithProgress(context.Background(), "owner", 30, dockerFixture(t, true), nil); err == nil {
 		t.Fatal("remote daemon accepted")
+	}
+}
+
+func TestDockerSnapshotIdentityValidation(t *testing.T) {
+	valid := object{"endpoint": "unix:///run/user/1000/docker.sock", "id": "daemon-01", "root": "/srv/docker", "root_canonical": "/srv/docker"}
+	if err := validateSnapshotDocker(valid); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []object{
+		{"endpoint": "unix:///run/user/1000/docker.sock", "root": "/srv/docker", "root_canonical": "/srv/docker"},
+		{"endpoint": "tcp://host:2375", "id": "daemon-01", "root": "/srv/docker", "root_canonical": "/srv/docker"},
+		{"endpoint": "unix:///run/user/../docker.sock", "id": "daemon-01", "root": "/srv/docker", "root_canonical": "/srv/docker"},
+		{"endpoint": "unix:///run/user/1000/docker.sock", "id": "daemon-01", "root": "../docker", "root_canonical": "/srv/docker"},
+		{"endpoint": "unix:///run/user/1000/docker.sock", "id": "daemon-01", "root": "/srv/docker"},
+	} {
+		if err := validateSnapshotDocker(bad); err == nil {
+			t.Fatalf("accepted invalid Docker snapshot identity: %v", bad)
+		}
 	}
 }
 func TestDockerCancellation(t *testing.T) {
@@ -230,7 +262,7 @@ func TestIncludeDockerRoot(t *testing.T) {
 	storage := t.TempDir()
 	mustWrite(t, filepath.Join(storage, "image-layer"), make([]byte, 4096))
 	cli := t.TempDir()
-	script := "#!/bin/sh\ncase \"$1\" in\ninfo) echo '" + httpapi.JSONText(object{"DockerRootDir": storage, "Driver": "overlay2", "ServerVersion": "28"}) + "' ;;\nps|volume) ;;\n*) exit 1 ;;\nesac\n"
+	script := "#!/bin/sh\nif [ \"$1\" = \"--host\" ]; then shift 2; fi\ncase \"$1\" in\ninfo) echo '" + httpapi.JSONText(object{"ID": "fixture-daemon", "DockerRootDir": storage, "Driver": "overlay2", "ServerVersion": "28"}) + "' ;;\nps|volume) ;;\n*) exit 1 ;;\nesac\n"
 	mustWrite(t, filepath.Join(cli, "docker"), []byte(script))
 	os.Chmod(filepath.Join(cli, "docker"), 0700)
 	t.Setenv("PATH", cli+":"+os.Getenv("PATH"))

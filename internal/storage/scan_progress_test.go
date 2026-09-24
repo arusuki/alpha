@@ -168,6 +168,9 @@ func TestDiscoveryProgressBeforeEachSlowContainerQuery(t *testing.T) {
 	var last object
 	inspected, lastDone := 0, 0
 	command := func(ctx context.Context, args []string, timeout int) (string, error) {
+		if len(args) >= 2 && args[0] == "--host" {
+			args = args[2:]
+		}
 		if args[0] == "ps" {
 			if strings.Join(args, " ") != "ps -a --no-trunc --format {{.ID}}\t{{.Names}}" {
 				t.Fatalf("container list must include names before size queries: %v", args)
@@ -216,6 +219,9 @@ func TestDiscoveryProgressStopsBeforeNextContainer(t *testing.T) {
 		base := dockerFixture(t, true)
 		inspected := 0
 		command := func(ctx context.Context, args []string, timeout int) (string, error) {
+			if len(args) >= 2 && args[0] == "--host" {
+				args = args[2:]
+			}
 			if args[0] == "ps" {
 				return strings.Repeat("a", 64) + "\talice\n" + strings.Repeat("b", 64) + "\tbob", nil
 			}
@@ -242,6 +248,9 @@ func TestDiscoveryProgressWithNoResources(t *testing.T) {
 	base := dockerFixture(t, true)
 	var last object
 	_, _, _, _, err := discoverWithProgress(context.Background(), "team.user", 30, func(ctx context.Context, args []string, timeout int) (string, error) {
+		if len(args) >= 2 && args[0] == "--host" {
+			args = args[2:]
+		}
 		if args[0] == "ps" || args[0] == "volume" && args[1] == "ls" {
 			return "", nil
 		}
