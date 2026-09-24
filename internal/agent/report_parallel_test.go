@@ -139,7 +139,7 @@ func TestParallelReportRefillsSlotsWithFreshAgents(t *testing.T) {
 				}
 			}()
 			configureTestAgent(t, p, "completions", mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
+			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
 			sessionID := created["id"].(string)
 			receive := func() int {
 				t.Helper()

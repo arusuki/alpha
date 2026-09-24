@@ -80,10 +80,14 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			return fail(err)
 		}
 		var source reportSource
-		if len(body) != 3 || body["concurrency"] == nil || body["snapshot_id"] == nil || body["revision"] == nil || string(body["revision"]) == "null" || json.Unmarshal([]byte(httpapi.JSONText(body)), &source) != nil || !recordIDPattern.MatchString(source.SnapshotID) || source.Revision < 0 || source.Concurrency < 1 || source.Concurrency > maxReportConcurrency {
-			return fail(httpapi.NewError(400, "需要有效的 snapshot_id、非负整数 revision 和 1–16 的整数 concurrency"))
+		if len(body) != 4 || body["concurrency"] == nil || body["snapshot_id"] == nil || body["revision"] == nil || body["scope"] == nil || string(body["revision"]) == "null" || json.Unmarshal([]byte(httpapi.JSONText(body)), &source) != nil || !recordIDPattern.MatchString(source.SnapshotID) || source.Revision < 0 || source.Concurrency < 1 || source.Concurrency > maxReportConcurrency || (source.Scope != "host" && source.Scope != "container") {
+			return fail(httpapi.NewError(400, "需要有效的 snapshot_id、非负整数 revision、1–16 的整数 concurrency 和 host/container scope"))
 		}
-		session, err := a.start("", userID, actor, diskReportRequest, &source)
+		request := diskReportRequest
+		if source.Scope == "host" {
+			request = hostReportRequest
+		}
+		session, err := a.start("", userID, actor, request, &source)
 		return 202, session, err
 	}
 	if r.URL.Path == "/api/agent/settings" {
@@ -102,7 +106,11 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if r.URL.Path == "/api/agent/sessions" {
 		if r.Method == "GET" {
-			sessions, err := platform.Rows(s.DB.SQL, "SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error FROM agent_sessions WHERE user_id=? AND id NOT IN (SELECT session_id FROM agent_cleanups) ORDER BY updated_at DESC LIMIT 50", userID)
+			sessions, err := platform.Rows(s.DB.SQL, `SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope FROM (
+ SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope,
+ ROW_NUMBER() OVER (PARTITION BY report_scope ORDER BY updated_at DESC,id DESC) AS scope_rank
+ FROM agent_sessions WHERE user_id=? AND id NOT IN (SELECT session_id FROM agent_cleanups)
+) WHERE scope_rank<=50 ORDER BY updated_at DESC,id DESC`, userID)
 			return 200, object{"sessions": sessions}, err
 		}
 		if r.Method == "POST" {

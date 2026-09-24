@@ -12,7 +12,7 @@ func TestAgentCompletionSurvivesSQLiteBusy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.SQL.Close()
-	if _, err := db.SQL.Exec("INSERT INTO users VALUES('user','administrator','unused','admin',1,0); INSERT INTO agent_sessions VALUES('session','user','title','running',0,0,NULL,'job',NULL,'completions','test'); PRAGMA busy_timeout=1"); err != nil {
+	if _, err := db.SQL.Exec("INSERT INTO users VALUES('user','administrator','unused','admin',1,0); INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,snapshot_id,active_job_id,error,provider,model) VALUES('session','user','title','running',0,0,NULL,'job',NULL,'completions','test'); PRAGMA busy_timeout=1"); err != nil {
 		t.Fatal(err)
 	}
 	blocker, err := sql.Open("sqlite3", filepath.Join(db.Directory, "platform.sqlite3"))

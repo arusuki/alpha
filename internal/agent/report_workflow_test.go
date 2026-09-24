@@ -23,7 +23,7 @@ type reportFixture struct {
 }
 
 func (r *reportFixture) Query(id, operation string, fields map[string]json.RawMessage) (object, error) {
-	result := object{"snapshot_id": id, "revision": r.revision.Load(), "updated_at": "2026-09-15", "observed_at": "2026-09-14"}
+	result := object{"scope": "container", "snapshot_id": id, "revision": r.revision.Load(), "updated_at": "2026-09-15", "observed_at": "2026-09-14"}
 	switch operation {
 	case "overview":
 		result["containers"] = len(r.containers)
@@ -199,7 +199,7 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, protocol, mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 			sessionID := created["id"].(string)
 			result := waitAgentSession(t, p, sessionID)
 			if result["session"].(object)["status"] != "completed" || created["snapshot_id"] != id {
@@ -330,7 +330,7 @@ func TestDiskReportEmptyRecordSkipsModel(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 0 || !strings.Contains(httpapi.JSONText(result), "没有容器") {
 		t.Fatalf("empty record called model or lacked explanation: %v", result)
@@ -370,7 +370,7 @@ func TestDiskReportRepairsInvalidGroupWithoutRepeatingExploration(t *testing.T) 
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	sessionID := created["id"].(string)
 	result := waitAgentSession(t, p, sessionID)
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 3 || fixture.reads.Load() != 8 {
@@ -448,7 +448,7 @@ func TestReportExploresBeyondFormerRoundLimit(t *testing.T) {
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 15 {
 		t.Fatalf("exploration ended prematurely: %v, requests=%d", result["session"], calls.Load())

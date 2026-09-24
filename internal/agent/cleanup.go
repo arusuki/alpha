@@ -33,7 +33,7 @@ func (a *Manager) saveReport(id, text string, containers []reportContainer, resu
 }
 
 func (a *Manager) cleanupReports(userID string) (object, error) {
-	rows, err := platform.Rows(a.db.SQL, `SELECT r.message_id AS report_id,s.title,s.snapshot_id,m.created_at,
+	rows, err := platform.Rows(a.db.SQL, `SELECT r.message_id AS report_id,s.title,s.snapshot_id,s.report_scope,m.created_at,
  c.session_id AS cleanup_id,cs.status AS cleanup_status,c.phase FROM agent_reports r
  JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id
  LEFT JOIN agent_cleanups c ON c.report_id=r.message_id LEFT JOIN agent_sessions cs ON cs.id=c.session_id
@@ -99,9 +99,9 @@ func (a *Manager) startCleanup(reportID int64, userID, actor string) (object, er
 	if err := a.authorized(userID); err != nil {
 		return nil, err
 	}
-	var report, manifestText string
+	var report, manifestText, reportScope string
 	var snapshot sql.NullString
-	err := a.db.SQL.QueryRow(`SELECT m.content,r.entries,s.snapshot_id FROM agent_reports r JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id WHERE r.message_id=? AND s.user_id=?`, reportID, userID).Scan(&report, &manifestText, &snapshot)
+	err := a.db.SQL.QueryRow(`SELECT m.content,r.entries,s.snapshot_id,s.report_scope FROM agent_reports r JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id WHERE r.message_id=? AND s.user_id=?`, reportID, userID).Scan(&report, &manifestText, &snapshot, &reportScope)
 	if err == sql.ErrNoRows {
 		return nil, httpapi.NewError(404, "完整报告不存在")
 	}
@@ -137,7 +137,7 @@ func (a *Manager) startCleanup(reportID int64, userID, actor string) (object, er
 		id = platform.RandomHex(16)
 	}
 	err = a.db.Transaction(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,snapshot_id,provider,model) VALUES(?,?,'报告目录提取','queued',?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status='queued',error=NULL,updated_at=excluded.updated_at,provider=excluded.provider,model=excluded.model`, id, userID, platform.Now(), platform.Now(), snapshot, config.Protocol, config.Model)
+		_, err := tx.Exec(`INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,snapshot_id,provider,model,report_scope) VALUES(?,?,'报告目录提取','queued',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status='queued',error=NULL,updated_at=excluded.updated_at,provider=excluded.provider,model=excluded.model`, id, userID, platform.Now(), platform.Now(), snapshot, config.Protocol, config.Model, reportScope)
 		if err != nil {
 			return err
 		}
@@ -278,6 +278,10 @@ type cleanupStorage interface {
 	DeleteReportPaths(context.Context, string, string, []string, []byte, func(string, string, string) error) error
 }
 
+type hostCleanupStorage interface {
+	DeleteHostReportPaths(context.Context, string, string, []string, []byte, func(string, string, string) error) error
+}
+
 func (a *Manager) deleteCleanup(id, userID, actor string, ids []string, password []byte) (object, error) {
 	transferred := false
 	defer func() {
@@ -343,6 +347,14 @@ func (a *Manager) deleteCleanup(id, userID, actor string, ids []string, password
 	if !ok {
 		return nil, httpapi.NewError(503, "存储服务不支持目录删除")
 	}
+	deletePaths := service.DeleteReportPaths
+	if httpapi.String(session["report_scope"]) == "host" {
+		hostService, ok := a.records.(hostCleanupStorage)
+		if !ok {
+			return nil, httpapi.NewError(503, "存储服务不支持 Host 路径归属复查")
+		}
+		deletePaths = hostService.DeleteHostReportPaths
+	}
 	// A durable intent precedes all filesystem changes. An interrupted operation
 	// remains explicit and cannot silently be submitted again after a restart.
 	err = a.db.Transaction(func(tx *sql.Tx) error {
@@ -364,7 +376,7 @@ func (a *Manager) deleteCleanup(id, userID, actor string, ids []string, password
 	}
 	a.launchLocked(id, func(ctx context.Context) error {
 		defer clear(password)
-		err := service.DeleteReportPaths(ctx, actor, httpapi.String(session["snapshot_id"]), paths, password, func(p, status, message string) error {
+		err := deletePaths(ctx, actor, httpapi.String(session["snapshot_id"]), paths, password, func(p, status, message string) error {
 			_, err := a.db.SQL.Exec("UPDATE agent_cleanup_entries SET status=?,error=? WHERE id=?", status, message, selected[p])
 			return err
 		})

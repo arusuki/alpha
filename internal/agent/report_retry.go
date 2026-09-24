@@ -6,22 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sync"
-	"sync/atomic"
 
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 )
 
 type savedReportGroup struct {
-	ID         string            `json:"id"`
-	Number     int               `json:"number"`
-	Containers []reportContainer `json:"containers"`
+	ID          string            `json:"id"`
+	Number      int               `json:"number"`
+	Containers  []reportContainer `json:"containers,omitempty"`
+	Directories []reportDirectory `json:"directories,omitempty"`
 }
 
 type savedReport struct {
 	Groups      []savedReportGroup `json:"groups"`
 	Concurrency int                `json:"concurrency"`
+	Scope       string             `json:"scope"`
 	States      map[string]string
 }
 
@@ -51,12 +51,12 @@ func (a *Manager) savedReport(id string) (*savedReport, error) {
 		return nil, err
 	}
 	var report savedReport
-	if json.Unmarshal([]byte(raw), &report) != nil || len(report.Groups) == 0 || report.Concurrency < 1 || report.Concurrency > maxReportConcurrency {
+	if json.Unmarshal([]byte(raw), &report) != nil || len(report.Groups) == 0 || report.Concurrency < 1 || report.Concurrency > maxReportConcurrency || (report.Scope != "host" && report.Scope != "container") {
 		return nil, httpapi.NewError(409, "报告分组记录无效，无法恢复")
 	}
 	report.States = map[string]string{}
 	for i, group := range report.Groups {
-		if group.Number != i+1 || group.ID != fmt.Sprintf("group-%d", i+1) || len(group.Containers) == 0 {
+		if group.Number != i+1 || group.ID != fmt.Sprintf("group-%d", i+1) || (report.Scope == "container" && (len(group.Containers) == 0 || len(group.Directories) != 0)) || (report.Scope == "host" && (len(group.Directories) == 0 || len(group.Containers) != 0)) {
 			return nil, httpapi.NewError(409, "报告分组记录无效，无法恢复")
 		}
 		report.States[group.ID] = "queued"
@@ -124,9 +124,17 @@ func (a *Manager) reportResume(id string, group savedReportGroup, requestID stri
 	if len(resume.History) == 0 {
 		return nil, httpapi.NewError(409, "失败请求没有可恢复的消息上下文")
 	}
-	rows, err := platform.Rows(a.db.SQL, `SELECT role,content FROM agent_messages WHERE session_id=? AND id<?
- AND role IN ('tool_start','tool_end') AND tool_name='get_container'
- AND json_extract(content,'$.group_id')=? ORDER BY id`, id, messageID, group.ID)
+	queryTool := "get_container"
+	if len(group.Directories) > 0 {
+		queryTool = "get_host_directory"
+	}
+	secondTool := queryTool
+	if queryTool == "get_host_directory" {
+		secondTool = "scan_directory"
+	}
+	rows, err := platform.Rows(a.db.SQL, `SELECT role,content,tool_name FROM agent_messages WHERE session_id=? AND id<?
+ AND role IN ('tool_start','tool_end') AND tool_name IN (?,?)
+ AND json_extract(content,'$.group_id')=? ORDER BY id`, id, messageID, queryTool, secondTool, group.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -140,12 +148,21 @@ func (a *Manager) reportResume(id string, group savedReportGroup, requestID stri
 			return nil, httpapi.NewError(409, "工具记录无效，无法恢复已完成的查询")
 		}
 		if row["role"] == "tool_start" {
-			var args struct{ Container string }
+			var args struct{ Container, Path string }
 			if json.Unmarshal([]byte(event.Arguments), &args) != nil {
 				return nil, httpapi.NewError(409, "工具参数记录无效")
 			}
-			calls[event.CallID] = args.Container
+			if queryTool == "get_host_directory" {
+				calls[event.CallID] = args.Path
+			} else {
+				calls[event.CallID] = args.Container
+			}
 		} else if target, ok := calls[event.CallID]; ok {
+			for _, directory := range group.Directories {
+				if target == directory.Path {
+					resume.Inspected[directory.Path] = event.Status == "completed"
+				}
+			}
 			for _, container := range group.Containers {
 				if target == container.ID || target == container.Name {
 					resume.Inspected[container.ID] = event.Status == "completed"
@@ -185,6 +202,9 @@ func (a *Manager) retryGroups(id, userID, actor string, targets []reportRetry) (
 	report, err := a.savedReport(id)
 	if err != nil {
 		return nil, err
+	}
+	if httpapi.String(session["report_scope"]) != report.Scope {
+		return nil, httpapi.NewError(409, "报告范围记录无效，无法重试")
 	}
 	groups := map[string]savedReportGroup{}
 	for _, candidate := range report.Groups {
@@ -244,59 +264,47 @@ func (a *Manager) retryGroups(id, userID, actor string, targets []reportRetry) (
 		if err := a.runReportRetries(ctx, id, userID, actor, c, snapshotID, report, tasks); err != nil {
 			return err
 		}
-		return a.finishRetriedReport(ctx, id, snapshotID)
+		return a.finishReport(ctx, id, snapshotID)
 	})
 	return a.session(id, userID)
 }
 
 func (a *Manager) runReportRetries(ctx context.Context, id, userID, actor string, c Config, snapshotID string, report *savedReport, tasks []reportRetryTask) error {
-	var next atomic.Int64
-	var workers sync.WaitGroup
-	failures := make([]error, len(tasks))
-	for worker := 0; worker < min(report.Concurrency, len(tasks)); worker++ {
-		workers.Go(func() {
-			for ctx.Err() == nil {
-				index := int(next.Add(1)) - 1
-				if index >= len(tasks) {
-					return
-				}
-				task := tasks[index]
-				// Group completion is persisted by runReportGroup; final merging
-				// reads those records after every retry worker has finished.
-				results := []reportContainerResult{}
-				failures[index] = a.runReportGroup(ctx, id, userID, actor, c, snapshotID, task.group.Containers, task.group.Number, len(report.Groups), &results, task.resume)
-			}
-		})
-	}
-	workers.Wait()
+	err := runReportWorkers(ctx, len(tasks), report.Concurrency, func(index int) error {
+		task := tasks[index]
+		return a.runReportGroup(ctx, id, userID, actor, c, snapshotID, report.Scope, task.group, len(report.Groups), task.resume)
+	})
 	if ctx.Err() != nil {
-		state, err := a.savedReport(id)
-		if err != nil {
-			return errors.Join(ctx.Err(), err, errors.Join(failures...))
+		state, readErr := a.savedReport(id)
+		if readErr != nil {
+			return errors.Join(err, readErr)
 		}
-		for i, task := range tasks {
+		for _, task := range tasks {
 			if state.States[task.group.ID] == "queued" {
-				failures[i] = a.message(id, "group_state", httpapi.JSONText(object{"id": task.group.ID, "status": "failed", "error": "重试尚未开始便已停止，可再次重试原失败请求"}), "")
+				err = errors.Join(err, a.message(id, "group_state", httpapi.JSONText(object{"id": task.group.ID, "status": "failed", "error": "重试尚未开始便已停止，可再次重试原失败请求"}), ""))
 			}
 		}
-		return errors.Join(ctx.Err(), errors.Join(failures...))
 	}
-	return errors.Join(failures...)
+	return err
 }
 
-func (a *Manager) finishRetriedReport(ctx context.Context, id, snapshotID string) error {
+func (a *Manager) finishReport(ctx context.Context, id, snapshotID string) error {
 	report, err := a.savedReport(id)
 	if err != nil {
 		return err
 	}
 	containers := []reportContainer{}
-	byGroup := map[string][]reportContainer{}
+	byGroup := map[string]savedReportGroup{}
 	for _, group := range report.Groups {
 		if report.States[group.ID] != "completed" {
 			return fmt.Errorf("Agent %d 尚未完成；已完成结果保留，可继续重试失败的 Agent", group.Number)
 		}
-		containers = append(containers, group.Containers...)
-		byGroup[group.ID] = group.Containers
+		if report.Scope == "host" {
+			containers = append(containers, hostReportContainers(group.Directories)...)
+		} else {
+			containers = append(containers, group.Containers...)
+		}
+		byGroup[group.ID] = group
 	}
 	// Keep original publication order, so merging shared paths retains the same
 	// latest-observation semantics as the initial concurrent report run.
@@ -309,7 +317,7 @@ func (a *Manager) finishRetriedReport(ctx context.Context, id, snapshotID string
 		var event struct {
 			GroupID string `json:"group_id"`
 		}
-		if json.Unmarshal([]byte(httpapi.String(row["content"])), &event) != nil || len(byGroup[event.GroupID]) == 0 {
+		if json.Unmarshal([]byte(httpapi.String(row["content"])), &event) != nil || byGroup[event.GroupID].ID == "" {
 			return httpapi.NewError(409, "分组结果记录无效，无法合并报告")
 		}
 		var raw string
@@ -318,11 +326,19 @@ func (a *Manager) finishRetriedReport(ctx context.Context, id, snapshotID string
  AND json_extract(content,'$.status')='completed' ORDER BY id DESC LIMIT 1`, id, row["id"], event.GroupID).Scan(&raw); err != nil {
 			return err
 		}
-		result, err := parseReportGroup(raw, byGroup[event.GroupID])
-		if err != nil {
-			return err
+		if report.Scope == "host" {
+			parsed, err := parseHostReportGroup(raw, byGroup[event.GroupID].Directories)
+			if err != nil {
+				return err
+			}
+			results = append(results, hostReportResults(parsed.Directories)...)
+		} else {
+			parsed, err := parseReportGroup(raw, byGroup[event.GroupID].Containers)
+			if err != nil {
+				return err
+			}
+			results = append(results, parsed.Containers...)
 		}
-		results = append(results, result.Containers...)
 		delete(byGroup, event.GroupID)
 	}
 	if len(byGroup) != 0 {
@@ -335,7 +351,22 @@ func (a *Manager) finishRetriedReport(ctx context.Context, id, snapshotID string
 	if err != nil {
 		return err
 	}
+	location := "容器 / 内部路径"
+	coverageText := ""
 	header := fmt.Sprintf("# 空间消耗总报告\n\n%d 个容器 · %d 组 · 同一物理路径已合并，条目不相加为可回收总量。\n\n", len(containers), len(report.Groups))
+	if report.Scope == "host" {
+		header = fmt.Sprintf("# Host 空间分析报告\n\n%d 个 Host 目录 · %d 组 · 仅统计未被容器引用的路径，条目不相加为可回收总量。\n\n", len(containers), len(report.Groups))
+		location = "Host 区域"
+		directories := []reportDirectory{}
+		for _, group := range report.Groups {
+			directories = append(directories, group.Directories...)
+		}
+		coverage, err := a.hostReportCoverage(ctx, snapshotID, directories, results)
+		if err != nil {
+			return err
+		}
+		coverageText = renderHostCoverage(coverage)
+	}
 	footer := fmt.Sprintf("\n记录：%s · 版本 %v · 基线 %v · 更新 %v。\n", snapshotID, current["revision"], current["observed_at"], current["updated_at"])
-	return a.saveReport(id, header+renderReportFindings(containers, results)+footer, containers, results)
+	return a.saveReport(id, header+renderReportFindingsWithLocation(containers, results, location)+coverageText+footer, containers, results)
 }

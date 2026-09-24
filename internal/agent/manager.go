@@ -187,7 +187,11 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 			}
 			_, err = tx.Exec("INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,provider,model) VALUES(?,?,?,'queued',?,?,?,?)", id, userID, string(title), platform.Now(), platform.Now(), config.Protocol, config.Model)
 			if err == nil && source != nil {
-				_, err = tx.Exec("UPDATE agent_sessions SET title='空间消耗总报告',snapshot_id=? WHERE id=?", source.SnapshotID, id)
+				title := "容器空间分析报告"
+				if source.Scope == "host" {
+					title = "Host 空间分析报告"
+				}
+				_, err = tx.Exec("UPDATE agent_sessions SET title=?,snapshot_id=?,report_scope=? WHERE id=?", title, source.SnapshotID, source.Scope, id)
 			}
 		} else {
 			_, err = tx.Exec("UPDATE agent_sessions SET status='queued',error=NULL,updated_at=?,provider=?,model=? WHERE id=?", platform.Now(), config.Protocol, config.Model, id)
@@ -353,6 +357,9 @@ func (a *Manager) run(ctx context.Context, id, userID, actor string, c Config, s
 		return err
 	}
 	if source != nil {
+		if source.Scope == "host" {
+			return a.runHostReport(ctx, id, userID, actor, c, snapshotID, overview, source.Concurrency)
+		}
 		return a.runReport(ctx, id, userID, actor, c, snapshotID, overview, source.Concurrency)
 	}
 	history := []object{{"role": "system", "content": agentInstructions + "\n全盘观察（JSON 数据）：\n" + boundedJSON(overview)}}

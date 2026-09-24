@@ -121,7 +121,7 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 			defer unblockOthers()
 			defer unblock()
 			configureTestAgent(t, p, protocol, mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
+			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
 			id := created["id"].(string)
 			if result := waitAgentSession(t, p, id); result["session"].(object)["status"] != "failed" {
 				t.Fatal(result)

@@ -18,8 +18,8 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-// Version 12 stores Agent API keys as encrypted data outside the settings JSON.
-const DatabaseVersion = 12
+// Version 14 records folded reference targets for local Host ownership checks.
+const DatabaseVersion = 14
 
 //go:embed schema.sql
 var schema string

@@ -23,12 +23,15 @@ func agentToolSpecs() []toolSpec {
 	containers["sort_by"] = object{"type": "string", "enum": []string{"exclusive", "writable", "docker_logical"}}
 	directory := page()
 	directory["path"] = str("宿主机物理绝对路径；可写层使用 get_container 返回的 upper_path；从 / 查看全盘")
+	hostDirectory := page()
+	hostDirectory["path"] = str("宿主机物理绝对路径；返回未被容器引用的实际占用和归属状态")
 	return []toolSpec{
 		{"get_overview", "读取本次分析的全盘快照摘要、设备对账、容器大头与完整性。不触发扫描。", object{}},
 		{"list_containers", "查询与页面相同口径的容器用量。exclusive 为独占；shared 为共享引用，不能跨行相加。", containers},
 		{"list_owners", "按去重归属用量查询用户。shared 为跨用户引用，不能加进用户独占排行。", page()},
 		{"get_container", "查看一个容器的可写层、挂载、日志源及扫描状态，取得可用于下钻的物理路径。", object{"container": str("容器完整 ID 或精确名称")}},
 		{"get_directory", "从当前记录中按实际占用列出目录明细，包含 Web 和工具已发布的增量探索结果。不扫描；折叠或未记录时会明确提示。", directory},
+		{"get_host_directory", "查看 Host 目录中未被容器引用的空间；仅 host_only 为 true 的路径可以写入 Host 报告，混合目录应继续下钻。", hostDirectory},
 		{"scan_directory", "在当前记录上增量探索已有物理目录，更新原记录并返回新版本和文件统计；Web 页面同步可见。服务端串行读取最新版本并发布结果。", object{"path": str("当前记录中已有的物理目录绝对路径"), "depth": object{"type": "integer", "minimum": 1, "maximum": 32, "description": "本次保留的目录层数，1–32"}}},
 	}
 }
@@ -52,10 +55,12 @@ func agentToolDefinitions(protocol string) []object {
 }
 
 type agentTools struct {
-	agent                                       *Manager
-	sessionID, userID, actor, recordID, groupID string
-	reportGroup                                 []reportContainer
-	inspectedContainers                         map[string]bool
+	agent                                              *Manager
+	sessionID, userID, actor, recordID, groupID, scope string
+	reportGroup                                        []reportContainer
+	inspectedContainers                                map[string]bool
+	reportDirectories                                  []reportDirectory
+	inspectedHostDirectories                           map[string]bool
 }
 
 func (t *agentTools) call(ctx context.Context, name, arguments string) (any, error) {
@@ -96,6 +101,9 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 	if _, ok := spec.Properties["limit"]; ok && (args.Limit < 1 || args.Limit > 50 || args.Offset < 0 || args.Offset > 1000000) {
 		return nil, fmt.Errorf("分页 limit 需为 1–50，offset 需为 0–1000000")
 	}
+	if t.scope == "host" && (name == "get_container" || name == "list_containers" || name == "list_owners" || name == "get_directory") {
+		return nil, fmt.Errorf("Host 分析请使用 get_host_directory 查询未归属容器的路径")
+	}
 	if name == "get_container" {
 		result, err := t.agent.records.Query(t.recordID, "container", fields)
 		for _, c := range t.reportGroup {
@@ -104,6 +112,18 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 					t.inspectedContainers = map[string]bool{}
 				}
 				t.inspectedContainers[c.ID] = err == nil
+			}
+		}
+		return result, err
+	}
+	if name == "get_host_directory" {
+		result, err := t.agent.records.Query(t.recordID, "host_directory", fields)
+		for _, directory := range t.reportDirectories {
+			if args.Path == directory.Path {
+				if t.inspectedHostDirectories == nil {
+					t.inspectedHostDirectories = map[string]bool{}
+				}
+				t.inspectedHostDirectories[directory.Path] = err == nil
 			}
 		}
 		return result, err
@@ -137,8 +157,23 @@ func (t *agentTools) call(ctx context.Context, name, arguments string) (any, err
 		if err != nil {
 			return nil, err
 		}
-		return t.agent.records.Query(t.recordID, "directory", map[string]json.RawMessage{"path": fields["path"]})
+		operation := "directory"
+		if t.scope == "host" {
+			operation = "host_directory"
+		}
+		result, err := t.agent.records.Query(t.recordID, operation, map[string]json.RawMessage{"path": fields["path"]})
+		if t.scope == "host" {
+			for _, directory := range t.reportDirectories {
+				if args.Path == directory.Path {
+					if t.inspectedHostDirectories == nil {
+						t.inspectedHostDirectories = map[string]bool{}
+					}
+					t.inspectedHostDirectories[directory.Path] = err == nil
+				}
+			}
+		}
+		return result, err
 	}
-	operation := map[string]string{"get_overview": "overview", "list_containers": "containers", "list_owners": "owners", "get_container": "container", "get_directory": "directory"}[name]
+	operation := map[string]string{"get_overview": "overview", "list_containers": "containers", "list_owners": "owners", "get_container": "container", "get_directory": "directory", "get_host_directory": "host_directory"}[name]
 	return t.agent.records.Query(t.recordID, operation, fields)
 }

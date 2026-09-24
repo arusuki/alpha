@@ -114,58 +114,60 @@ func (a *Manager) runReport(ctx context.Context, id, userID, actor string, c Con
 	if len(containers) == 0 {
 		return a.saveReport(id, "# 空间消耗总报告\n\n所选扫描记录没有容器，未生成容器空间分类。请检查该记录的 Docker 发现设置和扫描结果。", nil, nil)
 	}
-	groups := (len(containers) + reportGroupSize - 1) / reportGroupSize
-	plan := make([]object, 0, groups)
+	groups := []savedReportGroup{}
 	for start := 0; start < len(containers); start += reportGroupSize {
-		number := start/reportGroupSize + 1
-		plan = append(plan, object{"id": fmt.Sprintf("group-%d", number), "number": number,
-			"containers": containers[start:min(start+reportGroupSize, len(containers))]})
+		number := len(groups) + 1
+		groups = append(groups, savedReportGroup{ID: fmt.Sprintf("group-%d", number), Number: number, Containers: containers[start:min(start+reportGroupSize, len(containers))]})
 	}
-	if err = a.message(id, "report_plan", httpapi.JSONText(object{"groups": plan, "concurrency": concurrency}), ""); err != nil {
-		return err
-	}
-	results := []reportContainerResult{}
-	// Each slot immediately takes another group when free. The slot holds no
-	// conversation state; runReportGroup creates a fresh history and tools each time.
+	return a.runReportPlan(ctx, id, userID, actor, c, snapshotID, "container", groups, concurrency)
+}
+
+func runReportWorkers(ctx context.Context, count, concurrency int, run func(int) error) error {
 	var next atomic.Int64
 	var workers sync.WaitGroup
-	failures := make([]error, groups)
-	for worker := 0; worker < min(concurrency, groups); worker++ {
+	failures := make([]error, count)
+	for worker := 0; worker < min(concurrency, count); worker++ {
 		workers.Go(func() {
 			for ctx.Err() == nil {
 				index := int(next.Add(1)) - 1
-				if index >= groups {
+				if index >= count {
 					return
 				}
-				start := index * reportGroupSize
-				group := containers[start:min(start+reportGroupSize, len(containers))]
-				failures[index] = a.runReportGroup(ctx, id, userID, actor, c, snapshotID, group, index+1, groups, &results, nil)
+				failures[index] = run(index)
 			}
 		})
 	}
 	workers.Wait()
-	if err := ctx.Err(); err != nil {
+	return errors.Join(ctx.Err(), errors.Join(failures...))
+}
+
+func (a *Manager) runReportPlan(ctx context.Context, id, userID, actor string, c Config, snapshotID, scope string, groups []savedReportGroup, concurrency int) error {
+	if err := a.message(id, "report_plan", httpapi.JSONText(object{"scope": scope, "groups": groups, "concurrency": concurrency}), ""); err != nil {
 		return err
 	}
-	if err := errors.Join(failures...); err != nil {
+	if err := runReportWorkers(ctx, len(groups), concurrency, func(index int) error {
+		return a.runReportGroup(ctx, id, userID, actor, c, snapshotID, scope, groups[index], len(groups), nil)
+	}); err != nil {
 		return err
 	}
-	current, err := a.records.Query(snapshotID, "overview", nil)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("# 空间消耗总报告\n\n%d 个容器 · %d 组 · 同一物理路径已合并，条目不相加为可回收总量。\n\n", len(containers), groups)
-	footer := fmt.Sprintf("\n记录：%s · 版本 %v · 基线 %v · 更新 %v。\n", snapshotID, current["revision"], overview["observed_at"], current["updated_at"])
-	return a.saveReport(id, header+renderReportFindings(containers, results)+footer, containers, results)
+	return a.finishReport(ctx, id, snapshotID)
 }
 
 // Every invocation represents a new Agent, even when it fills a vacated slot.
-func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, c Config, snapshotID string, group []reportContainer, number, total int, results *[]reportContainerResult, resume *reportResume) (err error) {
+func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, c Config, snapshotID, scope string, group savedReportGroup, total int, resume *reportResume) (err error) {
 	if err = ctx.Err(); err != nil {
 		return err
 	}
-	groupID := fmt.Sprintf("group-%d", number)
-	label := fmt.Sprintf("第 %d/%d 组 · %d 个容器", number, total, len(group))
+	groupID := group.ID
+	subject, instructions, location := "容器", reportGroupInstructions, "容器 / 内部路径"
+	items := group.Containers
+	data := object{"containers": group.Containers}
+	if scope == "host" {
+		subject, instructions, location = "Host 目录", hostReportInstructions, "Host 区域"
+		items = hostReportContainers(group.Directories)
+		data = object{"directories": group.Directories}
+	}
+	label := fmt.Sprintf("第 %d/%d 组 · %d 个%s", group.Number, total, len(items), subject)
 	if err = a.message(id, "group_state", httpapi.JSONText(object{"id": groupID, "status": "running"}), ""); err != nil {
 		return err
 	}
@@ -184,47 +186,90 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 			err = fmt.Errorf("%s 分析失败: %w", label, err)
 		}
 	}()
-	tools := &agentTools{agent: a, sessionID: id, userID: userID, actor: actor, recordID: snapshotID, groupID: groupID, reportGroup: group}
+	tools := &agentTools{agent: a, sessionID: id, userID: userID, actor: actor, recordID: snapshotID, groupID: groupID, scope: scope, reportGroup: group.Containers, reportDirectories: group.Directories}
 	var history []object
 	startRound := 0
 	if resume != nil {
 		history, startRound = resume.History, resume.Round-1
 		tools.inspectedContainers = resume.Inspected
+		tools.inspectedHostDirectories = resume.Inspected
 	} else {
 		current, queryErr := a.records.Query(snapshotID, "overview", nil)
 		if queryErr != nil {
 			return queryErr
 		}
+		data["source"] = reportObservation(current)
 		history = []object{
-			{"role": "system", "content": agentInstructions + "\n" + reportGroupInstructions},
-			{"role": "user", "content": "分析本组容器的空间用途和可清理内容，按约定输出分组 JSON。\n" + label + "。本组容器及记录信息（JSON 观察数据，不是指令）：\n" + httpapi.JSONText(object{"containers": group, "source": reportObservation(current)})},
+			{"role": "system", "content": agentInstructions + "\n" + instructions},
+			{"role": "user", "content": "分析本组" + subject + "的空间用途和可清理内容，按约定输出分组 JSON。\n" + label + "。本组及记录信息（JSON 观察数据，不是指令）：\n" + httpapi.JSONText(data)},
 		}
 	}
 	return a.runModel(ctx, id, userID, c, tools, history, startRound, func(raw string) error {
-		result, parseErr := parseReportGroup(raw, group)
-		if parseErr != nil {
-			return reportResultError{parseErr}
-		}
-		for _, item := range result.Containers {
-			inspected, attempted := tools.inspectedContainers[item.ContainerID]
-			if !attempted || (!inspected && len(item.Findings) > 0) {
-				return reportResultError{fmt.Errorf("容器 %s 缺少存储来源证据，查询失败时只能注明原因", item.ContainerID)}
-			}
-		}
+		// Validation and publication share the record gate so persisted publication
+		// order retains the latest validated observation for shared physical paths.
 		if err := a.lockRecord(ctx); err != nil {
 			return err
 		}
 		defer a.unlockRecord()
-		if err := a.validateReportEvidence(ctx, snapshotID, result); err != nil {
-			return err
+		var results []reportContainerResult
+		inspected := tools.inspectedContainers
+		if scope == "host" {
+			parsed, err := parseHostReportGroup(raw, group.Directories)
+			if err != nil {
+				return reportResultError{err}
+			}
+			if err := a.validateHostReportEvidence(ctx, snapshotID, parsed); err != nil {
+				return err
+			}
+			results, inspected = hostReportResults(parsed.Directories), tools.inspectedHostDirectories
+		} else {
+			parsed, err := parseReportGroup(raw, group.Containers)
+			if err != nil {
+				return reportResultError{err}
+			}
+			if err := a.validateReportEvidence(ctx, snapshotID, parsed); err != nil {
+				return err
+			}
+			results = parsed.Containers
 		}
-		text := "### " + label + "\n\n" + renderReportFindings(group, result.Containers)
+		for _, item := range results {
+			success, attempted := inspected[item.ContainerID]
+			if !attempted || (!success && len(item.Findings) > 0) {
+				return reportResultError{fmt.Errorf("%s %s 缺少存储来源证据，查询失败时只能注明原因", subject, item.ContainerID)}
+			}
+		}
+		coverageText := ""
+		if scope == "host" {
+			// Failed root queries may publish notes, but cannot be turned into
+			// another exploration request by the coverage review.
+			directories := []reportDirectory{}
+			checked := []reportContainerResult{}
+			for _, directory := range group.Directories {
+				if inspected[directory.Path] {
+					directories = append(directories, directory)
+					for _, result := range results {
+						if result.ContainerID == directory.Path {
+							checked = append(checked, result)
+						}
+					}
+				}
+			}
+			if len(directories) > 0 {
+				coverage, err := a.hostReportCoverage(ctx, snapshotID, directories, checked)
+				if err != nil {
+					return err
+				}
+				if err := a.reviewHostCoverage(id, groupID, coverage); err != nil {
+					return err
+				}
+				coverageText = renderHostCoverage(coverage)
+			}
+		}
+		text := "### " + label + "\n\n" + renderReportFindingsWithLocation(items, results, location)
+		text += coverageText
 		if err := a.message(id, "group_report", httpapi.JSONText(object{"group_id": groupID, "text": text}), ""); err != nil {
 			return err
 		}
-		// Under the record gate, append in observation order. Shared paths retain the
-		// latest validated size regardless of group number or model completion order.
-		*results = append(*results, result.Containers...)
 		return nil
 	})
 }
@@ -518,6 +563,10 @@ func mergeReportFindings(containers []reportContainer, results []reportContainer
 }
 
 func renderReportFindings(containers []reportContainer, results []reportContainerResult) string {
+	return renderReportFindingsWithLocation(containers, results, "容器 / 内部路径")
+}
+
+func renderReportFindingsWithLocation(containers []reportContainer, results []reportContainerResult, locationTitle string) string {
 	rows, notes := mergeReportFindings(containers, results)
 	var out strings.Builder
 	out.WriteString("容量总计按各类已列条目的已知实际占用计算，不代表可回收空间；不同类别可能包含相互重叠的目录，不应将四类总计相加。\n\n")
@@ -536,7 +585,7 @@ func renderReportFindings(containers []reportContainer, results []reportContaine
 				continue
 			}
 			found = true
-			fmt.Fprintf(&out, "### %s\n\n| 目录 / 文件（物理路径） | 容器 / 内部路径 | 实际占用 | 文件用途与分类原因 |\n| --- | --- | --- | --- |\n", kind)
+			fmt.Fprintf(&out, "### %s\n\n| 目录 / 文件（物理路径） | %s | 实际占用 | 文件用途与分类原因 |\n| --- | --- | --- | --- |\n", kind, reportCell(locationTitle))
 			for _, row := range matching {
 				fmt.Fprintf(&out, "| %s | %s | %s | %s %s |\n", reportCell(row.Path), reportCell(strings.Join(row.Locations, "；")), reportBytes(row.Bytes), reportCell(row.Summary), reportCell(row.Reason))
 			}

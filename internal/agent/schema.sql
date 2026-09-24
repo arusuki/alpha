@@ -5,7 +5,8 @@ CREATE TABLE agent_settings (
 CREATE TABLE agent_sessions (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL,
  status TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
- snapshot_id TEXT, active_job_id TEXT, error TEXT, provider TEXT NOT NULL, model TEXT NOT NULL
+ snapshot_id TEXT, active_job_id TEXT, error TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+ report_scope TEXT NOT NULL DEFAULT '' CHECK(report_scope IN ('','host','container'))
 );
 CREATE INDEX idx_agent_sessions_user ON agent_sessions(user_id,updated_at DESC);
 CREATE TABLE agent_messages (
