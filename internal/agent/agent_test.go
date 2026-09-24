@@ -197,6 +197,17 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	if strings.Contains(httpapi.JSONText(r), "keep-this-private") || r["value"].(map[string]any)["has_api_key"] != true {
 		t.Fatal("key leaked or was not saved")
 	}
+	var storedValue, ciphertext string
+	if err := p.db.SQL.QueryRow("SELECT value,api_key_ciphertext FROM agent_settings WHERE id=1").Scan(&storedValue, &ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(storedValue, "keep-this-private") || strings.Contains(ciphertext, "keep-this-private") || !strings.HasPrefix(ciphertext, apiKeyPrefix) {
+		t.Fatal("API key was not encrypted in the database")
+	}
+	keyInfo, err := os.Stat(filepath.Join(p.db.Directory, apiKeyFile))
+	if err != nil || keyInfo.Mode().Perm() != 0600 {
+		t.Fatalf("encryption key file permissions: %v, %v", keyInfo, err)
+	}
 	p.expect(409, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
 	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 2, "value": object{"api_key": "", "model": "updated-model"}}, nil)
 	c, _, _ := p.agent.db.agentConfig()
@@ -220,6 +231,9 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	if c.APIKey != "" {
 		t.Fatal("explicit key clear failed")
 	}
+	if err := p.db.SQL.QueryRow("SELECT api_key_ciphertext FROM agent_settings WHERE id=1").Scan(&ciphertext); err != nil || ciphertext != "" {
+		t.Fatalf("cleared API key remains in database: %v", err)
+	}
 	if strings.Contains(httpapi.JSONText(p.expect(200, "GET", "/api/audit", nil, nil)), "keep-this-private") {
 		t.Fatal("key in audit")
 	}
@@ -228,6 +242,35 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	p.expect(403, "GET", "/api/agent/settings", nil, nil)
 	p.expect(403, "GET", "/api/agent/sessions", nil, nil)
 	p.expect(403, "POST", "/api/agent/sessions", object{"message": "test"}, nil)
+}
+
+func TestAgentAPIKeyEncryptionRejectsMissingKeyAndTampering(t *testing.T) {
+	p := newTestPlatform(t)
+	p.login(true, "administrator", "A-test-password-123")
+	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"api_key": "secret-for-encryption-test"}}, nil)
+	keyPath := filepath.Join(p.db.Directory, apiKeyFile)
+	key, err := os.ReadFile(keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := p.agent.db.agentConfig(); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing encryption key was accepted: %v", err)
+	}
+	if _, err := os.Stat(keyPath); !os.IsNotExist(err) {
+		t.Fatal("missing encryption key was silently recreated")
+	}
+	if err := os.WriteFile(keyPath, key, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.db.SQL.Exec("UPDATE agent_settings SET api_key_ciphertext=? WHERE id=1", "v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := p.agent.db.agentConfig(); err == nil || !strings.Contains(err.Error(), "cannot decrypt") {
+		t.Fatalf("tampered ciphertext was accepted: %v", err)
+	}
 }
 
 func TestAgentCancellationAndSessionIsolation(t *testing.T) {

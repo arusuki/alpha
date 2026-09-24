@@ -1,5 +1,6 @@
 CREATE TABLE agent_settings (
- id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1
+ id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL,
+ api_key_ciphertext TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE agent_sessions (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), title TEXT NOT NULL,

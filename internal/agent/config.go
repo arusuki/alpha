@@ -3,6 +3,7 @@ package agent
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -14,7 +15,7 @@ type Config struct {
 	Protocol         string `json:"protocol"`
 	Endpoint         string `json:"endpoint"`
 	Model            string `json:"model"`
-	APIKey           string `json:"api_key"`
+	APIKey           string `json:"-"`
 	TimeoutSeconds   int    `json:"timeout_seconds"`
 	ReasoningSummary bool   `json:"reasoning_summary"`
 }
@@ -63,12 +64,25 @@ func (c Config) validate() error {
 }
 
 func (d *Store) agentConfig() (Config, int64, error) {
-	var raw string
+	var raw, encryptedKey string
 	var revision int64
 	var c Config
-	err := d.SQL.QueryRow("SELECT value,revision FROM agent_settings WHERE id=1").Scan(&raw, &revision)
-	if err == nil {
-		err = json.Unmarshal([]byte(raw), &c)
+	err := d.SQL.QueryRow("SELECT value,api_key_ciphertext,revision FROM agent_settings WHERE id=1").Scan(&raw, &encryptedKey, &revision)
+	if err != nil {
+		return c, 0, err
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal([]byte(raw), &fields); err != nil {
+		return c, 0, fmt.Errorf("invalid agent settings: %w", err)
+	}
+	if _, oldKey := fields["api_key"]; oldKey {
+		return c, 0, fmt.Errorf("agent settings contain a plaintext API key; use a new data directory")
+	}
+	if err = json.Unmarshal([]byte(raw), &c); err != nil {
+		return c, 0, fmt.Errorf("invalid agent settings: %w", err)
+	}
+	if encryptedKey != "" {
+		c.APIKey, err = decryptAPIKey(d.Directory, encryptedKey)
 	}
 	return c, revision, err
 }
@@ -138,8 +152,15 @@ func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (obj
 	if err = c.validate(); err != nil {
 		return nil, err
 	}
+	encryptedKey := ""
+	if c.APIKey != "" {
+		encryptedKey, err = encryptAPIKey(d.Directory, c.APIKey)
+		if err != nil {
+			return nil, err
+		}
+	}
 	err = d.Transaction(func(tx *sql.Tx) error {
-		r, err := tx.Exec("UPDATE agent_settings SET value=?,revision=revision+1 WHERE id=1 AND revision=?", httpapi.JSONText(c), revision)
+		r, err := tx.Exec("UPDATE agent_settings SET value=?,api_key_ciphertext=?,revision=revision+1 WHERE id=1 AND revision=?", httpapi.JSONText(c), encryptedKey, revision)
 		if err != nil {
 			return err
 		}
