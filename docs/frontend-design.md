@@ -8,21 +8,7 @@
 
 视觉采用白色表面、靛蓝主色 `#5b55db`、淡紫 `#efedfc`、薄荷绿 `#eaf6ef` 和浅杏色 `#fdf1e6`。统一细边框、圆角、线性图标和低幅度过渡。支持键盘焦点、移动布局及减少动画偏好。
 
-## 欢迎插画
-
-使用内置 image_gen 生成。最终资源：`dist/workspace-art.png`，用于总面板。图标仍以页面原生 SVG 实现。
-
-最终提示词：
-
-```text
-Use case: stylized-concept
-Asset type: decorative illustration in a host-management dashboard welcome panel; project-bound asset.
-Primary request: a refined flat editorial illustration of a small organized computing workspace: stacked server storage blocks, a branching process flow, and one simple intelligent assistant spark, connected as a cohesive abstract system.
-Scene/backdrop: solid very pale lavender #f0efff background, wide 3:2 composition, centered artwork with generous breathing room.
-Style/medium: sophisticated geometric flat vector-like editorial art, crisp solid color blocks, playful but quiet, precise line accents, minimal detail.
-Color palette: indigo #5b55db, pale lavender, mint #bce9d8, soft apricot #f5d4b1, small charcoal accents.
-Constraints: no text, no letters, no logos, no watermark, no people, no photorealism, no 3D rendering, no gradients or heavy shadows. Whole composition visible and uncluttered, suitable at a small display size.
-```
+总面板插画使用 `dist/workspace-art.png`，图标使用页面内的 SVG。
 
 ## 登录开屏
 
