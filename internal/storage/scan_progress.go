@@ -23,12 +23,21 @@ type containerProgress struct {
 	remaining  map[string]int
 }
 
-func newContainerProgress(containers []scanContainer, resources []Resource) *containerProgress {
+func newContainerProgress(containers []scanContainer, resources []Resource, mounts []MountInfo) *containerProgress {
 	p := &containerProgress{containers: map[string]scanContainer{}, paths: map[string][]string{}, pending: map[string]bool{}, ancestors: map[string]bool{}, remaining: map[string]int{}}
+	entrances := stringSet{"/": true}
+	for _, m := range mounts {
+		if !virtualFilesystem(m.FS) {
+			entrances[m.Path] = true
+		}
+	}
 	for _, c := range containers {
 		p.containers[c.ID] = c
 	}
 	for _, r := range resources {
+		if r.accessOnly(entrances) {
+			continue
+		}
 		path := fsutil.Canonical(r.Path)
 		for _, id := range r.Containers {
 			if _, ok := p.containers[id]; ok {
@@ -113,7 +122,10 @@ func (p *containerProgress) addTo(v object, path string) {
 	}
 }
 
-type scanCapacity struct{ Total, Used, Available uint64 }
+type scanCapacity struct {
+	Total, Used, Available uint64
+	Identity               object
+}
 
 func (s *Scanner) observeDevice(dev uint64, path string) {
 	if _, ok := s.devices[dev]; !ok {
@@ -138,7 +150,7 @@ func (s *Scanner) observeDevice(dev uint64, path string) {
 		block = fs.Bsize
 	}
 	if block > 0 && fs.Blocks > 0 && fs.Blocks >= fs.Bfree {
-		s.capacities[dev] = scanCapacity{fs.Blocks * uint64(block), (fs.Blocks - fs.Bfree) * uint64(block), fs.Bavail * uint64(block)}
+		s.capacities[dev] = scanCapacity{fs.Blocks * uint64(block), (fs.Blocks - fs.Bfree) * uint64(block), fs.Bavail * uint64(block), s.filesystemIdentity(dev, path)}
 	}
 }
 

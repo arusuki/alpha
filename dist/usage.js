@@ -6,6 +6,7 @@ const Usage = (() => {
   const UNASSIGNED = '';
   const ownerOf = c => typeof c.owner === 'string' && c.owner.trim() && c.owner.trim() !== '未标注' ? c.owner.trim() : UNASSIGNED;
   const parentPath = path => path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/';
+  const filesystemEntrances = data => new Set(['/', ...data.filesystems.map(fs => fs.mount)]);
   function restore(model) {
     model.inspect = path => {
       const node = resolveNode(model.nodes,path);
@@ -45,7 +46,8 @@ const Usage = (() => {
       if (!resources.has(path)) resources.set(path, new Set());
       for (const id of ids) if (containers.has(id)) resources.get(path).add(id);
     }
-    for (const r of data.resources) addResource(r.path, r.containers);
+    const entrances = filesystemEntrances(data);
+    for (const r of data.resources) if (!(entrances.has(r.path) && r.kinds.includes('bind'))) addResource(r.path, r.containers);
     const membership = new Map();
     function members(path) {
       if (!path || path === '@root') return new Set();
@@ -152,7 +154,11 @@ const Usage = (() => {
   // Sources are reference ranges, not additive slices of container usage.
   function sources(data, model, container) {
     const result = [{label:'可写层', path:container.upper_path, destination:'/', type:'writable', hint:'容器内未挂载的写入'}];
-    for (const m of container.mounts) result.push({label:m.destination, path:['bind','volume'].includes(m.type) ? m.source : null, destination:m.destination, type:m.type, hint:`${m.type} · ${m.rw ? '读写' : '只读'}`});
+    const entrances = filesystemEntrances(data);
+    for (const m of container.mounts) {
+      const accessOnly = m.type === 'bind' && entrances.has(m.source);
+      result.push({label:m.destination, path:['bind','volume'].includes(m.type) ? m.source : null, destination:m.destination, type:m.type, accessOnly, hint:accessOnly ? '宿主机分区入口访问引用 · 不计入容器用量' : `${m.type} · ${m.rw ? '读写' : '只读'}`});
+    }
     const logs = new Set(data.resources.filter(r => r.kinds.includes('container-data') && r.containers.includes(container.id)).map(r => r.path));
     if (container.log_path) logs.add(parentPath(container.log_path));
     for (const path of logs) result.push({label:'日志与元数据', path, destination:path, type:'logs', hint:'宿主机路径 · 包括轮转日志'});

@@ -117,7 +117,7 @@ function renderTask(interval) {
   const directoryRecord=job.trigger==='incremental' && snapshot && job.config && job.config.base_job_id===snapshot.job_id;
   const recordDisks=directoryRecord?diskFilesystems(snapshot.filesystems):[];
   const recordCapacity=directoryRecord?recordDisks.reduce((sum,d)=>sum+d.total,0):null;
-  const available=directoryRecord&&recordDisks.length?recordDisks.reduce((sum,d)=>sum+d.available,0):Number.isFinite(p.capacity_available)?p.capacity_available:null;
+  const capacityDisks=directoryRecord?recordDisks:diskFilesystems(p.capacity_filesystems || []);
   const scanned=directoryRecord?snapshot.tree.allocated:Number.isFinite(p.allocated)?Math.max(0,p.allocated):Math.max(0,job.allocated || 0);
   const capacity=recordCapacity || (Number.isFinite(p.capacity_total)&&p.capacity_total>0&&p.capacity_known!==false?p.capacity_total:null);
   const preparing=p.phase==='discovering' || p.phase==='preparing' || waiting || !p.phase && running;
@@ -127,8 +127,8 @@ function renderTask(interval) {
   const ratio=percent===null?'':percent>0&&percent<0.1?'< 0.1%':`${percent.toLocaleString('zh-CN',{maximumFractionDigits:1})}%`;
   $('taskCountLabel').textContent=preparing?'准备已完成':'累计已扫描';
   $('taskScanned').textContent=preparing?`${preparationDone.toLocaleString('zh-CN')} 项`:fmt(scanned);
-  $('taskCapacity').textContent=preparing?(preparationTotal===null?' / 正在获取总数':` / 共 ${preparationTotal.toLocaleString('zh-CN')} 项`):capacity===null?' / 全盘容量待获取':` / 全盘 ${fmt(capacity)}`;
-  $('taskPercent').textContent=preparing?(percent===null?'准备中':`本阶段 ${ratio}`):capacity===null?'容量未知':`占全盘 ${ratio}`;
+  $('taskCapacity').textContent=preparing?(preparationTotal===null?' / 正在获取总数':` / 共 ${preparationTotal.toLocaleString('zh-CN')} 项`):capacity===null?' / 文件系统总容量待获取':` / 总容量合计 ${fmt(capacity)}`;
+  $('taskPercent').textContent=preparing?(percent===null?'准备中':`本阶段 ${ratio}`):capacity===null?'容量未知':`占总容量 ${ratio}`;
   const meter=$('taskMeter'), fill=$('taskFill');
   meter.classList.toggle('indeterminate',percent===null && (running || waiting));
   // Keep the fill element mounted across polls so CSS can interpolate updates.
@@ -139,9 +139,9 @@ function renderTask(interval) {
   $('taskUsedFill').style.width=`${preparing || capacity===null?0:Math.min(100,Math.max(0,Number(p.capacity_used)||0)/capacity*100)}%`;
   if(percent===null)meter.removeAttribute('aria-valuenow');
   else meter.setAttribute('aria-valuenow',String(Math.min(100,percent)));
-  meter.setAttribute('aria-label',preparing?'当前准备阶段完成进度':'已扫描空间占全盘容量');
-  meter.setAttribute('aria-valuetext',preparing?`准备已完成 ${preparationDone} 项${preparationTotal===null?'，总数待获取':`，共 ${preparationTotal} 项，本阶段 ${ratio}`}，${$('taskPhase').textContent}`:`已扫描 ${fmt(scanned)}${capacity===null?'，全盘容量未知':`，全盘容量 ${fmt(capacity)}，占 ${ratio}`}，${$('taskPhase').textContent}`);
-  $('taskCapacityNote').textContent=preparing?'按已完成的准备事项计数，不代表耗时比例':capacity===null?'正在获取扫描范围内的文件系统容量':`磁盘剩余可用 ${fmt(available)}`;
+  meter.setAttribute('aria-label',preparing?'当前准备阶段完成进度':'已扫描空间占文件系统总容量');
+  meter.setAttribute('aria-valuetext',preparing?`准备已完成 ${preparationDone} 项${preparationTotal===null?'，总数待获取':`，共 ${preparationTotal} 项，本阶段 ${ratio}`}，${$('taskPhase').textContent}`:`已扫描 ${fmt(scanned)}${capacity===null?'，文件系统总容量未知':`，文件系统总容量 ${fmt(capacity)}，占 ${ratio}`}，${$('taskPhase').textContent}`);
+  $('taskCapacityNote').textContent=preparing?'按已完成的准备事项计数，不代表耗时比例':capacity===null?'正在获取扫描范围内的文件系统容量':filesystemCapacityNote(capacityDisks);
   if(!preparing && capacity===null && !running && !waiting)$('taskCapacityNote').textContent='本次任务未提供整盘容量';
   const elapsed=Math.max(0,Math.round((job.finished_at || Date.now()/1000)-(job.started_at || job.created_at)));
   const duration=elapsed<60?`${elapsed} 秒`:`${Math.floor(elapsed/60)} 分 ${elapsed%60} 秒`;
@@ -154,23 +154,24 @@ function renderTask(interval) {
 function renderScanSummary(interval) {
   const filesystems=diskFilesystems(snapshot.filesystems || []);
   const total=filesystems.reduce((sum,d)=>sum+d.total,0);
-  const available=filesystems.length?filesystems.reduce((sum,d)=>sum+d.available,0):null;
+  const dockerDisk=dockerFilesystem(snapshot);
+  const capacityNote=filesystemCapacityNote(filesystems);
   const used=filesystems.reduce((sum,d)=>sum+d.used,0);
   const scanned=snapshot.tree.allocated;
   $('scheduleStatus').textContent=interval?`定时扫描 · ${interval} 分钟`:'手动扫描';
   $('taskMonitor').hidden=false;$('taskMonitor').classList.toggle('busy',false);$('taskMonitor').dataset.status='completed';
   $('taskStatus').textContent='累计扫描结果';$('taskPhase').textContent='已保存';
-  $('taskTarget').textContent=`磁盘剩余可用 ${fmt(available)}`;$('taskTarget').title='';
+  $('taskTarget').textContent=dockerDisk?`Docker 所在文件系统 ${dockerDisk.mount} · 可用 ${fmt(dockerDisk.available)}`:'各文件系统容量与用量';$('taskTarget').title='';
   $('taskContainers').textContent=`${snapshot.containers.length} 个容器 · Host`;
   $('taskCountLabel').textContent='累计已扫描';$('taskScanned').textContent=fmt(scanned);
-  $('taskCapacity').textContent=total?` / 全盘 ${fmt(total)}`:' / 全盘容量未知';
-  $('taskPercent').textContent=total?`占全盘 ${percentLabel(scanned,total)}`:'容量未知';
+  $('taskCapacity').textContent=total?` / 总容量合计 ${fmt(total)}`:' / 文件系统总容量未知';
+  $('taskPercent').textContent=total?`占总容量 ${percentLabel(scanned,total)}`:'容量未知';
   $('taskMeter').classList.toggle('indeterminate',false);
   $('taskFill').style.width=`${percent(scanned,total)}%`;$('taskUsedFill').style.width=`${percent(used,total)}%`;
   $('taskMeter').setAttribute('aria-label','累计已扫描空间');
-  $('taskMeter').setAttribute('aria-valuetext',`累计已扫描 ${fmt(scanned)}，磁盘剩余可用 ${fmt(available)}`);
+  $('taskMeter').setAttribute('aria-valuetext',`累计已扫描 ${fmt(scanned)}，${capacityNote}`);
   if(total)$('taskMeter').setAttribute('aria-valuenow',String(percent(scanned,total)));else $('taskMeter').removeAttribute('aria-valuenow');
-  $('taskCapacityNote').textContent=`磁盘剩余可用 ${fmt(available)}`;
+  $('taskCapacityNote').textContent=capacityNote;
   $('taskProgress').textContent=`已统计 ${(snapshot.tree.files || 0).toLocaleString('zh-CN')} 个文件`;
   $('taskPath').textContent=`记录更新于 ${new Date(snapshot.updated_at || snapshot.finished_at).toLocaleString('zh-CN')}`;$('taskPath').title=$('taskPath').textContent;
 }

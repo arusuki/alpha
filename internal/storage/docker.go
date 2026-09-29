@@ -20,6 +20,23 @@ type Resource struct {
 	Kinds      []string `json:"kinds"`
 	Containers []string `json:"containers"`
 }
+
+// Binding a filesystem entrance grants access, not ownership of the partition.
+func (r Resource) accessOnly(entrances stringSet) bool {
+	return entrances[r.Path] && slices.Contains(r.Kinds, "bind")
+}
+
+// Use the recorded filesystems, never the machine currently viewing a snapshot.
+func (s *Snapshot) filesystemEntrances() stringSet {
+	paths := stringSet{"/": true}
+	for _, fs := range s.Filesystems {
+		if path, ok := fs["mount"].(string); ok && filepath.IsAbs(path) {
+			paths[path] = true
+		}
+	}
+	return paths
+}
+
 type ContainerMount struct {
 	Type        string  `json:"type"`
 	Source      *string `json:"source"`

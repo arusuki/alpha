@@ -10,6 +10,10 @@ const fmt = value => {
 };
 const virtualFilesystemTypes = new Set('proc sysfs devtmpfs devpts tmpfs cgroup cgroup2 securityfs debugfs tracefs pstore mqueue hugetlbfs configfs fusectl autofs binfmt_misc rpc_pipefs nsfs overlay squashfs'.split(' '));
 const diskFilesystems = filesystems => filesystems.filter(d => !virtualFilesystemTypes.has(d.fs));
+const filesystemForPath = (filesystems,path) => typeof path === 'string' ? filesystems.filter(d => path === d.mount || path.startsWith(d.mount.replace(/\/$/,'')+'/')).sort((a,b) => b.mount.length-a.mount.length)[0] : null;
+const dockerFilesystem = data => filesystemForPath(diskFilesystems(data.filesystems),data.docker.root_canonical || data.docker.root);
+const filesystemCapacityNote = filesystems => filesystems.length ? filesystems.map(d => `${d.mount} 可用 ${fmt(d.available)}`).join(' · ') + (filesystems.length > 1 ? '（各文件系统独立，空闲空间不可互用）' : '') : '文件系统可用容量未知';
+const diskIdentityLabel = d => [d.block_device || `设备 ${d.device}`, ...(d.physical_disks || []).map(p => `${p.device}${p.model ? ' · '+p.model : ''}`)].join(' · ');
 const containerStates = {running:'运行中',exited:'已停止',created:'未启动',paused:'已暂停',restarting:'重启中',removing:'移除中',dead:'异常'};
 let snapshot = null, usage = null, selected = null, query = '', ownerFilter = null, stateFilter = 'all', sortOrder = 'total-desc', tablePage = 0;
 const pageSize = 25;
@@ -88,14 +92,15 @@ function renderStorageOverview() {
   const all = [...usage.containers.values()].sort((a,b) => b.exclusive-a.exclusive);
   const total = snapshot.tree.allocated;
   const disks = diskFilesystems(snapshot.filesystems);
+  const dockerDisk = dockerFilesystem(snapshot);
   const segments = all.filter(r => r.exclusive > 0).map(r => ({name:r.container.name,bytes:r.exclusive,color:containerColors.get(r.container.id),id:r.container.id}));
   segments.push({name:'容器共享',bytes:usage.shared,color:'#9472cd',className:'shared-fill'}, {name:'Host · 未关联容器',bytes:usage.unrelated,color:'#72849f',host:true});
   const capacity = disks.reduce((sum,d) => sum+d.total,0);
   const available = disks.reduce((sum,d) => sum+d.available,0);
-  $('storageOverview').innerHTML = `<div class="panel-heading"><div><span class="eyebrow">STORAGE OVERVIEW</span><h2>磁盘空间分布</h2><p>从整盘到容器与宿主机，找到空间的去向</p></div><div class="capacity-total"><strong>${fmt(disks.length ? capacity : null)}</strong><span>已发现磁盘文件系统总容量 · 可用 ${fmt(disks.length ? available : null)}</span></div></div>
+  $('storageOverview').innerHTML = `<div class="panel-heading"><div><span class="eyebrow">STORAGE OVERVIEW</span><h2>磁盘空间分布</h2><p>${dockerDisk ? `Docker 数据目录位于 ${esc(dockerDisk.mount)} · 该文件系统可用 ${fmt(dockerDisk.available)}` : '按文件系统查看容量与剩余空间'}</p></div><div class="capacity-total"><span>${disks.length} 个文件系统 · 总容量合计</span><strong>${fmt(disks.length ? capacity : null)}</strong><span>剩余可用合计 ${fmt(disks.length ? available : null)} · 空闲空间按文件系统独立使用</span></div></div>
     <div class="filesystem-grid">${disks.map(d => {
       const reserved = Math.max(0,d.total-d.used-d.available), denominator = Math.max(d.total,d.used+d.available);
-      return `<article class="filesystem-card"><div class="filesystem-heading"><div><span class="disk-icon" aria-hidden="true">▤</span><strong class="mono">${esc(d.mount)}</strong><span class="sub">${esc(d.fs)} · ${fmt(d.total)}</span></div><strong>${percentLabel(d.used,d.total)}<small>已用</small></strong></div><div class="capacity-bar" role="img" aria-label="${esc(d.mount)}：已用 ${fmt(d.used)}，可用 ${fmt(d.available)}，保留 ${fmt(reserved)}"><span style="width:${percent(d.used,denominator)}%;background:#4361d8"></span><span class="reserved-fill" style="width:${percent(reserved,denominator)}%"></span></div><div class="capacity-labels"><span><i style="--swatch:#4361d8"></i>已用 ${fmt(d.used)}</span><span>可用 ${fmt(d.available)}${reserved ? ` · 保留 ${fmt(reserved)}` : ''}</span></div></article>`;
+      return `<article class="filesystem-card"><div class="filesystem-heading"><div><span class="disk-icon" aria-hidden="true">▤</span><strong class="mono">${esc(d.mount)}${d === dockerDisk ? ' · Docker' : ''}</strong><span class="sub">${esc(d.fs)} · 总容量 ${fmt(d.total)}</span></div><strong>${percentLabel(d.used,d.total)}<small>已用</small></strong></div><p class="filesystem-device">${esc(diskIdentityLabel(d))}</p><div class="capacity-bar" role="img" aria-label="${esc(d.mount)}：已用 ${fmt(d.used)}，可用 ${fmt(d.available)}，保留 ${fmt(reserved)}"><span style="width:${percent(d.used,denominator)}%;background:#4361d8"></span><span class="reserved-fill" style="width:${percent(reserved,denominator)}%"></span></div><div class="capacity-labels"><span><i style="--swatch:#4361d8"></i>已用 ${fmt(d.used)}</span><span>可用 ${fmt(d.available)}${reserved ? ` · 保留 ${fmt(reserved)}` : ''}</span></div></article>`;
     }).join('') || '<p class="empty">未取得整盘容量，下面展示已扫描的空间。</p>'}</div>
     <div class="attribution"><div class="attribution-heading"><h3>已扫描空间 · 按容器归属</h3><strong>${fmt(total)}</strong></div><div class="attribution-bar" aria-label="已扫描空间分布">${segments.filter(s => s.bytes>0).map(s => {
       const title = `${s.name}${s.id ? ' · 独占' : ''}：${fmt(s.bytes)} · ${percentLabel(s.bytes,total)}${s.id || s.host ? '，点击查看明细' : ''}`;
@@ -195,7 +200,7 @@ function renderDetail() {
 function renderExplorer() {
   const sources = explorerSources(), source = sources[explorer.source];
   if (!source) return;
-  $('storageSources').innerHTML = sources.map((s,index) => `<button class="source-button ${index === explorer.source ? 'active' : ''}" data-storage-source="${index}" aria-pressed="${index === explorer.source}"><span><i aria-hidden="true">${s.type === 'writable' ? '▣' : s.type === 'logs' ? '≡' : '▱'}</i><b>${esc(s.label)}</b></span><strong>${fmt(s.known ? (s.bytes != null ? s.bytes : s.node.allocated) : null)}</strong><small>${esc(s.hint)}${s.partial ? ' · 部分统计' : ''}</small></button>`).join('');
+  $('storageSources').innerHTML = sources.map((s,index) => `<button class="source-button ${index === explorer.source ? 'active' : ''}" data-storage-source="${index}" aria-pressed="${index === explorer.source}"><span><i aria-hidden="true">${s.type === 'writable' ? '▣' : s.type === 'logs' ? '≡' : '▱'}</i><b>${esc(s.label)}</b></span><strong>${s.accessOnly ? '仅访问' : fmt(s.known ? (s.bytes != null ? s.bytes : s.node.allocated) : null)}</strong><small>${esc(s.hint)}${s.partial ? ' · 部分统计' : ''}</small></button>`).join('');
   if (!source.known) {
     const reason = source.type === 'writable' ? usage.containers.get(selected.id).writable.reason : source.node && source.node.reason;
     $('explorerContent').innerHTML = `<div class="explorer-empty"><span aria-hidden="true">▱</span><h3>此来源暂无可读取的目录明细</h3><p>${esc(reason || (source.path ? '该路径未保留在扫描结果中，或存在权限不足、排除项。' : '未采集到该来源的持久磁盘路径。'))}</p><p>用量为未知；可选择其他来源，或调整扫描范围后重新扫描。</p>${source.path ? `<p class="mono">${esc(source.path)}</p>` : ''}</div>`;
@@ -212,7 +217,7 @@ function renderExplorer() {
     explorer.focusKey = null;
   }
   const isDirectory = ['directory','root'].includes(node.kind);
-  const title = source.type === 'host' ? '宿主机目录明细' : source.type === 'writable' ? '可写层目录明细' : source.type === 'logs' ? '日志目录明细' : isDirectory ? '挂载目录明细' : '挂载文件明细';
+  const title = source.accessOnly ? '宿主机访问范围 · 不计入容器用量' : source.type === 'host' ? '宿主机目录明细' : source.type === 'writable' ? '可写层目录明细' : source.type === 'logs' ? '日志目录明细' : isDirectory ? '挂载目录明细' : '挂载文件明细';
   $('explorerContent').innerHTML = `<div class="explorer-title"><div><h3>${title}</h3><p>面积代表实际占用 · 点击目录进入，点击灰块扫描</p></div><strong>${fmt(node.size_unknown ? null : explorerSize(node).allocated)}<small>${hostOnly() ? '当前范围 · 未关联容器' : node.kind === 'root' ? '全部已扫描' : isDirectory ? '当前目录' : '当前文件'}</small></strong></div>
     <nav class="explorer-breadcrumbs" aria-label="目录路径"><button data-storage-up ${explorer.trail.length < 2 ? 'disabled' : ''} aria-label="返回上级目录">↑</button>${explorer.trail.map((step,index) => `<span aria-hidden="true">/</span><button data-storage-crumb="${index}" ${index === explorer.trail.length-1 ? 'aria-current="location"' : ''}>${esc(index === 0 ? source.label : step.label)}</button>`).join('')}</nav>
     <p class="explorer-path mono" title="${esc(node.kind === 'root' ? '本次扫描覆盖的路径' : node.path)}">${['host','logs'].includes(source.type) ? '宿主机' : '容器内'}：${esc(current.display)}</p>

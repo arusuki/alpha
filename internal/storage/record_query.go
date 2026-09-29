@@ -159,15 +159,16 @@ func (s *Service) Query(id, operation string, fields map[string]json.RawMessage)
 			}
 			c := row.Container
 			sources := []object{}
+			entrances := t.snapshot.filesystemEntrances()
 			for _, r := range t.snapshot.Resources {
 				for _, id := range r.Containers {
 					if id == c.ID {
-						sources = append(sources, object{"path": r.Path, "kinds": r.Kinds, "referencing_containers": r.Containers, "node": nodeSummary(t.usage.resolve(r.Path))})
+						sources = append(sources, object{"path": r.Path, "kinds": r.Kinds, "access_only": r.accessOnly(entrances), "referencing_containers": r.Containers, "node": nodeSummary(t.usage.resolve(r.Path))})
 						break
 					}
 				}
 			}
-			return object{"snapshot_id": t.snapshot.JobID, "observed_at": t.snapshot.FinishedAt, "usage": row, "sources": sources, "note": "挂载源可能共享或互相包含，不能直接把 sources 相加"}, nil
+			return object{"snapshot_id": t.snapshot.JobID, "observed_at": t.snapshot.FinishedAt, "usage": row, "sources": sources, "note": "挂载源可能共享或互相包含，不能直接把 sources 相加；access_only 为宿主机分区入口访问引用，其容量不属于容器用量"}, nil
 
 		case "directory", "nodes", "host_directory", "host_nodes":
 			job, err := s.Job(id)

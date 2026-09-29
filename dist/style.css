@@ -80,3 +80,5 @@ button.danger{color:#b42318;border-color:#f1b8b3}button.danger:hover:not(:disabl
 
 .agent-entry-actions{align-items:flex-end}.agent-concurrency-field{font-size:.68rem;color:var(--muted);gap:5px}.agent-concurrency-field input{width:84px;min-height:34px;padding:6px 9px;font-size:.78rem}.agent-run-config{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;margin:0 0 10px}.agent-run-config .agent-concurrency-field{display:flex;flex-direction:row;align-items:center;gap:10px}.agent-run-config small{font-size:.65rem;align-self:center}.agent-run-config>button{font-size:.7rem;padding:7px 10px;margin-left:auto}.agent-concurrency-status{font-size:.62rem;color:var(--muted);margin:0 10px 10px;line-height:1.7}
 @media(max-width:700px){.agent-run-config{gap:6px}.agent-run-config .agent-concurrency-field{font-size:.63rem;gap:6px}.agent-run-config .agent-concurrency-field input{width:58px}.agent-run-config small{display:none}.agent-run-config>button{font-size:.64rem;padding:6px}.agent-sidebar .agent-concurrency-status{display:none}}
+
+.filesystem-device{font-size:.72rem;color:var(--muted);overflow-wrap:anywhere;margin:-6px 0 12px}

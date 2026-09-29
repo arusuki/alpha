@@ -93,7 +93,7 @@ func scanPhysical(ctx context.Context, request helperRequest, progress func(obje
 			p = filepath.Dir(p)
 		}
 	}
-	s.ContainerProgress = newContainerProgress(request.Containers, request.Resources)
+	s.ContainerProgress = newContainerProgress(request.Containers, request.Resources, s.Mounts)
 	if request.AnalyzeFiles {
 		s.Analysis = newFileAnalysis()
 	}

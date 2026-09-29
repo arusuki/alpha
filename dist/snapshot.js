@@ -29,6 +29,9 @@ const SnapshotData = (() => {
       for (const m of c.mounts) if (!m || typeof m.type !== 'string' || typeof m.destination !== 'string' || (m.source != null && typeof m.source !== 'string')) throw Error('容器挂载格式无效。');
     }
     for (const d of data.filesystems) if (!d || !bytes(d.total) || !bytes(d.used) || !bytes(d.available) || (d.scanned !== null && !bytes(d.scanned)) || (d.unexplained !== null && !Number.isFinite(d.unexplained))) throw Error('文件系统容量格式无效。');
+    for (const d of data.filesystems) {
+      if (d.block_device !== undefined && typeof d.block_device !== 'string' || d.physical_disks !== undefined && (!Array.isArray(d.physical_disks) || d.physical_disks.some(p => !p || typeof p.device !== 'string' || !p.device.startsWith('/dev/') || typeof p.model !== 'string'))) throw Error('文件系统磁盘信息格式无效。');
+    }
     for (const w of data.warnings) if (!w || typeof w.message !== 'string') throw Error('扫描警告格式无效。');
     report({stage:'validate',done:count,total:count,unit:'节点',detail:'目录、容器、挂载与容量校验完成'});
     return data;

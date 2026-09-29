@@ -21,6 +21,20 @@ assert(element('storageOverview').innerHTML.includes(`可用 ${run('fmt(sample.f
 assert(!element('storageOverview').innerHTML.includes('/run'));
 assert(element('diskAccounting').innerHTML.includes('/run'),'virtual filesystem accounting remains visible');
 run('sample.filesystems.pop();load(sample,"test")');
+// Two partitions on one disk keep separate capacity; Docker follows its mount.
+run(`var originalDisks=sample.filesystems;var originalDocker=sample.docker;
+sample.filesystems=[
+ {device:'1',mount:'/',fs:'ext4',block_device:'/dev/nvme0n1p1',physical_disks:[{device:'/dev/nvme0n1',model:'Example SSD'}],total:1000,used:900,available:50,scanned:0,unexplained:900},
+ {device:'2',mount:'/data',fs:'ext4',block_device:'/dev/nvme0n1p2',physical_disks:[{device:'/dev/nvme0n1',model:'Example SSD'}],total:2000,used:100,available:1800,scanned:0,unexplained:100}];
+sample.docker={id:'test',endpoint:'unix:///var/run/docker.sock',root:'/data/docker',root_canonical:'/data/docker'};load(sample,'two partitions');`);
+assert(element('storageOverview').innerHTML.includes('2 个文件系统 · 总容量合计'));
+assert(element('storageOverview').innerHTML.includes('Docker 数据目录位于 /data · 该文件系统可用 1.76 KiB'));
+assert(element('storageOverview').innerHTML.includes('/dev/nvme0n1p1'));
+assert(element('storageOverview').innerHTML.includes('/dev/nvme0n1p2'));
+assert(element('storageOverview').innerHTML.includes('Example SSD'));
+assert.equal(run("filesystemForPath(sample.filesystems,'/database').mount"),'/','mount matching must respect path boundaries');
+assert.equal(run("filesystemForPath(sample.filesystems,'/data/docker').mount"),'/data');
+run('sample.filesystems=originalDisks;sample.docker=originalDocker;load(sample,"test")');
 assert.equal(element('containerCount').textContent,3);
 assert(element('ownerRanking').innerHTML.includes('96 GiB'));
 assert(element('tableBody').innerHTML.indexOf('yuuka-train')<element('tableBody').innerHTML.indexOf('lin-notebook'));

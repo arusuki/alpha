@@ -54,6 +54,9 @@ func TestPhysicalProgressTracksSharedContainersAndCapacity(t *testing.T) {
 		if v["capacity_known"] != true || v["capacity_total"] != wantCapacity {
 			t.Fatalf("capacity missing or repeated for overlapping paths: %v", v)
 		}
+		if rows := v["capacity_filesystems"].([]object); len(rows) != 1 || rows[0]["total"] != wantCapacity {
+			t.Fatalf("per-filesystem capacity missing or repeated: %v", rows)
+		}
 		allocated, done, remaining := v["allocated"].(int64), v["containers_done"].(int), v["containers_remaining"].(int)
 		if allocated < lastBytes || done < lastDone || done+remaining != 2 {
 			t.Fatalf("non-monotonic byte or container progress: %v", v)
@@ -69,6 +72,9 @@ func TestPhysicalProgressTracksSharedContainersAndCapacity(t *testing.T) {
 		hostSeen = hostSeen || v["phase"] == "host" && len(current) == 0
 	}
 	last := events[len(events)-1]
+	if last["capacity_available"] != r.Filesystems[0]["available"] {
+		t.Fatalf("final progress did not refresh remaining capacity: %v / %v", last, r.Filesystems)
+	}
 	if !sharedSeen || !aliceSeen || !hostSeen || lastDone != 2 || lastBytes != r.Tree.Allocated || last["phase"] != "summarizing" {
 		t.Fatalf("missing scan phase or final progress: shared=%v alice=%v host=%v last=%v", sharedSeen, aliceSeen, hostSeen, last)
 	}

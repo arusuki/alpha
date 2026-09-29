@@ -113,8 +113,11 @@ func buildUsage(s *Snapshot) *usageIndex {
 			}
 		}
 	}
+	entrances := s.filesystemEntrances()
 	for _, r := range s.Resources {
-		add(r.Path, r.Containers)
+		if !r.accessOnly(entrances) {
+			add(r.Path, r.Containers)
+		}
 	}
 	// Incomplete observations affect descendants. Folded references are checked
 	// separately: a Host-to-Host hard link does not make ownership unknown.

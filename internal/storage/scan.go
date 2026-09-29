@@ -180,6 +180,7 @@ func (s *Scanner) report(path string, force bool) error {
 		}
 		v := object{"phase": phase, "backend": backend, "path": path, "entries": s.Visited, "allocated": s.Allocated, "errors": s.ErrorCount, "elapsed": float64(time.Since(s.started).Milliseconds()) / 1000, "capacity_total": total, "capacity_used": used, "capacity_available": available, "capacity_known": len(s.capacities) > 0}
 		v["scan_mode"], v["gomaxprocs"] = s.Config.ScanMode, runtime.GOMAXPROCS(0)
+		v["capacity_filesystems"] = s.capacityFilesystems()
 		s.ContainerProgress.addTo(v, path)
 		if path == "" {
 			v["phase"], v["path"] = "summarizing", "汇总扫描结果与容器归属"
@@ -563,7 +564,6 @@ func (s *Scanner) filesystems() []object {
 			s.recordError(path, fmt.Errorf("filesystem capacity: %w", err))
 			continue
 		}
-		mount, fs := s.mountForPath(path)
 		block := v.Frsize
 		if block == 0 {
 			block = v.Bsize
@@ -571,7 +571,13 @@ func (s *Scanner) filesystems() []object {
 		b := uint64(block)
 		used := int64((v.Blocks - v.Bfree) * b)
 		scanned := s.deviceAllocated[dev]
-		result = append(result, object{"device": strconv.FormatUint(dev, 10), "mount": mount, "fs": fs, "total": v.Blocks * b, "used": used, "available": v.Bavail * b, "reserved": (v.Bfree - v.Bavail) * b, "scanned": scanned, "unexplained": used - scanned})
+		row := s.filesystemIdentity(dev, path)
+		row["total"], row["used"], row["available"] = v.Blocks*b, used, v.Bavail*b
+		row["reserved"], row["scanned"], row["unexplained"] = (v.Bfree-v.Bavail)*b, scanned, used-scanned
+		if _, ok := s.capacities[dev]; ok {
+			s.capacities[dev] = scanCapacity{v.Blocks * b, uint64(used), v.Bavail * b, s.capacities[dev].Identity}
+		}
+		result = append(result, row)
 	}
 	return result
 }

@@ -9,6 +9,7 @@ const resource = (path, containers, kinds=['bind']) => ({path,containers,kinds})
 const data = (children, containers, resources=[]) => ({
   tree:node('@root',children.reduce((sum,n)=>sum+n.allocated,0),children,{kind:'root'}), containers,
   scan:{omitted_references:0},
+  filesystems:[],
   resources:[...resources,...containers.flatMap(c=>[
     ...(c.upper_path?[resource(c.upper_path,[c.id],['writable'])]:[]),
     ...c.mounts.filter(m=>['bind','volume'].includes(m.type)&&m.source).map(m=>resource(m.source,[c.id],[m.type])),
@@ -25,7 +26,48 @@ assert.equal(result.shared,696*gib);
 assert.equal(result.crossOwner,696*gib);
 assert.equal(result.unrelated,8*gib);
 conserved(demo,result);
+// Host-root binds (read-only or writable) convey access, not disk ownership.
+for (const rw of [false,true]) {
+  const s = JSON.parse(JSON.stringify(demo));
+  const baseline = Usage.build(s), c = s.containers[0];
+  c.mounts.push({type:'bind',source:'/',destination:'/run/host',rw});
+  s.resources.push(resource('/',[c.id],['host','bind']));
+  const actual = Usage.build(s);
+  for (const field of ['exclusive','shared','unrelated','crossOwner']) assert.equal(actual[field],baseline[field]);
+  for (const [id,row] of actual.containers) for (const field of ['exclusive','shared','known','partial']) assert.equal(row[field],baseline.containers.get(id)[field]);
+  const source = Usage.sources(s,actual,c).find(s=>s.destination==='/run/host');
+  assert(source.accessOnly);assert(source.hint.includes('不计入容器用量'));
+  conserved(s,actual);
+}
 // Parent/child mounts: only their intersection is shared, including collapsed bytes.
+// Partition entrances are discovered from the snapshot, regardless of path or RW.
+for (const entrance of ['/boot/efi','/data','/mnt/arbitrary partition']) for (const rw of [false,true]) {
+  const directory=entrance+'/app-data', other=entrance+'-other';
+  const s=data([node(entrance,100,[node(directory,30)]),node(other,20),node('/upper',10)],
+    [container('monitor','ops','/upper'),container('app','alice',null,[mount(directory),mount(other)])]);
+  s.filesystems=[{mount:entrance,fs:'ext4'}];
+  const baseline=Usage.build(s), monitor=s.containers[0];
+  monitor.mounts.push({...mount(entrance),rw});
+  s.resources.push(resource(entrance,['monitor']));
+  const actual=Usage.build(s);
+  for(const field of ['exclusive','shared','unrelated','crossOwner']) assert.equal(actual[field],baseline[field]);
+  assert.equal(actual.containers.get('monitor').exclusive,10);
+  assert.equal(actual.containers.get('app').exclusive,50);
+  assert.equal(actual.unrelated,70);
+  assert.deepEqual(actual.owners,baseline.owners);
+  assert(Usage.sources(s,actual,monitor).find(source=>source.path===entrance).accessOnly);
+  assert(Usage.sources(s,actual,s.containers[1]).filter(source=>source.type==='bind').every(source=>!source.accessOnly));
+  conserved(s,actual);
+  // Removing a mount-table entry makes this an ordinary bind again.
+  s.filesystems=[];
+  assert.equal(Usage.build(s).containers.get('monitor').exclusive,80);
+  // Named volumes at the same path retain their ownership semantics.
+  s.filesystems=[{mount:entrance,fs:'ext4'}];
+  s.resources[s.resources.length-1].kinds=['volume'];
+  monitor.mounts[0].type='volume';
+  assert.equal(Usage.build(s).containers.get('monitor').exclusive,80);
+  assert(!Usage.sources(s,Usage.build(s),monitor).find(source=>source.path===entrance).accessOnly);
+}
 let fixture = data([node('/data',100,[node('/data/models',60)])],[container('a','alice','/data'),container('b','bob','/data/models')]);
 result=Usage.build(fixture);
 assert.equal(result.containers.get('a').exclusive,40);
