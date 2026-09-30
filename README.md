@@ -8,6 +8,7 @@
 - `cmd/rootless-docker`、`internal/rootless`：独立 rootless Docker 管理命令、socket 热挂载和交互测试容器；不接入 Web。
 - `internal/app`：命令分发、模块装配和 HTTP 服务生命周期。
 - `internal/cluster`：节点注册与身份核验、总控代理、权限授权、跨节点容器统计和 API-only worker 入口。
+- `internal/registry`：公网注册入口、control 出站长连接、持久身份绑定、注册会话与实时进度。
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
 - `internal/agent`：模型配置与凭据、Responses/Chat Completions 适配、分析会话、工具定义与编排，以及独立 API 和数据表。
@@ -18,7 +19,7 @@
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
 - `dist`：网页资源及 Go 嵌入声明；`tests`：前端回归和共享测试数据。Go 测试与所属包放在一起。
 
-应用层按 `--control` / `--worker` 装配模块：总控运行集群、使用者管理和 Agent，node 运行存储、容器和进程；平台完成会话与请求校验后，通过 `platform.Module` 分发业务请求。各模块的数据表由各自维护的 `schema.sql` 定义，在同一事务中初始化。Agent 通过 `agent.Records` 的远程实现调用所选 node 的 `storage.Service`；模型配置和对话均保存在总控，节点只执行工具能力。Agent 生命周期和完成状态重试独立于扫描管理器。
+应用层按 `--control` / `--worker` / `--registry` 装配模块：总控运行集群、使用者管理和 Agent，worker 运行存储、容器和进程，registry 提供公网注册入口。平台完成会话与请求校验后，通过 `platform.Module` 分发业务请求。各模块的数据表由各自维护的 `schema.sql` 定义，在同一事务中初始化。Agent 通过 `agent.Records` 的远程实现调用所选 node 的 `storage.Service`；模型配置和对话均保存在总控，节点只执行工具能力。Agent 生命周期和完成状态重试独立于扫描管理器。
 
 Web 的快照、变更读取和目录探索，以及 Agent 的查询工具，共用 `storage.Service`。探索使用原记录 ID、`revision` 和 1–32 层 `depth`，发布到同一条记录；两边都能读到最新已提交版本。目录文件统计也随记录持久化，不维护 Agent 私有的目录快照或缓存。详见 [记录读取与探索](docs/records.md)。
 
@@ -37,13 +38,43 @@ go build -o bin/project-alpha ./cmd/project-alpha
 ./bin/project-alpha --worker --data-dir ./node-data --host 0.0.0.0 --port 8766
 ```
 
-打开总控 <http://127.0.0.1:8765> 创建管理员，在“集群总控 → 添加 node”填写节点名称、总控可访问的 API 地址及令牌。然后进入节点的“存储 → 扫描配置”开始扫描。node 不提供网页、登录或注册入口。未指定模式时启动总控；`--control` 和 `--worker` 互斥。
+打开总控 <http://127.0.0.1:8765> 创建管理员，在“集群总控 → 添加 node”填写节点名称、总控可访问的 API 地址及令牌。然后进入节点的“存储 → 扫描配置”开始扫描。worker 不提供网页、登录或注册入口。未指定模式时启动总控；`--control`、`--worker` 和 `--registry` 互斥。
 
 自动生成的令牌包含 256 位随机熵（64 位十六进制字符），以 0600 权限保存在节点数据目录的 `worker-token` 文件中，重启时复用，原地址恢复后无需重新登记。需要自行指定令牌时，可通过 `--worker-token-file ./node-token`（建议文件权限 0600）或 `PROJECT_ALPHA_WORKER_TOKEN` 提供；指定文件时以文件为准，显式提供的令牌不打印。
 
 浏览器只连接总控，全部节点请求由总控认证并代理。只读账号可查看所有节点；“集群使用者”统一登记机器使用者，“使用者容器”按使用者、节点和容器统计。详细部署、权限和 API 说明见 [集群管理](docs/cluster.md)。
 
 管理员在总控配置“Agent 设置 → API Key 与模型”后，可在空间用量页分别生成 Host 和容器空间报告。Host 报告分析显式配置的宿主机扫描根中未关联容器的物理空间；容器报告排查挂载、可写层和其他容器资源。两类报告分别显示分析记录、分组 Agent 与清理提取入口，支持查看证据、追问、停止和导出 Markdown。分析按需补查文件元数据，不执行清理。详见 [Agent 分析设计与接口](docs/agent.md)。
+
+## 公网 registry
+
+registry 部署在公网 HTTPS 域名，control 可以完全位于内网。连接方向为 **control → registry**：control 主动建立带认证的 WebSocket 长连接，registry 在同一连接中发送邀请码校验、注册和进度查询。control 不需要公网入站端口。一个 control 可连接多个 registry；每个 registry 在首次认证连接时将 control 的实例 ID 持久写入自身数据目录，此后只接受同一 control，包括断线重连和服务重启；换绑须使用新的 registry 数据目录，原目录不会被覆盖。
+
+为同一 control 及其 registry 准备相同的强随机连接令牌（32–256 位非空白 ASCII 字符，推荐 `openssl rand -hex 32`），保存到权限为 0600 的文件。此令牌独立于用户访问路径中的 `REG_PASS`。公网机器启动：
+
+```bash
+REG_PASS=Ab3dE6gH ./bin/project-alpha --registry \
+  --data-dir ./registry-data --port 8767 \
+  --registry-token-file ./registry-token \
+  --allowed-host register.example.com --secure-cookie
+```
+
+`REG_PASS` 必须恰好是 8 位 ASCII 字母或数字，也可通过 `--reg-pass-file` 提供。为域名配置 [registry nginx 示例](deploy/nginx-registry.conf.example)，代理到本机 8767。systemd 示例见 [registry 单元](deploy/project-alpha-registry.service)。
+
+在内网 control 启动时指定公网 registry 地址；每个地址独立维持心跳并在断线后退避重连：
+
+```bash
+./bin/project-alpha --control --data-dir ./control-data \
+  --registry-token-file ./registry-token \
+  --registry-url https://register.example.com \
+  --registry-url https://register-backup.example.com
+```
+
+连接令牌也可由 `PROJECT_ALPHA_REGISTRY_TOKEN` 提供；指定文件时以文件为准。公网地址必须使用 HTTPS，仅本机联调允许 `http://127.0.0.1:端口`。registry 不作为计算 worker 添加到集群节点列表，也不会获得管理 API 权限。
+
+管理员在 control 配置注册字段、邀请码、Tailscale 凭据与共享节点池、跳板账号和 worker 容器配置后，向用户提供 `https://register.example.com/registry/Ab3dE6gH/<邀请码>`。根路径、错误密码、失效邀请码及未经验证的资源/API 请求直接断开连接，不提供默认界面。control 离线时无法验证新邀请码，入口仅返回连接不可用错误。
+
+邀请码向 control 校验通过后显示注册表单。用户提交用户名、公钥及自定义字段，页面通过 SSE 实时显示注册、网络分享、公钥和各 worker 容器的分配状态；Tailscale 链接一旦生成即展示。失败项可请求重试，结果未知的分享由管理员核对，避免重复分享。注册会话保留 7 天，刷新或 registry 重启可以继续查看；已提交但回复丢失的注册使用同一资源令牌恢复，不重复消耗邀请码。会话和 control 绑定保存在 registry 自己的数据目录中。
 
 ## 配置与数据
 
@@ -57,7 +88,7 @@ go build -o bin/project-alpha ./cmd/project-alpha
 
 总控 SQLite 保存账号、使用者、节点连接（含节点令牌）以及 Agent 配置、会话和报告，node SQLite 保存各自扫描配置、任务、容器和审计；Agent API Key 加密后存入总控 SQLite，密钥保存在总控数据目录的 `agent-api-key.key`。扫描结果保存在 `data/results/`。目录增量更新按节点写入 SQLite，取消时保留已提交的明细。历史记录可在网页删除；备份时停止服务并复制整个数据目录，包括密钥文件。
 
-1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v19、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
+1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v20、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
 
 独立扫描示例：
 
@@ -190,6 +221,8 @@ for test in tests/test_*.js; do node "$test" || exit; done
 ```
 
 使用者注册端到端回归：`python3 tests/test_members_browser.py` 会构建并启动使用临时数据目录的本机服务，验证管理员字段配置、邀请码页面管理、公开注册、配额、权限隔离和移动端布局；不操作 Docker。
+
+公网注册回归：`go test -race ./internal/registry ./internal/cluster ./internal/app` 验证出站连接、多 registry、持久身份锁定、静默入口、注册恢复和真实进度流；`python3 tests/test_registry_browser.py` 验证实际服务的注册表单、进度、分享链接、刷新和移动端布局。测试使用模拟资源结果，不调用真实 Tailscale 或 Docker。
 
 使用者状态页回归：`python3 tests/test_status_browser.py` 使用本机模拟 API，验证令牌、已有/未分配/离线节点、创建成功与失败、重复点击、退出时的在途请求和移动布局；后端身份隔离与同步申请由 `go test -race ./internal/cluster` 验证。
 

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>注册 · Project Alpha</title>
+  <link rel="stylesheet" href="{{.Base}}/style.css">
+  <script defer src="{{.Base}}/app.js"></script>
+</head>
+<body data-base="{{.Base}}">
+<main>
+  <div class="eyebrow">PROJECT ALPHA / REGISTRY</div>
+  <h1>开启你的工作空间</h1>
+  <p class="intro">邀请码已验证。完成集群使用者注册后，我们将为你准备网络访问和计算资源。</p>
+  <p id="message" role="status" aria-live="polite">正在载入注册信息…</p>
+  <form id="registration" hidden>
+    <label>使用者标识<input name="username" required minlength="3" maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="username" placeholder="例如 alice"></label>
+    <p class="hint">以小写字母开头，3–32 位字母、数字、下划线或短横线。</p>
+    <div id="fields"></div>
+    <label>SSH 公钥<textarea name="ssh_public_key" required rows="3" maxlength="16384" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
+    <p class="hint">粘贴你的 SSH 公钥，用于访问工作空间。</p>
+    <button type="submit" id="submit">开始注册</button>
+  </form>
+  <section id="progress" hidden aria-labelledby="progressTitle">
+    <h2 id="progressTitle">正在准备你的工作空间</h2>
+    <div class="progress-heading"><span id="summary">正在读取分配进度</span><span id="percent">0%</span></div>
+    <progress id="bar" max="100" value="0" aria-label="资源分配进度"></progress>
+    <ol id="steps" aria-live="polite"></ol>
+    <button type="button" id="retry" hidden>重试未完成的分配</button>
+  </section>
+  <section id="share" hidden>
+    <h2>Tailscale 分享链接已就绪</h2>
+    <p>打开链接并接受邀请，即可加入分配给你的网络节点。</p>
+    <a id="shareLink" target="_blank" rel="noopener noreferrer">打开 Tailscale 分享链接 ↗</a>
+    <button type="button" id="copy">复制链接</button>
+    <p id="access" class="hint"></p>
+  </section>
+  <button type="button" id="resume" hidden>继续查询注册结果</button>
+  <footer>本页可刷新恢复进度，请保留当前浏览器中的注册会话。</footer>
+</main>
+</body>
+</html>

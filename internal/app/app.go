@@ -11,12 +11,14 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	web "project-alpha/dist"
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
+	"project-alpha/internal/registry"
 	"project-alpha/internal/storage"
 )
 
@@ -60,7 +62,7 @@ func Run(ctx context.Context, args []string) error {
   project-alpha <子命令> [选项]
 
 子命令：
-  serve              启动总控 Web 服务（默认）或 API-only worker
+  serve              启动总控（默认）、API-only worker 或公网 registry
   containers import  扫描并接管已有 Docker 容器，写入所在节点的 worker 数据目录
   scan               独立扫描存储并导出 JSON 快照
   process            采集容器进程或回放事件，导出 JSON 进程树
@@ -85,8 +87,13 @@ func Run(ctx context.Context, args []string) error {
 	p.StringVar(&directory, "data-dir", directory, "当前服务的数据目录；默认取 PROJECT_ALPHA_DATA_DIR，否则为 data；总控和各节点须使用独立目录")
 	host := p.String("host", "127.0.0.1", "监听地址")
 	port := p.Int("port", 8765, "HTTP 端口")
-	control := p.Bool("control", false, "启动集群总控 Web 服务（默认）；与 --worker 互斥")
-	worker := p.Bool("worker", false, "启动 API-only 节点；与 --control 互斥")
+	control := p.Bool("control", false, "启动集群总控 Web 服务（默认）；与 --worker、--registry 互斥")
+	worker := p.Bool("worker", false, "启动 API-only 节点；与 --control、--registry 互斥")
+	registryMode := p.Bool("registry", false, "启动公网注册节点；由 control 主动建立长连接；无默认页面")
+	var registryURLs stringFlags
+	p.Var(&registryURLs, "registry-url", "control 主动连接的 registry HTTPS 地址；可重复指定多个 registry")
+	registryTokenFile := p.String("registry-token-file", "", "control 与 registry 的连接令牌文件；否则读取 PROJECT_ALPHA_REGISTRY_TOKEN")
+	regPassFile := p.String("reg-pass-file", "", "registry 的 8 位字母数字入口密码文件；否则读取 REG_PASS")
 	workerTokenFile := p.String("worker-token-file", "", "节点令牌文件（仅用于 --worker）；未指定时读取 PROJECT_ALPHA_WORKER_TOKEN，否则自动生成并保存到数据目录")
 	secure := p.Bool("secure-cookie", false, "为 HTTPS 启用 Secure 会话 Cookie")
 	tetragonSocket := p.String("tetragon-socket", process.DefaultSocket, "容器进程监控使用的 Tetragon gRPC Unix socket")
@@ -104,8 +111,43 @@ func Run(ctx context.Context, args []string) error {
 	if *port < 0 || *port > 65535 {
 		return fmt.Errorf("invalid port")
 	}
-	if *control && *worker {
-		return fmt.Errorf("--control and --worker are mutually exclusive")
+	if *control && *worker || *control && *registryMode || *worker && *registryMode {
+		return fmt.Errorf("--control, --worker and --registry are mutually exclusive")
+	}
+	if (*worker || *registryMode) && len(registryURLs) > 0 {
+		return fmt.Errorf("--registry-url requires control mode")
+	}
+	if !*registryMode && *regPassFile != "" {
+		return fmt.Errorf("--reg-pass-file requires --registry")
+	}
+	if (*worker || (!*registryMode && len(registryURLs) == 0)) && *registryTokenFile != "" {
+		return fmt.Errorf("--registry-token-file requires --registry or --registry-url")
+	}
+	for _, address := range registryURLs {
+		if _, err := registry.Endpoint(address); err != nil {
+			return err
+		}
+	}
+	registryToken, regPass := "", ""
+	if *registryMode || len(registryURLs) > 0 {
+		var err error
+		registryToken, err = readSecret(*registryTokenFile, "PROJECT_ALPHA_REGISTRY_TOKEN")
+		if err != nil {
+			return err
+		}
+		if !cluster.ValidToken(registryToken) {
+			return fmt.Errorf("registry connection token must contain 32–256 non-whitespace ASCII characters; set --registry-token-file or PROJECT_ALPHA_REGISTRY_TOKEN")
+		}
+	}
+	if *registryMode {
+		var err error
+		regPass, err = readSecret(*regPassFile, "REG_PASS")
+		if err != nil {
+			return err
+		}
+		if !registry.ValidPass(regPass) {
+			return fmt.Errorf("REG_PASS must contain exactly 8 ASCII letters or digits")
+		}
 	}
 	mode := "control"
 	initialize := cluster.Initialize
@@ -129,6 +171,9 @@ func Run(ctx context.Context, args []string) error {
 		}
 	} else if *workerTokenFile != "" {
 		return fmt.Errorf("--worker-token-file requires --worker")
+	}
+	if *registryMode {
+		mode, initialize = "registry", registry.Initialize
 	}
 	db, err := platform.OpenDatabase(directory, initialize)
 	if err != nil {
@@ -164,12 +209,33 @@ func Run(ctx context.Context, args []string) error {
 		}
 		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher)}
 		handler = node
+	} else if *registryMode {
+		lock, err := db.LockService()
+		if err != nil {
+			return err
+		}
+		defer lock.Close()
+		frontend := registry.NewServer(db, regPass, registryToken, hosts, *secure)
+		defer frontend.Hub.Close()
+		handler = frontend
 	} else {
 		controlHandler, err := cluster.NewControl(db)
 		if err != nil {
 			return err
 		}
 		defer controlHandler.Close()
+		linkCtx, cancelLinks := context.WithCancel(ctx)
+		var links sync.WaitGroup
+		defer func() { cancelLinks(); links.Wait() }()
+		seenURLs := map[string]bool{}
+		for _, address := range registryURLs {
+			endpoint, _ := registry.Endpoint(address)
+			if seenURLs[endpoint] {
+				continue
+			}
+			seenURLs[endpoint] = true
+			links.Go(func() { registry.Connect(linkCtx, address, registryToken, identity, controlHandler.RegistryDispatch) })
+		}
 		frontend := platform.NewServer(db, controlHandler, web.Assets, hosts, *secure)
 		frontend.Control = true
 		handler = frontend
@@ -178,7 +244,7 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
+	server := &http.Server{Handler: handler, BaseContext: func(net.Listener) context.Context { return ctx }, ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
 	done := make(chan struct{})
 	defer close(done)
 	shutdownDone := make(chan struct{})

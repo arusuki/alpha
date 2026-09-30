@@ -1,0 +1,23 @@
+[Unit]
+Description=project alpha public registry
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/project-alpha
+# Prepare 0600 secret files and replace the public hostname.
+LoadCredential=registry-token:/etc/project-alpha/registry-token
+LoadCredential=reg-pass:/etc/project-alpha/reg-pass
+ExecStart=/opt/project-alpha/bin/project-alpha --registry --data-dir /var/lib/project-alpha-registry --host 127.0.0.1 --port 8767 --registry-token-file %d/registry-token --reg-pass-file %d/reg-pass --allowed-host register.example.com --secure-cookie
+DynamicUser=true
+UMask=0077
+StateDirectory=project-alpha-registry
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+KillMode=control-group
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

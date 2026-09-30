@@ -9,7 +9,7 @@ CREATE TABLE sessions (
 );
 CREATE INDEX idx_sessions_expiry ON sessions(expires_at);
 CREATE TABLE service_identity (
- id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL CHECK(mode IN ('control','worker')),
+ id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL CHECK(mode IN ('control','worker','registry')),
  instance_id TEXT NOT NULL
 );
 CREATE TABLE audit (

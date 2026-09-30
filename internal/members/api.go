@@ -29,6 +29,17 @@ type Handler struct {
 func NewHandler(db *platform.Database) *Handler {
 	return &Handler{store: &Store{db}, attempts: map[string]attempt{}}
 }
+
+func (h *Handler) RegisterRegistry(req Registration, token string) (Member, error) {
+	if len(token) != 64 || strings.Trim(token, "0123456789abcdef") != "" {
+		return Member{}, httpapi.NewError(400, "注册资源令牌格式无效")
+	}
+	m, err := h.store.registerWithToken(req, h.Reserve, token)
+	if err == nil && h.Registered != nil {
+		h.Registered(m)
+	}
+	return m, err
+}
 func IsRoute(path string) bool {
 	return path == "/api/members" || strings.HasPrefix(path, "/api/members/") || path == invitationPage || strings.HasPrefix(path, invitationPage+"/")
 }

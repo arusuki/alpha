@@ -1,0 +1,39 @@
+# Public endpoint. The internal control only needs outbound HTTPS access here.
+server {
+    listen 443 ssl;
+    server_name register.example.com;
+    ssl_certificate /etc/nginx/certs/register.example.com.crt;
+    ssl_certificate_key /etc/nginx/certs/register.example.com.key;
+    client_max_body_size 64k;
+    client_body_timeout 15s;
+    client_header_timeout 15s;
+    # Registration URLs contain REG_PASS and invitation secrets.
+    access_log off;
+
+    location = /api/registry/connect {
+        proxy_pass http://127.0.0.1:8767;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $http_host;
+        proxy_read_timeout 65s;
+        proxy_send_timeout 30s;
+        proxy_buffering off;
+        proxy_intercept_errors on;
+        error_page 502 = @silent;
+    }
+
+    location ^~ /registry/ {
+        proxy_pass http://127.0.0.1:8767;
+        proxy_set_header Host $http_host;
+        proxy_read_timeout 65s;
+        proxy_send_timeout 30s;
+        proxy_buffering off;
+        # Preserve silent rejection if the application closes without responding.
+        proxy_intercept_errors on;
+        error_page 502 = @silent;
+    }
+
+    location @silent { return 444; }
+    location / { return 444; }
+}

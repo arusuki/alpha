@@ -126,6 +126,19 @@ func (s *Store) SaveSchema(next Schema, actor string) (Schema, error) {
 }
 
 func hashCode(code string) string { h := sha256.Sum256([]byte(code)); return hex.EncodeToString(h[:]) }
+
+// CheckInvitation never consumes a slot; RegisterWith rechecks it transactionally.
+func (s *Store) CheckInvitation(code string) error {
+	if !codePattern.MatchString(code) {
+		return httpapi.NewError(400, "邀请码无效或已失效")
+	}
+	var id string
+	err := s.SQL.QueryRow("SELECT id FROM member_invitations WHERE code_hash=? AND revoked=0 AND used<quota", hashCode(code)).Scan(&id)
+	if err == sql.ErrNoRows {
+		return httpapi.NewError(400, "邀请码无效或已失效")
+	}
+	return err
+}
 func (s *Store) CreateInvitation(label string, quota int, actor string) (Invitation, error) {
 	label = strings.TrimSpace(label)
 	i := Invitation{ID: platform.RandomHex(16), Label: label, Quota: quota, Remaining: quota, Status: "active", CreatedBy: actor, CreatedAt: platform.Now(), Code: platform.RandomHex(24)}
@@ -236,6 +249,12 @@ func validateProfile(fields []Field, values map[string]json.RawMessage) (map[str
 func (s *Store) Register(req Registration) (Member, error) { return s.RegisterWith(req, nil) }
 
 func (s *Store) RegisterWith(req Registration, reserve func(*sql.Tx, Member) error) (Member, error) {
+	return s.registerWithToken(req, reserve, "")
+}
+
+// A registry persists this secret before sending a registration. Retrying after
+// a lost reply recovers the same member without consuming another invitation slot.
+func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member) error, token string) (Member, error) {
 	m := Member{ID: platform.RandomHex(16), Username: req.Username, CreatedAt: platform.Now()}
 	if !username.MatchString(req.Username) || req.Username == "data" {
 		return m, httpapi.NewError(400, "使用者标识需为小写字母开头的 3–32 位字母、数字、下划线或短横线，且不能为 data")
@@ -252,8 +271,34 @@ func (s *Store) RegisterWith(req Registration, reserve func(*sql.Tx, Member) err
 	}
 	m.SSHKey = key
 	m.ResourceToken = platform.RandomHex(32)
+	if token != "" {
+		m.ResourceToken = token
+	}
 	m.Status = "active"
 	err := s.Transaction(func(tx *sql.Tx) error {
+		if token != "" {
+			var previous Member
+			var profile, schema, invitationHash string
+			err := tx.QueryRow(`SELECT m.id,m.username,m.profile,m.registration_schema,m.ssh_public_key,m.status,m.invitation_id,m.created_at,i.code_hash FROM members m JOIN member_invitations i ON i.id=m.invitation_id WHERE m.resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash)
+			if err == nil {
+				if err = json.Unmarshal([]byte(schema), &previous.Schema); err != nil {
+					return err
+				}
+				if err = json.Unmarshal([]byte(profile), &previous.Profile); err != nil {
+					return err
+				}
+				values, e := validateProfile(previous.Schema.Fields, req.Profile)
+				if e != nil || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
+					return httpapi.NewError(409, "此注册请求已提交，不能更改注册内容")
+				}
+				previous.ResourceToken = token
+				m = previous
+				return nil
+			}
+			if err != sql.ErrNoRows {
+				return err
+			}
+		}
 		var err error
 		m.Schema, err = readSchema(tx)
 		if err != nil {
