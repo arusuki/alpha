@@ -60,9 +60,10 @@ h1 { font-weight:700; letter-spacing:-.045em; }
 .module-heading .eyebrow { font-size:.59rem; color:#9595aa; margin-bottom:7px; }
 .module-heading h2 { font-size:1.02rem; }
 .section-caption { font-size:.65rem; color:#9698a7; }
-.module-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:18px; }
-.module-grid:has(.module-agent[hidden]) { grid-template-columns:repeat(2,minmax(0,1fr)); }
+.module-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+.module-grid:has(.module-agent[hidden]) { grid-template-columns:repeat(3,minmax(0,1fr)); }
 .module-card { display:flex; flex-direction:column; text-align:left; padding:23px 23px 0; border:1px solid transparent; border-radius:14px; color:var(--ink); overflow:hidden; transition:transform .22s,border-color .22s,background .22s; }
+.module-containers { background:#f7efdf; --module-color:#946628; }
 .module-storage { background:#efedfc; --module-color:#645cd6; }
 .module-process { background:var(--mint); --module-color:#388268; }
 .module-agent { background:var(--apricot); --module-color:#b78047; }
@@ -326,3 +327,11 @@ footer { margin-top:32px; color:#a5a3b3; font-size:.61rem; padding-top:20px; }
 #cleanupDeleteDialog{width:min(680px,calc(100vw - 32px))}.cleanup-delete-paths{max-height:50vh;overflow:auto}.cleanup-delete-paths p{padding:12px;background:#f6f5fb;border-radius:8px;line-height:1.6}
 #cleanupHistoryDialog{width:min(520px,calc(100vw - 32px))}
 @media(max-width:720px){.cleanup-source-section{padding:16px}.cleanup-source>*{width:100%}.cleanup-toolbar label{flex:1}.cleanup-toolbar #cleanupSelection{margin-left:0}.cleanup-toolbar input[type=search]{min-width:0;width:100%}}
+
+#page-containers details>summary { cursor:pointer; font-weight:600; padding:12px 0; }
+#page-containers details[open]>summary { margin-bottom:14px; }
+#managedContainerRows td { vertical-align:top; overflow-wrap:anywhere; }
+#managedContainerRows td:last-child { min-width:180px; }
+#managedContainerRows button { margin:0 4px 6px 0; }
+#adoptChecks li { margin:10px 0; overflow-wrap:anywhere; }
+#containerCredentials { white-space:pre-wrap; overflow-wrap:anywhere; }

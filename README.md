@@ -1,6 +1,6 @@
 # project alpha
 
-单宿主机管理平台，登录后从总面板进入存储、进程管理或 Agent 设置。自动发现 Docker 容器，按容器和用户汇总存储占用，支持目录下钻、按需扫描、任务管理和 Agent 空间报告。后端使用 Go 和 SQLite，网页资源嵌入二进制。
+单宿主机管理平台，登录后从总面板进入存储、容器管理、进程管理或 Agent 设置。自动发现 Docker 容器，按容器和用户汇总存储占用，支持目录下钻、按需扫描、任务管理和 Agent 空间报告。后端使用 Go 和 SQLite，网页资源嵌入二进制。
 
 ## 代码结构
 
@@ -10,6 +10,7 @@
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
 - `internal/agent`：模型配置与凭据、Responses/Chat Completions 适配、分析会话、工具定义与编排，以及独立 API 和数据表。
+- `internal/containers`：命令行扫描导入、创建配置、启停与删除，以及管理记录和审计。
 - `internal/process`：订阅 Tetragon 进程事件，常驻维护并按容器导出活动进程森林。
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
 - `dist`：网页资源及 Go 嵌入声明；`tests`：前端回归和共享测试数据。Go 测试与所属包放在一起。
@@ -43,7 +44,7 @@ go build -o bin/project-alpha ./cmd/project-alpha
 
 SQLite 保存账号、配置和任务；Agent API Key 加密后存入 SQLite，密钥保存在数据目录的 `agent-api-key.key`。扫描结果保存在 `data/results/`。目录增量更新按节点写入 SQLite，取消时保留已提交的明细。历史记录可在网页删除；备份时停止服务并复制整个数据目录，包括密钥文件。
 
-1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v14、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
+1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v15、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
 
 独立扫描示例：
 
@@ -53,6 +54,41 @@ SQLite 保存账号、配置和任务；Agent API Key 加密后存入 SQLite，�
 ```
 
 CLI 与 API 使用同一套配置校验：`max_depth` 为 0–32，`max_nodes` 为 100–100000，`docker_timeout` 为 5–3600 秒；扫描及排除目录必须为绝对路径。
+
+## 容器创建与接管
+
+“容器管理”统一替代 `generate_dockercompose.py` 的日常创建入口，直接调用 Docker，无需生成或执行 Compose 文件。管理员可在网页创建、启停、重启、删除和解除接管；已有容器使用命令行扫描导入；只读账号可查看管理记录和连接信息，无需先进行存储扫描。
+
+先在页面配置本机 Docker Unix socket、默认镜像、数据根目录（默认 `/docker`）、SSH 起始端口、主机地址及可选 ProxyJump。原 `config.ini` 的 `DOCKERFILE_IMAGE`、`START_PORT`、`IP`、`PROXYJUMP` 分别填写这些字段。原脚本的 `HOSTNAME` 仅是 SSH 客户端别名，可自行添加到本机 SSH 配置，不参与容器管理。
+
+创建保留脚本的 `docker-<名称>` 主机名、host IPC、TTY、`unless-stopped`、无限 memlock、NVIDIA GPU（all 或 1–7）、bridge/host 网络，以及以下可写 bind 挂载：
+
+- `<数据根>/<名称>/workspace` → `/workspace`
+- `<数据根>/<名称>/home` → `/home`
+- `<数据根>/data` → `/data`
+
+镜像必须已经在本机准备好，并包含 Bash、sed、OpenSSH server 和 `chpasswd`。平台不自动拉取镜像。SSH 端口可指定或从起始值及已有容器端口之后分配，并检查宿主机监听冲突。bridge 的可选代理仍为 `http://localhost:7890`，该地址指向容器自身。新密码经标准输入传给 `chpasswd`，不写入启动命令、数据库或审计；SSH 初始化完成后才启用，密码仅在创建/初始化结果中显示一次。初始化失败会保留可重试的管理记录。已存在的个人数据目录不自动复用或覆盖。
+
+已有容器通过命令行直接导入平台数据目录，无需启动 Web 服务或登录：
+
+```bash
+# 可选：只检查，不登记
+./project-alpha containers import --data-dir ./data --dry-run
+# 扫描全部现有容器，登记符合条件的容器
+./project-alpha containers import --data-dir ./data
+# 指定挂载根目录和待导入容器（省略容器名时扫描全部）
+./project-alpha containers import --data-dir ./data --base-dir /docker alice bob
+```
+
+`--data-dir` 默认取 `PROJECT_ALPHA_DATA_DIR`，未设置时为 `data`。`--endpoint` 和 `--base-dir` 默认使用此数据目录的容器配置，新目录分别为 `unix:///var/run/docker.sock` 和 `/docker`；成功登记时保存显式指定的配置。`--data-dir` 是平台 SQLite 数据目录，`--base-dir` 是已有容器的 bind 挂载根目录。首次运行会初始化平台数据库，包括 `--dry-run`；预检不写入容器记录、归属、配置或审计。旧格式数据目录会明确报错，不迁移或覆盖。
+
+导入默认以容器名作为所属用户，同步到存储模块的归属覆盖记录。重复执行会跳过已登记的容器；失败项逐项显示原因，不影响其他符合条件的容器，存在失败项时退出码非零。导入范围仍是原脚本约定的训练容器，检查完整 ID、daemon、运行状态、root、主机名、TTY/IPC/重启策略、memlock、GPU、三个可写 bind 挂载和宿主机目录，以及网络和 `sshd -T` 的有效端口。停止或配置不符的容器需修复后重试，不强制跳过检查。
+
+导入不重建、重启或更改原密码，原 Compose 标签和命令保留；**导入成功后停止用原 Compose 文件操作该容器**。建议先停止平台服务，完成导入后使用同一个 `--data-dir` 启动；刷新容器管理页面即可查看记录。`sshd -T` 验证有效配置，不代表外部网络或防火墙一定可达。
+
+所有启停/删除操作使用登记的完整 ID，并重新核实 daemon 和配置；同名替换容器不会成为操作目标。外部修改后需解除接管并通过命令行重新导入。解除接管只移除管理记录，不操作 Docker，也可用于清理已不存在的容器记录。删除要求输入完整容器名且先停止容器，不强制删除，不删除挂载目录或数据卷；容器可写层（包括未持久化的 `/root`）会丢失。操作超时后先刷新确认实际状态再重试。
+
+API、检查范围和失败恢复详见 [容器管理](docs/containers.md)。新增表使数据库格式变为 v15；旧数据目录按项目约定不迁移，请使用新数据目录。已有 Docker 容器独立于平台数据库，可通过命令行重新导入新目录。
 
 ## 独立 rootless Docker 工具
 

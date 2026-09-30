@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/auth.css">
   <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
-  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script>
+  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script>
 </head>
 <body>
 <section id="authPanel" class="auth-panel" data-phase="ready" aria-label="project alpha 登录" hidden>
@@ -60,6 +60,7 @@
     <nav class="platform-nav" aria-label="平台导航">
       <button class="active" data-page="dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-dashboard"/></svg>总面板</button>
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
+      <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
       <button class="account-nav" data-page="settings"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>账号管理</button>
@@ -77,7 +78,8 @@
       <div class="module-grid">
         <button class="module-card module-storage" data-page="overview"><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></span><span class="module-number">01 / STORAGE</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>存储</strong><span class="module-description">从整盘到目录，看清每一份空间占用。</span><span class="module-tags">空间用量 <i>·</i> 扫描记录 <i>·</i> 扫描配置</span><span class="module-card-bottom"><span id="dashboardStorageStatus">正在读取扫描状态</span><span>打开模块 →</span></span></button>
         <button class="module-card module-process" data-page="processes"><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg></span><span class="module-number">02 / PROCESSES</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>进程管理</strong><span class="module-description">追踪容器里的进程，理清运行关系。</span><span class="module-tags">活动进程 <i>·</i> 父子关系 <i>·</i> 命令行</span><span class="module-card-bottom"><span>按需查看实时进程</span><span>打开模块 →</span></span></button>
-        <button class="module-card module-agent" data-page="agent-settings" data-admin><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg></span><span class="module-number">03 / AGENT</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>Agent 设置</strong><span class="module-description">连接你的模型，让分析成为日常助力。</span><span class="module-tags">模型服务 <i>·</i> API Key <i>·</i> 分析参数</span><span class="module-card-bottom"><span>统一管理分析能力</span><span>配置 Agent →</span></span></button>
+        <button class="module-card module-containers" data-page="containers"><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></span><span class="module-number">03 / CONTAINERS</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>容器管理</strong><span class="module-description">创建工作环境，管理容器运行状态。</span><span class="module-tags">创建 <i>·</i> 连接信息 <i>·</i> 启停</span><span class="module-card-bottom"><span>统一管理容器与连接信息</span><span>打开模块 →</span></span></button>
+        <button class="module-card module-agent" data-page="agent-settings" data-admin><span class="module-card-top"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg></span><span class="module-number">04 / AGENT</span><span class="module-arrow" aria-hidden="true">↗</span></span><strong>Agent 设置</strong><span class="module-description">连接你的模型，让分析成为日常助力。</span><span class="module-tags">模型服务 <i>·</i> API Key <i>·</i> 分析参数</span><span class="module-card-bottom"><span>统一管理分析能力</span><span>配置 Agent →</span></span></button>
       </div>
       <div class="dashboard-bottom"><section class="panel recent-panel"><div class="panel-heading"><div><span class="eyebrow">RECENT ACTIVITY</span><h2>最近扫描</h2></div><button class="text-button" data-page="history">全部记录 ↗</button></div><div id="dashboardRecent" class="recent-list"><p class="dashboard-empty">正在读取记录…</p></div></section><section class="panel glance-panel"><span class="eyebrow">AT A GLANCE</span><h2>存储速览</h2><div class="glance-value"><strong id="dashboardAllocated">—</strong><span>最近完整扫描 · 实际占用</span></div><div class="glance-row"><span>当前扫描</span><strong id="dashboardTask">正在读取</strong></div><div class="glance-row"><span>扫描计划</span><strong id="dashboardSchedule">—</strong></div><p id="dashboardUpdated">扫描完成后，统计会出现在这里。</p></section></div>
     </section>
@@ -187,6 +189,39 @@
     </form>
   </section><aside class="agent-guide"><span class="module-icon"><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg></span><span class="eyebrow">AN INTELLIGENT ASSISTANT</span><h2>让数据，给出线索。</h2><p>为 Agent 配置模型服务后，即可在存储模块生成空间报告、查看分析证据，并继续追问。</p><ol><li><span>01</span><div><strong>连接模型</strong><p>填写接口、模型和访问凭据。</p></div></li><li><span>02</span><div><strong>完成一次扫描</strong><p>为分析准备真实的空间数据。</p></div></li><li><span>03</span><div><strong>获取空间报告</strong><p>定位重点占用，梳理清理候选。</p></div></li></ol><button data-page="overview">前往存储分析 ↗</button></aside></div>
 </section>
+ <section id="page-containers" class="platform-page settings-stack" hidden>
+  <section class="management-panel"><div class="section-heading"><div><h2>容器管理</h2><p>查看已登记容器的 Docker 实时状态。已有容器通过命令行导入。</p></div><button id="containersRefresh">刷新容器</button></div>
+   <p id="containersError" role="alert" class="error-text"></p><p id="containersStatus" role="status" class="form-note"></p>
+   <div class="table-scroll"><table><thead><tr><th>容器 / 所属用户</th><th>状态</th><th>配置 / SSH</th><th>操作</th></tr></thead><tbody id="managedContainerRows"></tbody></table></div>
+
+  </section>
+  <section class="management-panel" data-admin><details><summary>创建容器</summary>
+   <form id="createContainerForm" class="settings-form"><div class="form-grid three">
+    <label>容器名称<input id="newContainerName" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"></label>
+    <label>所属用户<input id="newContainerOwner" maxlength="128" placeholder="默认使用容器名称"></label>
+    <label>镜像<input id="newContainerImage" placeholder="留空使用默认镜像"></label>
+    <label>网络<select id="newContainerNetwork"><option value="bridge">bridge</option><option value="host">host</option></select></label>
+    <label>SSH 端口<input id="newContainerPort" type="number" min="1" max="65535" placeholder="自动分配"></label>
+    <label>GPU 数量<select id="newContainerGPUs"><option value="all">all</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option></select></label>
+    <label>root 密码<input id="newContainerPassword" type="password" minlength="8" maxlength="256" autocomplete="new-password" placeholder="留空生成随机密码"></label>
+   </div><label class="checkbox-label"><input id="newContainerProxy" type="checkbox">设置 HTTP / HTTPS 代理为 http://localhost:7890</label>
+   <p class="form-note">代理地址指向容器自身。镜像需预先安装 Bash、sed、OpenSSH 和 chpasswd，并已存在于本机。/workspace、/home 和 /data 持久化；/root 不持久化。</p>
+   <button type="submit" class="primary">创建并启动容器</button></form>
+  </details></section>
+  <section class="management-panel" data-admin><details><summary>容器创建配置</summary>
+   <form id="containerSettingsForm" class="settings-form"><div class="form-grid">
+    <label>Docker endpoint<input id="containerEndpoint" required placeholder="unix:///var/run/docker.sock"></label>
+    <label>默认镜像<input id="containerDefaultImage"></label>
+    <label>数据根目录<input id="containerBaseDir" required placeholder="/docker"></label>
+    <label>自动分配起始端口<input id="containerStartPort" required type="number" min="1" max="65535"></label>
+    <label>SSH 主机地址<input id="containerSSHHost" placeholder="主机 IP 或域名"></label>
+    <label>SSH 跳板机<input id="containerProxyJump" placeholder="可选，如 user@jump-host"></label>
+   </div><p class="form-note">创建时按此数据根目录准备挂载。服务必须运行于 Docker 宿主机，并能访问 Docker 套接字和数据目录。</p><button type="submit">保存容器配置</button></form>
+  </details></section>
+ </section>
+ <dialog id="containerActionDialog"><h2 id="containerActionTitle"></h2><p id="containerActionHint"></p><form id="containerActionForm"><label id="containerConfirmLabel">输入完整容器名确认<input id="containerConfirmName" autocomplete="off"></label><p id="containerActionError" class="error-text" role="alert"></p><div class="form-actions"><button id="containerActionSubmit" type="submit" class="primary">确认</button><button id="containerActionClose" type="button">取消</button></div></form></dialog>
+ <dialog id="containerCredentialsDialog"><h2>容器连接信息</h2><p>请现在保存密码，关闭后平台不再提供查询。</p><pre id="containerCredentials"></pre><button id="containerCredentialsClose">已保存，关闭</button></dialog>
+
  <section id="page-processes" class="platform-page" hidden>
   <div class="process-status-panel"><div><span id="processConnection" class="connection-badge">等待连接</span><p id="processStatusHint" role="status">正在读取进程监控状态…</p></div><div class="process-status-actions"><label class="checkbox-label"><input id="processHost" type="checkbox">包含宿主机</label><button id="processRefresh">刷新进程 ↻</button></div></div>
   <div class="process-metrics"><article><span>已观测容器</span><strong id="processContainerCount">—</strong></article><article><span>活动进程</span><strong id="processTotalCount">—</strong></article><article><span>最近采集</span><strong id="processCaptured">—</strong></article></div>

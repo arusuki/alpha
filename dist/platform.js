@@ -3,7 +3,7 @@ const platform = {user:null,csrf:'',setup:false,page:'dashboard',active:null,job
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
 const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
-const actionNames = {'scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.extract':'提取报告目录','agent.extract.delete':'删除提取记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
+const actionNames = {'container.create':'创建容器','container.adopt':'接管容器','container.start':'启动容器','container.stop':'停止容器','container.restart':'重启容器','container.delete':'删除容器','container.release':'解除容器接管','container.initialize':'初始化容器密码','container.settings':'修改容器配置','scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.extract':'提取报告目录','agent.extract.delete':'删除提取记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
 const dateTime = value => value ? new Date(value*1000).toLocaleString('zh-CN') : '—';
 async function api(path,options={}) {
   const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,headers:{'Content-Type':'application/json','X-CSRF-Token':platform.csrf,...options.headers}});
@@ -21,6 +21,7 @@ function showAuth(setup,error='') {
   window.SettingsUI.reset();
   window.AgentUI?.reset();
   window.ProcessUI?.reset();
+  window.ContainersUI?.reset();
   window.CleanupUI?.reset();
   clearTimeout(platform.poll);platform.generation++;platform.user=null;platform.csrf='';platform.setup=setup;
   $('console').hidden=true;$('sessionControls').hidden=true;$('authPanel').hidden=false;
@@ -43,6 +44,7 @@ async function enter(session) {
   window.SettingsUI.reset();
   window.AgentUI?.reset();
   window.ProcessUI?.reset();
+  window.ContainersUI?.reset();
   window.CleanupUI?.reset();
   platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
   window.AuthUI?.hide();
@@ -309,12 +311,12 @@ function loadSnapshotChanges() {
 $('cancelResultLoading').addEventListener('click',cancelResultLoading);
 $('resultLoadingDialog').addEventListener('cancel',e=>{e.preventDefault();cancelResultLoading();});
 function showPage(page,navigate=true) {
-  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','agent-settings','settings'].includes(page))return;
+  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','agent-settings','settings'].includes(page))return;
   if(['scan-settings','agent-settings','cleanup'].includes(page) && platform.user.role!=='admin')return;
   const changed=platform.page!==page;
   platform.page=page;
   const storage=['overview','history','cleanup','scan-settings'].includes(page);
-  const headings={cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
+  const headings={containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
   $('pageEyebrow').textContent=headings[page][0];$('pageTitle').textContent=headings[page][1];
   $('pageDescription').textContent=headings[page][2];$('moduleCrumb').textContent=storage?'存储':headings[page][1];
   document.title=`project alpha · ${headings[page][1]}`;
@@ -330,6 +332,7 @@ function showPage(page,navigate=true) {
   if(page==='settings')window.SettingsUI.open();
   if(page==='agent-settings')window.SettingsUI.openModel();
   if(page==='dashboard')window.DashboardUI?.render();
+  if(page==='containers')window.ContainersUI?.open();
   if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
   if(page==='cleanup')window.CleanupUI?.open();else window.CleanupUI?.close();
 }

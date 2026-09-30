@@ -46,6 +46,9 @@ func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "process" {
 		return process.RunCLI(ctx, args[1:])
 	}
+	if len(args) > 0 && args[0] == "containers" {
+		return containersCLI(ctx, args[1:])
+	}
 	if len(args) > 0 && args[0] == "serve" {
 		args = args[1:]
 	}
@@ -100,7 +103,8 @@ func Run(ctx context.Context, args []string) error {
 		watcher = process.NewWatcher(ctx, source)
 		defer watcher.Close()
 	}
-	modules := Modules{Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
+	containerHandler := newContainerHandler(db)
+	modules := Modules{Containers: containerHandler, Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err

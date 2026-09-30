@@ -18,8 +18,8 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-// Version 14 records folded reference targets for local Host ownership checks.
-const DatabaseVersion = 14
+// Version 15 adds live container configuration and explicit adoption records.
+const DatabaseVersion = 15
 
 //go:embed schema.sql
 var schema string

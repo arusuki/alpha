@@ -57,6 +57,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(204)
             self.end_headers()
             return
+        if path == '/api/containers':
+            return self.respond(dict(managed=[]))
+        if path == '/api/containers/settings':
+            return self.respond(dict(endpoint='unix:///var/run/docker.sock', image='train:test', base_dir='/docker', start_port=2222, ssh_host='host.example', proxy_jump=''))
         if path == '/api/process/forest':
             if unavailable:
                 return self.respond(dict(error='未启用容器进程监控'), 503)
@@ -94,6 +98,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         global user
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path == '/api/containers':
+            return self.respond(dict(id='d'*64, name=body['name'], port=2223, password='generated-test-secret'))
         if self.path == '/api/login':
             user = dict(id='user', username=body['username'], role='viewer' if body['username'] == 'reader' else 'admin')
             return self.respond(dict(user=user, csrf='test'))
@@ -139,6 +145,21 @@ try:
         page.locator('.recent-row').focus()
         page.evaluate('syncState()')
         assert page.locator('.recent-row').evaluate('(e) => e === document.activeElement')
+        page.locator('.module-containers').click()
+        page.wait_for_function("document.querySelector('#managedContainerRows').children.length > 0 && !document.querySelector('#containersRefresh').disabled")
+        assert page.locator('#page-containers').is_visible()
+        assert page.locator('#containerEndpoint').input_value() == 'unix:///var/run/docker.sock', (page.locator('#containersError').inner_text(), calls, errors)
+        assert page.locator('#adoptContainerForm').count() == 0
+        assert '命令行' in page.locator('#page-containers').inner_text()
+        page.locator('#page-containers summary').filter(has_text='创建容器').click()
+        page.locator('#newContainerName').fill('bob')
+        page.locator('#createContainerForm button').click()
+        page.locator('#containerCredentialsDialog').wait_for(state='visible')
+        assert 'generated-test-secret' in page.locator('#containerCredentials').inner_text()
+        page.locator('#containerCredentialsClose').click()
+        assert page.locator('#containerCredentials').inner_text() == ''
+        page.screenshot(path='/tmp/project-alpha-containers.png', full_page=True, animations='disabled')
+        page.locator('.platform-nav [data-page="dashboard"]').click()
         page.locator('.module-agent').click()
         page.wait_for_function('settingsState.model !== null')
         assert page.locator('#storageNav').is_hidden()
@@ -222,7 +243,7 @@ try:
         page.emulate_media(reduced_motion='reduce')
         page.set_viewport_size(dict(width=390, height=844))
         assert page.locator('#page-dashboard').evaluate('(e) => getComputedStyle(e).animationName') == 'none'
-        for module in ['dashboard', 'overview', 'processes', 'agent-settings', 'settings']:
+        for module in ['dashboard', 'overview', 'containers', 'processes', 'agent-settings', 'settings']:
             page.locator('.platform-nav [data-page=' + module + ']').click()
             if module == 'overview':
                 page.wait_for_function('platform.loaded !== null')
@@ -242,6 +263,11 @@ try:
         assert page.locator('.module-agent').is_hidden()
         page.evaluate('showPage("agent-settings")')
         assert page.locator('#page-agent-settings').is_hidden()
+        page.locator('.module-containers').click()
+        page.wait_for_function("document.querySelector('#managedContainerRows').children.length > 0 && !document.querySelector('#containersRefresh').disabled")
+        assert page.locator('#createContainerForm').is_hidden()
+        assert page.locator('#adoptContainerForm').count() == 0
+        page.locator('.platform-nav [data-page=dashboard]').click()
         unavailable = True
         page.locator('.module-process').click()
         page.wait_for_function('processView.error !== ""')
@@ -263,6 +289,6 @@ try:
         assert page.locator('#firstScan').is_visible()
         assert not errors, errors
         browser.close()
-    print('Workspace browser checks passed: login dashboard, lazy snapshots, module navigation/history, Agent settings, process search/tree/host/errors/polling, permissions and responsive layouts.')
+    print('Workspace browser checks passed: login dashboard, lazy snapshots, module navigation/history, CLI-only import entry, container creation/passwords, Agent settings, process search/tree/host/errors/polling, permissions and responsive layouts.')
 finally:
     server.shutdown()
