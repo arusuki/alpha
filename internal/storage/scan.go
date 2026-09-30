@@ -264,7 +264,11 @@ func (s *Scanner) begin(path string, root bool) (*Node, *os.File) {
 	if s.Analysis != nil {
 		s.Analysis.observe(path, st)
 	}
-	n.Apparent = st.Size
+	// Like du --apparent-size, only regular files and symlinks have a
+	// meaningful logical length. Directory metadata still counts as allocated.
+	if mode == syscall.S_IFREG || mode == syscall.S_IFLNK {
+		n.Apparent = max(int64(0), st.Size)
+	}
 	s.Allocated += n.Allocated
 	s.deviceAllocated[key.Dev] += n.Allocated
 	n.DeviceAllocated = map[string]int64{strconv.FormatUint(key.Dev, 10): n.Allocated}
