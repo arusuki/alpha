@@ -266,8 +266,19 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             # A gateway restart keeps both its binding and the existing browser session.
             registry.terminate()
             registry.wait(timeout=15)
+            expect(card.locator('.node-status')).to_have_text('重连中', timeout=15000)
+            expect(card.locator('[data-reconnect-node]')).to_be_enabled()
+            admin.set_viewport_size(dict(width=390, height=844))
+            assert admin.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'registry reconnect card overflow'
+            admin.set_viewport_size(dict(width=1280, height=1000))
             registry, restarted_url = start('registry', ['--registry', '--data-dir', str(root / 'registry'), '--port', registry_url.rsplit(':', 1)[1]])
             assert restarted_url == registry_url
+            with admin.expect_response(lambda response: response.url.endswith('/reconnect') and response.request.method == 'POST') as reconnected:
+                card.locator('[data-reconnect-node]').click()
+            assert reconnected.value.status == 202
+            expect(card.locator('.node-status')).to_have_text('已连接', timeout=15000)
+            expect(card.locator('[data-reconnect-node]')).to_have_count(0)
+            expect(admin.locator('#page-cluster')).to_be_visible()
             page.reload()
             expect(page.locator('#share')).to_be_visible(timeout=15000)
             page.set_viewport_size(dict(width=390, height=844))

@@ -196,6 +196,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if len(parts) == 2 && parts[1] == "registration-link" && r.Method == "POST" {
 			return h.registrationLink(w, r, n)
 		}
+		if len(parts) == 2 && parts[1] == "reconnect" && r.Method == "POST" {
+			return h.reconnectNode(r, user, n.ID)
+		}
 		if len(parts) > 2 && parts[1] == "api" {
 			if n.Kind != "worker" {
 				return fail(httpapi.NewError(404, "registry 不提供计算节点操作"))

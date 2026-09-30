@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
-const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0};
+const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0,reconnecting:new Set(),reconnectErrors:new Map()};
 const admin=()=>platform.user?.role==='admin';
 function configure(){
   const central=!platform.nodeID;
@@ -44,6 +44,7 @@ function render(){
 }
 function renderNodes(){
   const data=state.data;if(!data)return;
+  for(const n of data.nodes)if(n.online)state.reconnectErrors.delete(n.id);
   const query=$('clusterSearch').value.trim().toLowerCase();
   const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.internal_ip,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter===state.filter)));
@@ -52,20 +53,37 @@ function renderNodes(){
     const inventory=n.inventory;
     const owners=n.online?new Set(inventory.containers.map(c=>c.owner).filter(Boolean)).size:0;
     const scanned=inventory?.observed_at?new Date(inventory.observed_at).toLocaleString('zh-CN'):'';
-    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
+    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(state.reconnectErrors.get(n.id)||n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${reconnectButton(n)}${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
   }).join('')||(!data.nodes.length?`<div class="cluster-empty"><span class="empty-node-symbol" aria-hidden="true">＋</span><h3>${admin()?'连接你的第一个节点':'等待节点接入'}</h3><p>${admin()?'添加主机后，在这里统一查看状态并进入管理。':'管理员添加节点后，这里会显示你的主机。'}</p>${admin()?'<button class="primary" data-add-node>添加节点 ↗</button>':''}</div>`:'<div class="cluster-empty"><h3>没有匹配的节点</h3><p>试试其他名称、主机地址或连接状态。</p><button data-clear-nodes>清除筛选</button></div>');
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
   const active=document.activeElement;
-  const focus=container.contains(active)?['href','data-share-registry','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
+  const focus=container.contains(active)?['href','data-share-registry','data-reconnect-node','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
   container.innerHTML=html;
   state.nodesHTML=html;
   if(focus){const [attr,value]=focus;const target=[...container.querySelectorAll(`[${attr}]`)].find(el=>el.getAttribute(attr)===value);(target||$('clusterSearch')).focus({preventScroll:true});}
 }
 function renderRegistryNode(n,index){
   const connection=n.connection;
+  const error=state.reconnectErrors.get(n.id)||n.error;
   const status=n.online?'已连接':({connecting:'连接中',reconnecting:'重连中',disconnected:'未连接'}[connection?.state]||'未连接');
-  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${n.error?`<div class="node-unavailable"><p>${esc(n.error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button class="node-open" data-share-registry="${n.id}" aria-label="生成 ${esc(n.name)} 的共享注册链接">共享链接 ↗</button><button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
+  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${error?`<div class="node-unavailable"><p>${esc(error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button class="node-open" data-share-registry="${n.id}" aria-label="生成 ${esc(n.name)} 的共享注册链接">共享链接 ↗</button>${reconnectButton(n)}<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
+}
+function reconnectButton(n){
+  if(!admin()||(n.online&&!state.reconnecting.has(n.id)))return '';
+  const pending=state.reconnecting.has(n.id);
+  return `<button data-reconnect-node="${n.id}" aria-label="重连节点 ${esc(n.name)}" ${pending?'disabled aria-busy="true"':''}>${pending?'正在重连…':'重连'}</button>`;
+}
+async function reconnectNode(id){
+  if(!admin()||state.reconnecting.has(id)||!state.data?.nodes.some(n=>n.id===id))return;
+  const epoch=state.epoch;state.reconnecting.add(id);state.reconnectErrors.delete(id);renderNodes();
+  try{
+    await api(`/api/cluster/nodes/${id}/reconnect`,{method:'POST',body:'{}',signal:AbortSignal.timeout(12000)});
+    if(epoch!==state.epoch)return;
+    if(state.pending)await state.pending;
+    if(epoch===state.epoch)await refresh();
+  }catch(error){if(epoch===state.epoch)state.reconnectErrors.set(id,error.name==='TimeoutError'?'节点重连超时，请稍后重试。':error.message);}
+  finally{if(epoch===state.epoch){state.reconnecting.delete(id);renderNodes();}}
 }
 function nodeKindControls(){
   const registry=$('nodeKind').value==='registry';
@@ -186,6 +204,7 @@ async function retryNode(){
 }
 window.ClusterUI={configure,refresh,unavailable,connected,reset(){
   state.epoch++;state.opening=false;state.unavailableTarget=null;$('nodeUnavailableRetry').disabled=false;state.data=null;state.pending=null;state.editing=null;state.removing=null;state.filter='all';state.nodesHTML='';busy(false);
+  state.reconnecting.clear();state.reconnectErrors.clear();
   document.body.classList.remove('control-room');
   $('clusterSearch').value='';$('allocationSearch').value='';$('clusterError').textContent='';$('clusterPartial').hidden=true;$('clusterNodeCount').textContent='';
   for(const id of ['clusterOnline','clusterContainers','clusterOwners','allocationContainerCount','allocationOwnerCount','allocationNodeCount'])$(id).textContent='—';
@@ -213,6 +232,7 @@ $('clusterNodes').addEventListener('click',e=>{
   if(e.target.closest('[data-add-node]')){edit();return;}
   if(e.target.closest('[data-clear-nodes]')){state.filter='all';$('clusterSearch').value='';renderNodes();$('clusterSearch').focus();return;}
   const share=e.target.closest('[data-share-registry]');if(share){shareRegistry(share.dataset.shareRegistry);return;}
+  const reconnect=e.target.closest('[data-reconnect-node]');if(reconnect){reconnectNode(reconnect.dataset.reconnectNode);return;}
   const editButton=e.target.closest('[data-edit-node]');if(editButton){edit(editButton.dataset.editNode);return;}
   const remove=e.target.closest('[data-remove-node]');if(!remove||!admin()||state.busy)return;
   state.removing=state.data.nodes.find(n=>n.id===remove.dataset.removeNode);if(!state.removing)return;

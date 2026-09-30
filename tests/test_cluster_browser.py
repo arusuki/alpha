@@ -287,6 +287,40 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             expect(page.locator('#authPanel')).not_to_be_visible()
             page.locator('#nodeUnavailableClose').click()
             page.screenshot(path='/tmp/project-alpha-cluster-offline.png', full_page=True)
+            # Per-node reconnect stays in the directory, blocks duplicate clicks,
+            # and reports a failed attempt without changing the central session.
+            page.evaluate('clearTimeout(platform.poll)')
+            reconnect_path = url + '/api/cluster/nodes/' + second['id'] + '/reconnect'
+            deferred_reconnects = []
+            page.route(reconnect_path, lambda route: deferred_reconnects.append(route), times=1)
+            reconnect_button = page.locator(f'[data-reconnect-node="{second["id"]}"]')
+            reconnect_button.click()
+            expect(reconnect_button).to_be_disabled()
+            expect(reconnect_button).to_have_text('正在重连…')
+            page.evaluate('document.querySelector("[data-reconnect-node]").dispatchEvent(new MouseEvent("click", {bubbles:true}))')
+            assert len(deferred_reconnects) == 1
+            deferred_reconnects[0].continue_()
+            expect(reconnect_button).to_be_enabled()
+            expect(page.locator('.node-unavailable')).to_contain_text('节点连接中断')
+            expect(page.locator('#page-cluster')).to_be_visible()
+            expect(page.locator('#authPanel')).not_to_be_visible()
+            page.set_viewport_size(dict(width=390, height=844))
+            assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'offline reconnect card overflow'
+            page.set_viewport_size(dict(width=1440, height=1000))
+            node2, restarted_url, restarted_token = start('node-two', '--worker', urlsplit(url2).port)
+            assert restarted_url == url2 and restarted_token == token2
+            with page.expect_response(lambda response: response.url == reconnect_path and response.request.method == 'POST') as reconnected:
+                reconnect_button.click()
+            assert reconnected.value.status == 200
+            expect(page.locator('#clusterOnline')).to_have_text('2 / 2')
+            expect(page.locator('#clusterNodes')).to_contain_text('没有匹配的节点')
+            expect(page.locator('#clusterPartial')).to_be_hidden()
+            expect(page.locator('#page-cluster')).to_be_visible()
+            # Restore an offline observation for the existing enter-node retry check.
+            node2.kill()
+            node2.wait(timeout=10)
+            page.locator('#clusterRefresh').click()
+            expect(page.locator('#clusterOnline')).to_have_text('1 / 2')
             # Kill and restart the default worker, keeping its data and listening address.
             # The stale offline card must probe again without waiting for an overview refresh.
             page.evaluate('clearTimeout(platform.poll)')
@@ -349,6 +383,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             expect(page.locator('#clusterAdd')).not_to_be_visible()
             expect(page.locator('[data-edit-node]')).to_have_count(0)
             expect(page.locator('[data-remove-node]')).to_have_count(0)
+            expect(page.locator('[data-reconnect-node]')).to_have_count(0)
             viewer_csrf = page.evaluate('platform.csrf')
             denied = context.request.post(url + '/api/cluster/nodes/' + first['id'] + '/api/jobs',
                                           headers={'X-CSRF-Token': viewer_csrf}, data={})
