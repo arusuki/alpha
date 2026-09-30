@@ -86,7 +86,7 @@ func worker(t *testing.T, id string, inventory Inventory, module platform.Module
 }
 func add(t *testing.T, f *fixture, w *Worker, s *httptest.Server, name string) {
 	t.Helper()
-	response := f.request(t, "POST", "/api/cluster/nodes", map[string]string{"name": name, "url": s.URL, "token": w.Token})
+	response := f.request(t, "POST", "/api/cluster/nodes", map[string]string{"kind": "worker", "name": name, "url": s.URL, "token": w.Token})
 	requireStatus(t, response, 201)
 	if strings.Contains(response.Body.String(), w.Token) {
 		t.Fatal("node credential leaked")
@@ -126,9 +126,9 @@ func TestClusterNodeLifecycleAndAggregate(t *testing.T) {
 			t.Fatalf("cross-node identity merged incorrectly: %+v", m)
 		}
 	}
-	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", map[string]string{"name": "duplicate", "url": s1.URL, "token": w1.Token}), 409)
-	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w1.ID, map[string]string{"name": "renamed", "url": s1.URL, "token": ""}), 200)
-	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w1.ID, map[string]string{"name": "wrong node", "url": s2.URL, "token": ""}), 409)
+	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", map[string]string{"kind": "worker", "name": "duplicate", "url": s1.URL, "token": w1.Token}), 409)
+	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w1.ID, map[string]string{"kind": "worker", "name": "renamed", "url": s1.URL, "token": ""}), 200)
+	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w1.ID, map[string]string{"kind": "worker", "name": "wrong node", "url": s2.URL, "token": ""}), 409)
 	s2.Close()
 	response = f.request(t, "GET", "/api/cluster/overview", nil)
 	requireStatus(t, response, 200)
@@ -287,7 +287,7 @@ func TestRegistrationRejectsRedirectsAndInvalidOwners(t *testing.T) {
 	defer destination.Close()
 	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, destination.URL, 302) }))
 	defer redirect.Close()
-	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", map[string]string{"name": "redirect", "url": redirect.URL, "token": strings.Repeat("x", 32)}), 502)
+	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", map[string]string{"kind": "worker", "name": "redirect", "url": redirect.URL, "token": strings.Repeat("x", 32)}), 502)
 	if leaked {
 		t.Fatal("followed redirect with credentials")
 	}

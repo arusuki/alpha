@@ -38,14 +38,39 @@ type Network interface {
 }
 
 type Handler struct {
-	DB        *platform.Database
-	Tailscale Network
-	mu        sync.Mutex
-	KeyEditor func(Account, string, string) error
+	DB            *platform.Database
+	Tailscale     Network
+	mu            sync.Mutex
+	KeyEditor     func(string, string) error
+	installation  func() error
+	accountStatus func() accountInfo
+	installMu     sync.Mutex
+	installInfo   func() webInstallInfo
+	installRunner func(context.Context, []byte, installRequest) error
+	keys          keyStore
 }
 
 func NewHandler(db *platform.Database) *Handler {
-	return &Handler{DB: db, Tailscale: tailscale.NewHandler(db), KeyEditor: editKey}
+	h := &Handler{DB: db, Tailscale: tailscale.NewHandler(db)}
+	h.installInfo = installAvailability
+	h.installRunner = func(ctx context.Context, password []byte, request installRequest) error {
+		return runSudoInstall(ctx, password, request, nil)
+	}
+	store := systemKeyStore()
+	h.keys = store
+	h.accountStatus = func() accountInfo {
+		id, _ := db.CheckMode("control")
+		return store.accountInfo(id)
+	}
+	h.installation = func() error {
+		id, err := db.CheckMode("control")
+		if err != nil {
+			return err
+		}
+		return store.checkWriter(id)
+	}
+	h.KeyEditor = h.editMemberKey
+	return h
 }
 func IsRoute(path string) bool {
 	return strings.HasPrefix(path, "/api/bastion/") || tailscale.IsRoute(path)
@@ -57,24 +82,14 @@ func (h *Handler) Reserve(tx *sql.Tx, m members.Member) error {
 	return allocate(tx, m.ID)
 }
 func allocate(tx *sql.Tx, id string) error {
-	_, err := tx.Exec(`UPDATE member_access SET tailscale_id=COALESCE(tailscale_id,(SELECT b.id FROM bastion_tailscale b LEFT JOIN member_access a ON a.tailscale_id=b.id WHERE b.enabled=1 GROUP BY b.id ORDER BY count(a.member_id),b.id LIMIT 1)),
- account_id=COALESCE(account_id,(SELECT b.id FROM bastion_accounts b LEFT JOIN member_access a ON a.account_id=b.id WHERE b.enabled=1 GROUP BY b.id ORDER BY count(a.member_id),b.id LIMIT 1)) WHERE member_id=?`, id)
+	_, err := tx.Exec(`UPDATE member_access SET tailscale_id=COALESCE(tailscale_id,(SELECT b.id FROM bastion_tailscale b LEFT JOIN member_access a ON a.tailscale_id=b.id WHERE b.enabled=1 GROUP BY b.id ORDER BY count(a.member_id),b.id LIMIT 1)) WHERE member_id=?`, id)
 	return err
-}
-func (h *Handler) account(id string) (Account, error) {
-	var a Account
-	err := h.DB.SQL.QueryRow("SELECT id,username,home,uid,gid,host,port,enabled FROM bastion_accounts WHERE id=?", id).Scan(&a.ID, &a.Username, &a.Home, &a.UID, &a.GID, &a.Host, &a.Port, &a.Enabled)
-	return a, err
 }
 
 type Access struct {
 	MemberID    string `json:"member_id"`
 	Username    string `json:"username"`
 	TailscaleID string `json:"tailscale_id"`
-	AccountID   string `json:"account_id"`
-	Account     string `json:"account"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
 	InviteID    string `json:"invite_id"`
 	InviteURL   string `json:"invite_url"`
 	InviteState string `json:"invite_state"`
@@ -85,7 +100,7 @@ type Access struct {
 
 func (h *Handler) Access(id string) (Access, error) {
 	var a Access
-	err := h.DB.SQL.QueryRow(`SELECT a.member_id,m.username,COALESCE(a.tailscale_id,''),COALESCE(a.account_id,''),COALESCE(b.username,''),COALESCE(b.host,''),COALESCE(b.port,22),a.invite_id,a.invite_url,a.invite_state,a.accepted_by,a.key_state,a.error FROM member_access a JOIN members m ON m.id=a.member_id LEFT JOIN bastion_accounts b ON b.id=a.account_id WHERE a.member_id=?`, id).Scan(&a.MemberID, &a.Username, &a.TailscaleID, &a.AccountID, &a.Account, &a.Host, &a.Port, &a.InviteID, &a.InviteURL, &a.InviteState, &a.AcceptedBy, &a.KeyState, &a.Error)
+	err := h.DB.SQL.QueryRow(`SELECT a.member_id,m.username,COALESCE(a.tailscale_id,''),a.invite_id,a.invite_url,a.invite_state,a.accepted_by,a.key_state,a.error FROM member_access a JOIN members m ON m.id=a.member_id WHERE a.member_id=?`, id).Scan(&a.MemberID, &a.Username, &a.TailscaleID, &a.InviteID, &a.InviteURL, &a.InviteState, &a.AcceptedBy, &a.KeyState, &a.Error)
 	return a, err
 }
 func (h *Handler) Apply(ctx context.Context, id, key string, remove bool) error {
@@ -145,29 +160,17 @@ func (h *Handler) Apply(ctx context.Context, id, key string, remove bool) error 
 		}
 	}
 	if remove && a.KeyState != "deleted" || !remove && a.KeyState != "ready" {
-		if a.AccountID == "" {
+		value := key
+		if remove {
+			value = ""
+		}
+		err = h.KeyEditor(id, value)
+		if err == nil {
+			state := "ready"
 			if remove {
-				_, err = h.DB.SQL.Exec("UPDATE member_access SET key_state='deleted' WHERE member_id=?", id)
-			} else {
-				err = fmt.Errorf("暂无可分配的本机跳板账号")
+				state = "deleted"
 			}
-		} else {
-			account, e := h.account(a.AccountID)
-			err = e
-			if err == nil {
-				value := key
-				if remove {
-					value = ""
-				}
-				err = h.KeyEditor(account, id, value)
-			}
-			if err == nil {
-				state := "ready"
-				if remove {
-					state = "deleted"
-				}
-				_, err = h.DB.SQL.Exec("UPDATE member_access SET key_state=? WHERE member_id=?", state, id)
-			}
+			_, err = h.DB.SQL.Exec("UPDATE member_access SET key_state=? WHERE member_id=?", state, id)
 		}
 		if err != nil {
 			problems = append(problems, err.Error())
@@ -284,6 +287,30 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 	if u.Role != "admin" {
 		return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
 	}
+	if r.Method == "POST" && r.URL.Path == "/api/bastion/install" {
+		return h.installFromWeb(w, r, u.Username)
+	}
+	if r.Method == "GET" && r.URL.Path == "/api/bastion/keys" {
+		keys, err := h.keyPool()
+		return 200, map[string]any{"keys": keys}, err
+	}
+	if r.Method == "POST" && r.URL.Path == "/api/bastion/keys/sync" {
+		if err := read(w, r, &struct{}{}); err != nil {
+			return 0, nil, err
+		}
+		err := h.SyncKeys()
+		if err == nil {
+			err = platform.Audit(h.DB.SQL, u.Username, "bastion.key.sync", JumpUser)
+		}
+		return 200, map[string]bool{"ok": err == nil}, err
+	}
+	if r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/bastion/keys/") {
+		if err := read(w, r, &struct{}{}); err != nil {
+			return 0, nil, err
+		}
+		err := h.cleanFreeKey(strings.TrimPrefix(r.URL.Path, "/api/bastion/keys/"), u.Username)
+		return 200, map[string]bool{"ok": err == nil}, err
+	}
 	if tailscale.IsRoute(r.URL.Path) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -316,15 +343,21 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 		if e != nil {
 			return 0, nil, e
 		}
-		accounts, e := platform.Rows(h.DB.SQL, "SELECT b.*,count(a.member_id) AS member_count FROM bastion_accounts b LEFT JOIN member_access a ON a.account_id=b.id GROUP BY b.id ORDER BY b.username")
-		if e != nil {
-			return 0, nil, e
-		}
-		assignments, e := platform.Rows(h.DB.SQL, `SELECT a.*,m.username,m.status AS member_status,COALESCE(b.username,'') AS account FROM member_access a JOIN members m ON m.id=a.member_id LEFT JOIN bastion_accounts b ON b.id=a.account_id ORDER BY m.created_at DESC`)
+		assignments, e := platform.Rows(h.DB.SQL, `SELECT a.*,m.username,m.status AS member_status FROM member_access a JOIN members m ON m.id=a.member_id ORDER BY m.created_at DESC`)
 		for _, a := range assignments {
 			delete(a, "invite_before")
 		}
-		return 200, map[string]any{"tailscale": t, "accounts": accounts, "assignments": assignments}, e
+		installationError := ""
+		if err := h.installation(); err != nil {
+			installationError = err.Error()
+		}
+		keys, poolErr := h.keyPool()
+		poolError := ""
+		if poolErr != nil {
+			poolError = poolErr.Error()
+			keys = []poolKey{}
+		}
+		return 200, map[string]any{"tailscale": t, "assignments": assignments, "key_pool": map[string]any{"keys": keys, "error": poolError}, "jump_installation": map[string]any{"ready": installationError == "", "error": installationError, "web": h.installInfo(), "account": h.accountStatus(), "data_directory": h.DB.Directory}}, e
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/bastion/"), "/")
 	if len(parts) == 3 && parts[0] == "members" && (parts[2] == "refresh" || parts[2] == "resolve-invite") && r.Method == "POST" {
@@ -347,44 +380,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(parts) == 1 && parts[0] == "accounts" && r.Method == "POST" {
-		var req struct {
-			Username string `json:"username"`
-			Host     string `json:"host"`
-			Port     int    `json:"port"`
-		}
-		if e := read(w, r, &req); e != nil {
-			return 0, nil, e
-		}
-		if !validHost(req.Host) || req.Port < 1 || req.Port > 65535 {
-			return 0, nil, httpapi.NewError(400, "请提供 SSH 主机和有效端口")
-		}
-		a, e := lookupAccount(req.Username)
-		if e != nil {
-			return 0, nil, httpapi.NewError(400, e.Error())
-		}
-		a.ID = platform.RandomHex(16)
-		a.Host = req.Host
-		a.Port = req.Port
-		a.Enabled = true
-		e = h.DB.Transaction(func(tx *sql.Tx) error {
-			_, e := tx.Exec("INSERT INTO bastion_accounts VALUES(?,?,?,?,?,?,?,1)", a.ID, a.Username, a.Home, a.UID, a.GID, a.Host, a.Port)
-			if e != nil {
-				return e
-			}
-			return platform.Audit(tx, u.Username, "bastion.account.add", a.Username)
-		})
-		if platform.IsConstraint(e) {
-			e = httpapi.NewError(409, "该本机账号已添加")
-		}
-		return 201, a, e
-	}
-	if len(parts) == 2 && (parts[0] == "tailscale" || parts[0] == "accounts") {
-		table := "bastion_" + parts[0]
-		column := "account_id"
-		if parts[0] == "tailscale" {
-			column = "tailscale_id"
-		}
+	if len(parts) == 2 && parts[0] == "tailscale" {
+		table := "bastion_tailscale"
+		column := "tailscale_id"
 		if r.Method == "DELETE" {
 			e := h.DB.Transaction(func(tx *sql.Tx) error {
 				var count int
@@ -412,7 +410,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 				return 0, nil, httpapi.NewError(400, "需提供 enabled")
 			}
 			name := ""
-			if parts[0] == "tailscale" && !*req.Enabled {
+			if !*req.Enabled {
 				if e := h.DB.SQL.QueryRow("SELECT name FROM bastion_tailscale WHERE id=?", parts[1]).Scan(&name); e != nil {
 					if e == sql.ErrNoRows {
 						return 0, nil, httpapi.NewError(404, "节点池资源不存在")
@@ -420,7 +418,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 					return 0, nil, e
 				}
 			}
-			if parts[0] == "tailscale" && *req.Enabled {
+			if *req.Enabled {
 				devices, e := h.Tailscale.Devices(r.Context())
 				if e != nil {
 					return 0, nil, e
@@ -438,19 +436,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 				}
 			}
 			e := h.DB.Transaction(func(tx *sql.Tx) error {
-				var e error
-				if parts[0] == "tailscale" {
-					_, e = tx.Exec("INSERT INTO bastion_tailscale VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,name=CASE WHEN excluded.name='' THEN name ELSE excluded.name END", parts[1], name, *req.Enabled)
-				} else {
-					var result sql.Result
-					result, e = tx.Exec("UPDATE bastion_accounts SET enabled=? WHERE id=?", *req.Enabled, parts[1])
-					if e == nil {
-						n, _ := result.RowsAffected()
-						if n != 1 {
-							return httpapi.NewError(404, "账号不存在")
-						}
-					}
-				}
+				_, e := tx.Exec("INSERT INTO bastion_tailscale VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,name=CASE WHEN excluded.name='' THEN name ELSE excluded.name END", parts[1], name, *req.Enabled)
 				if e != nil {
 					return e
 				}

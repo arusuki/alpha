@@ -173,7 +173,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             expect(page.locator('#allocationStatus')).to_contain_text('上次结果')
             page.locator('#allocationSearch').fill('')
             page.locator('#allocationsRefresh').click()
-            expect(page.locator('#allocationStatus')).to_contain_text('全部节点已响应')
+            expect(page.locator('#allocationStatus')).to_contain_text('计算节点统计完整')
             expect(page.locator('#allocationRows')).to_contain_text('node-one-training')
             expect(page.locator('#allocationRows')).to_contain_text('node-two-training')
             page.screenshot(path='/tmp/project-alpha-cluster-users.png', full_page=True)

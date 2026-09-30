@@ -10,6 +10,14 @@ server {
     # Registration URLs contain REG_PASS and invitation secrets.
     access_log off;
 
+    location = /api/registry/info {
+        proxy_pass http://127.0.0.1:8767;
+        proxy_set_header Host $http_host;
+        proxy_read_timeout 10s;
+        proxy_intercept_errors on;
+        error_page 502 = @silent;
+    }
+
     location = /api/registry/connect {
         proxy_pass http://127.0.0.1:8767;
         proxy_http_version 1.1;

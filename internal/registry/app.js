@@ -60,7 +60,6 @@
     try { link = new URL(access.invite_url); } catch (_) { /* No link yet. */ }
     $('share').hidden = !(link && link.protocol === 'https:' && link.host === 'login.tailscale.com' && !link.username && !link.password && ['invited','accepted'].includes(access.invite_state));
     if (!$('share').hidden) { $('shareLink').href = link.href; $('shareLink').textContent = link.href; }
-    $('access').textContent = access.key_state === 'ready' && access.host ? `SSH 跳板：${access.account}@${access.host}:${access.port}` : '';
   }
   function watch() {
     $('registration').hidden = true; $('resume').hidden = true; $('progress').hidden = false;

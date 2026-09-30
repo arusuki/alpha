@@ -12,7 +12,7 @@
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
 - `internal/agent`：模型配置与凭据、Responses/Chat Completions 适配、分析会话、工具定义与编排，以及独立 API 和数据表。
-- `internal/bastion`、`internal/tailscale`：共享访问资源池、Tailscale 凭据及邀请、本机跳板公钥和回收记录。
+- `internal/bastion`、`internal/tailscale`：共享访问资源池、Tailscale 凭据及邀请、固定 alpha-jump 跳板公钥和回收记录。
 - `internal/members`：独立的机器使用者、注册 schema、邀请码页面管理和公开注册 API。
 - `internal/containers`：命令行扫描导入、创建配置、启停与删除，以及管理记录和审计。
 - `internal/process`：订阅 Tetragon 进程事件，常驻维护并按容器导出活动进程森林。
@@ -50,29 +50,25 @@ go build -o bin/project-alpha ./cmd/project-alpha
 
 registry 部署在公网 HTTPS 域名，control 可以完全位于内网。连接方向为 **control → registry**：control 主动建立带认证的 WebSocket 长连接，registry 在同一连接中发送邀请码校验、注册和进度查询。control 不需要公网入站端口。一个 control 可连接多个 registry；每个 registry 在首次认证连接时将 control 的实例 ID 持久写入自身数据目录，此后只接受同一 control，包括断线重连和服务重启；换绑须使用新的 registry 数据目录，原目录不会被覆盖。
 
-为同一 control 及其 registry 准备相同的强随机连接令牌（32–256 位非空白 ASCII 字符，推荐 `openssl rand -hex 32`），保存到权限为 0600 的文件。此令牌独立于用户访问路径中的 `REG_PASS`。公网机器启动：
+registry 未指定连接令牌时，使用加密安全随机源自动生成 32 字节令牌（64 位十六进制字符，256 位随机熵），以 0600 权限保存到数据目录的 `registry-token` 文件，重启时复用。成功监听后会在启动日志打印此令牌，用于在 control 网页添加节点。连接令牌独立于用户访问路径中的 `REG_PASS`。公网机器启动：
 
 ```bash
 REG_PASS=Ab3dE6gH ./bin/project-alpha --registry \
   --data-dir ./registry-data --port 8767 \
-  --registry-token-file ./registry-token \
   --allowed-host register.example.com --secure-cookie
 ```
 
 `REG_PASS` 必须恰好是 8 位 ASCII 字母或数字，也可通过 `--reg-pass-file` 提供。为域名配置 [registry nginx 示例](deploy/nginx-registry.conf.example)，代理到本机 8767。systemd 示例见 [registry 单元](deploy/project-alpha-registry.service)。
 
-在内网 control 启动时指定公网 registry 地址；每个地址独立维持心跳并在断线后退避重连：
+在 control 网页打开“集群总控 → 添加节点”，类型选择 **registry · 公网注册入口**，填写名称、公网 HTTPS 根地址和该 registry 的连接令牌，点击“验证并保存”。可以添加多个 registry，各自使用独立令牌；无需给 control 配置命令行地址或令牌。
 
-```bash
-./bin/project-alpha --control --data-dir ./control-data \
-  --registry-token-file ./registry-token \
-  --registry-url https://register.example.com \
-  --registry-url https://register-backup.example.com
-```
+总控验证 registry 类型、协议版本、实例 ID 和已有 control 绑定，保存成功后立即建立连接。节点卡片显示连接中、已连接或重连中、错误提示与最近通信时间。点击“编辑地址与令牌”更新连接；令牌显示为 `••••••` 占位，未输入新值时保留原令牌，真实令牌不回传到浏览器。修改 registry 服务端令牌后，在网页填写相同新令牌即可重连。地址变更仍须对应同一个 registry 实例。
 
-连接令牌也可由 `PROJECT_ALPHA_REGISTRY_TOKEN` 提供；指定文件时以文件为准。公网地址必须使用 HTTPS，仅本机联调允许 `http://127.0.0.1:端口`。registry 不作为计算 worker 添加到集群节点列表，也不会获得管理 API 权限。
+配置保存在总控数据库中，重启自动恢复连接，断线独立退避重连。移除 registry 会停止连接，保留 registry 的原有 control 绑定及注册会话。registry 显示在节点目录与在线数量中，容器分配、存储操作和容器统计仅使用 worker。
 
-管理员在 control 配置注册字段、邀请码、Tailscale 凭据与共享节点池、跳板账号和 worker 容器配置后，向用户提供 `https://register.example.com/registry/Ab3dE6gH/<邀请码>`。根路径、错误密码、失效邀请码及未经验证的资源/API 请求直接断开连接，不提供默认界面。control 离线时无法验证新邀请码，入口仅返回连接不可用错误。
+需要自行指定 registry 连接令牌时，可通过 `--registry-token-file ./registry-token`（建议文件权限 0600）或 `PROJECT_ALPHA_REGISTRY_TOKEN` 提供；指定文件时以文件为准，显式提供的令牌不打印，也不覆盖自动保存的令牌。令牌须为 32–256 位无空白 ASCII 字符；指定文件为空、读取失败或令牌无效时明确报错，不自动生成替代值。已有自动令牌文件内容、类型或权限无效时同样报错，不覆盖原文件。公网地址必须使用 HTTPS，仅本机联调允许 `http://127.0.0.1:端口`。registry 只获准处理使用者注册与进度请求，不获得管理 API 权限。
+
+管理员在 control 配置注册字段、邀请码、Tailscale 凭据与共享节点池、跳板公钥管理和 worker 容器配置后，向用户提供 `https://register.example.com/registry/Ab3dE6gH/<邀请码>`。根路径、错误密码、失效邀请码及未经验证的资源/API 请求直接断开连接，不提供默认界面。control 离线时无法验证新邀请码，入口仅返回连接不可用错误。
 
 邀请码向 control 校验通过后显示注册表单。用户提交用户名、公钥及自定义字段，页面通过 SSE 实时显示注册、网络分享、公钥和各 worker 容器的分配状态；Tailscale 链接一旦生成即展示。失败项可请求重试，结果未知的分享由管理员核对，避免重复分享。注册会话保留 7 天，刷新或 registry 重启可以继续查看；已提交但回复丢失的注册使用同一资源令牌恢复，不重复消耗邀请码。会话和 control 绑定保存在 registry 自己的数据目录中。
 
@@ -88,7 +84,7 @@ REG_PASS=Ab3dE6gH ./bin/project-alpha --registry \
 
 总控 SQLite 保存账号、使用者、节点连接（含节点令牌）以及 Agent 配置、会话和报告，node SQLite 保存各自扫描配置、任务、容器和审计；Agent API Key 加密后存入总控 SQLite，密钥保存在总控数据目录的 `agent-api-key.key`。扫描结果保存在 `data/results/`。目录增量更新按节点写入 SQLite，取消时保留已提交的明细。历史记录可在网页删除；备份时停止服务并复制整个数据目录，包括密钥文件。
 
-1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v20、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
+1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v23、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
 
 独立扫描示例：
 
@@ -138,7 +134,19 @@ API、检查范围和失败恢复详见 [容器管理](docs/containers.md)。旧
 
 管理员通过「集群使用者」配置注册信息 schema（文本、单选、必填）、在页面生成带 quota 的邀请码，并查看使用者信息；邀请码管理不提供 JSON API。使用者通过 `GET /api/members/registration-schema` 获取表单定义，再调用 `POST /api/members/register` 提交使用者标识、邀请码、SSH 公钥和信息。每个邀请码只允许成功登记 quota 人，名额用尽后失效，失败不扣名额。
 
-这些账号属于机器使用者，独立于 Alpha 运维平台登录账号；注册不提供平台访问权限。总控在注册后分配一个 Tailscale 分享节点和一个本机跳板账号，将 SSH 公钥注入跳板及各 node 的容器。每名使用者在每个 node 最多分配一个容器；凭本人资源令牌查询和补申请失败项。管理员删除使用者时逐项回收资源，离线或失败记录保留到回收完成。详见 [跳板机管理与资源 API](docs/bastion.md)。接口、示例和校验规则见 [集群使用者登记](docs/members.md)。
+这些账号属于机器使用者，独立于 Alpha 运维平台登录账号；注册不提供平台访问权限。总控在注册后分配一个 Tailscale 分享节点及固定 `alpha-jump` 跳板访问，发布跳板公钥并将公钥注入各 node 的容器。每名使用者在每个 node 最多分配一个容器；凭本人资源令牌查询和补申请失败项。管理员删除使用者时逐项回收资源，离线或失败记录保留到回收完成。详见 [跳板机管理与资源 API](docs/bastion.md)。接口、示例和校验规则见 [集群使用者登记](docs/members.md)。
+
+跳板可在网页管理：普通用户启动 control 后，管理员在「跳板机管理」选择添加账号或接管已有 `alpha-jump`，输入当前服务用户的 sudo 密码即可安装或更新工具。取消接管保留账号、工具、data 和现有授权，只停止公钥管理；删除账号要求先撤销全部公钥并输入 `alpha-jump` 确认，工具和 data 保留。密码只经内存管道用于本次命令，不保存、不复用 sudo 授权，提交或关闭窗口后清空。服务用户须具备 sudo 执行权限；网页安装要求 systemd 的 `NoNewPrivileges=false`，模板已配置。之后注册和回收无需 sudo。
+
+也可从终端初始化：
+
+```sh
+sudo ./bin/project-alpha bastion init --service-user yuuka --data-dir /var/lib/project-alpha-control
+./bin/project-alpha --control --data-dir /var/lib/project-alpha-control
+```
+
+初始化创建固定 `alpha-jump` 账号、安装 OpenSSH 公钥读取器并校验及重载 SSH 配置。公钥保存在独立目录，不跨用户写 home；注册时添加公钥，删除使用者时撤销公钥，无需填写跳板地址或端口。终端的 `--service-user` 必须为已有非 root 用户，systemd 的 `User=` 须与其一致；网页自动使用当前服务用户和数据目录。公钥池独立于用户列表。显式接管可将其他 control 或服务用户的账号、工具和公钥 data 转交当前服务，保留全部已有公钥并补齐当前用户缺少的公钥；未关联当前用户的条目标为 `free`，可在网页清理。重复初始化不会隐式转移管理归属，格式不匹配时仍明确拒绝。详见 [初始化与权限](docs/bastion.md#一次性初始化与权限)。
+
 
 使用者打开总控 `/status/<注册返回的id>`，输入本人资源令牌，即可查看全部 node 的基本信息、在线状态和自己的容器名称。尚无容器的在线节点可点击「＋」立即申请，成功显示容器和 SSH 地址，失败显示具体错误并可重试；管理员使用者列表提供状态页链接。
 
@@ -192,7 +200,7 @@ curl -b cookie.txt 'http://127.0.0.1:8765/api/cluster/nodes/<节点ID>/api/proce
 
 ## 部署
 
-将二进制放到 `/opt/project-alpha/bin/project-alpha`，在总控安装 [systemd 单元](deploy/project-alpha.service)：
+将二进制放到 `/opt/project-alpha/bin/project-alpha`。先将 [总控 systemd 单元](deploy/project-alpha.service) 的 `User=` 改为运行服务的现有普通用户；使用跳板时须与 `bastion init --service-user` 一致。然后安装单元：
 
 ```bash
 sudo cp deploy/project-alpha.service /etc/systemd/system/project-alpha.service
@@ -220,7 +228,9 @@ go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
 ```
 
-使用者注册端到端回归：`python3 tests/test_members_browser.py` 会构建并启动使用临时数据目录的本机服务，验证管理员字段配置、邀请码页面管理、公开注册、配额、权限隔离和移动端布局；不操作 Docker。
+使用者注册端到端回归：`python3 tests/test_members_browser.py` 会构建并启动使用临时数据目录的本机服务，验证管理员字段配置、邀请码页面管理、公开注册、配额、权限隔离、移动端布局，以及跳板账号操作弹窗的密码清空、重试、取消接管及删除确认；安装接口使用模拟响应，不执行宿主 sudo 或 Docker。
+
+跳板 SSH 集成回归：`python3 tests/test_bastion_ssh.py` 使用已有的 `sc2025:1.0` 镜像（可通过 `PROJECT_ALPHA_BASTION_IMAGE` 指定），在无网络临时容器中验证网页 sudo 安装、错误密码、凭据不缓存及密码不持久化、不同 UID 的公钥发布和读取、真实 TCP 转发、shell 拒绝、重启、撤销、跨 control / 服务用户接管、公钥内容关联与自动补齐、free 清理、取消接管及删除后重建保留 data。镜像需包含 OpenSSH、sudo、Python 3 和用户管理工具；不拉取镜像，不修改宿主账号或 SSH 配置。
 
 公网注册回归：`go test -race ./internal/registry ./internal/cluster ./internal/app` 验证出站连接、多 registry、持久身份锁定、静默入口、注册恢复和真实进度流；`python3 tests/test_registry_browser.py` 验证实际服务的注册表单、进度、分享链接、刷新和移动端布局。测试使用模拟资源结果，不调用真实 Tailscale 或 Docker。
 

@@ -133,7 +133,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil || host.User != nil || host.Path != "" || !s.hosts[strings.ToLower(host.Hostname())] {
 		panic(http.ErrAbortHandler)
 	}
-	if r.URL.Path == LinkPath && r.URL.RawQuery == "" {
+	if (r.URL.Path == LinkPath || r.URL.Path == InfoPath) && r.URL.RawQuery == "" && r.URL.RawPath == "" {
 		s.Hub.ServeHTTP(w, r)
 		return
 	}

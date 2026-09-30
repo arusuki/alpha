@@ -6,13 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
-	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/tailscale"
@@ -58,8 +53,9 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 	h := NewHandler(db)
 	f := &networkFake{}
 	h.Tailscale = f
-	h.KeyEditor = func(Account, string, string) error { return nil }
-	if _, e = db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('node-a','Node A',1); INSERT INTO bastion_accounts VALUES('account-a','jump','/test',1001,1001,'jump.test',22,1)"); e != nil {
+	h.KeyEditor = func(string, string) error { return nil }
+	h.installation = func() error { return nil }
+	if _, e = db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('node-a','Node A',1)"); e != nil {
 		t.Fatal(e)
 	}
 	store := &members.Store{Database: db}
@@ -76,7 +72,7 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 func TestAccessIdempotencyAndCompleteRevocation(t *testing.T) {
 	h, f, m := fixture(t)
 	calls := []string{}
-	h.KeyEditor = func(_ Account, id, key string) error { calls = append(calls, id+key); return nil }
+	h.KeyEditor = func(id, key string) error { calls = append(calls, id+key); return nil }
 	for range 2 {
 		if e := h.Apply(context.Background(), m.ID, testKey, false); e != nil {
 			t.Fatal(e)
@@ -134,68 +130,17 @@ func TestUnknownInviteNeverRecreatedOrForgotten(t *testing.T) {
 }
 func TestKeyFailureRetainsShareAndRetriesOnlyKey(t *testing.T) {
 	h, f, m := fixture(t)
-	h.KeyEditor = func(Account, string, string) error { return errors.New("permission denied") }
+	h.KeyEditor = func(string, string) error { return errors.New("permission denied") }
 	if e := h.Apply(context.Background(), m.ID, testKey, false); e == nil {
 		t.Fatal("missing failure")
 	}
-	h.KeyEditor = func(Account, string, string) error { return nil }
+	h.KeyEditor = func(string, string) error { return nil }
+	h.installation = func() error { return nil }
 	if e := h.Apply(context.Background(), m.ID, testKey, false); e != nil {
 		t.Fatal(e)
 	}
 	if f.created != 1 {
 		t.Fatal("duplicate invite")
-	}
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest("DELETE", "/api/bastion/accounts/account-a", strings.NewReader("{}"))
-	r.Header.Set("Content-Type", "application/json")
-	_, _, e := h.Dispatch(w, r, platform.User{Role: "admin"})
-	var api *httpapi.Error
-	if !errors.As(e, &api) || api.Status != 409 {
-		t.Fatalf("removed allocated pool %v", e)
-	}
-}
-func TestLocalKeyFilePreservesUnrelatedKeysAndRejectsLinks(t *testing.T) {
-	a := Account{Home: t.TempDir(), UID: os.Getuid(), GID: os.Getgid()}
-	if e := os.Chmod(a.Home, 0700); e != nil {
-		t.Fatal(e)
-	}
-	id := strings.Repeat("a", 32)
-	if e := os.Mkdir(filepath.Join(a.Home, ".ssh"), 0700); e != nil {
-		t.Fatal(e)
-	}
-	path := filepath.Join(a.Home, ".ssh", "authorized_keys")
-	original := "# original\n" + testKey + " original\n"
-	if e := os.WriteFile(path, []byte(original), 0600); e != nil {
-		t.Fatal(e)
-	}
-	for range 2 {
-		if e := editHome(a, id, testKey); e != nil {
-			t.Fatal(e)
-		}
-	}
-	raw, _ := os.ReadFile(path)
-	if !strings.Contains(string(raw), `restrict,port-forwarding,command="/bin/false"`) {
-		t.Fatal(string(raw))
-	}
-	if e := editHome(a, id, ""); e != nil {
-		t.Fatal(e)
-	}
-	raw, _ = os.ReadFile(path)
-	if string(raw) != original {
-		t.Fatal("unrelated key changed")
-	}
-	if e := os.Remove(path); e != nil {
-		t.Fatal(e)
-	}
-	outside := filepath.Join(t.TempDir(), "keys")
-	os.WriteFile(outside, []byte("keep"), 0600)
-	os.Symlink(outside, path)
-	if e := editHome(a, id, testKey); e == nil {
-		t.Fatal("followed symlink")
-	}
-	raw, _ = os.ReadFile(outside)
-	if string(raw) != "keep" {
-		t.Fatal("changed external file")
 	}
 }
 

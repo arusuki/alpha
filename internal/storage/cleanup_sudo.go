@@ -10,11 +10,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 	"time"
 
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/sudoutil"
 )
 
 const sudoCleanupPrompt = "[project-alpha-cleanup-password]"
@@ -38,59 +38,6 @@ type cleanupHelperEvent struct {
 	Status string `json:"status,omitempty"`
 	Code   string `json:"code,omitempty"`
 	Error  string `json:"error,omitempty"`
-}
-
-// Never retain sudo output: PAM/plug-ins may echo input in their diagnostics.
-// Only the exact prompt is recognized; send one password and wipe it immediately.
-// Waiting for a prompt also keeps credentials out of the helper's stdin when
-// sudo requires no authentication (root or a NOPASSWD rule).
-type sudoCleanupInput struct {
-	mu          sync.Mutex
-	input       io.WriteCloser
-	password    []byte
-	matched     int
-	sent, ready bool
-}
-
-func (p *sudoCleanupInput) Write(data []byte) (int, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, b := range data {
-		if b == sudoCleanupPrompt[p.matched] {
-			p.matched++
-		} else {
-			p.matched = 0
-			if b == sudoCleanupPrompt[0] {
-				p.matched = 1
-			}
-		}
-		if p.matched != len(sudoCleanupPrompt) {
-			continue
-		}
-		p.matched = 0
-		if p.sent || p.ready {
-			_ = p.input.Close()
-			continue
-		}
-		p.sent = true
-		_, err := p.input.Write(p.password)
-		clear(p.password)
-		p.password = nil
-		if err == nil {
-			_, err = p.input.Write([]byte{'\n'})
-		}
-		if err != nil {
-			_ = p.input.Close()
-		}
-	}
-	return len(data), nil
-}
-func (p *sudoCleanupInput) clear() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	clear(p.password)
-	p.password = nil
-	p.ready = true
 }
 
 // One sudo process owns one confirmed batch. -k with a command ignores and does
@@ -123,9 +70,9 @@ func runSudoCleanup(ctx context.Context, password []byte, request cleanupHelperR
 		return httpapi.NewError(503, "无法创建删除进度管道")
 	}
 	defer output.Close()
-	prompt := &sudoCleanupInput{input: input, password: password}
+	prompt := sudoutil.NewInput(input, password, sudoCleanupPrompt)
 	cmd.Stderr = prompt
-	defer prompt.clear()
+	defer prompt.Clear()
 	cmd.Cancel = func() error { _ = input.Close(); return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 3 * time.Second
 	if err = cmd.Start(); err != nil {
@@ -162,7 +109,7 @@ func runSudoCleanup(ctx context.Context, password []byte, request cleanupHelperR
 		}
 		return httpapi.NewError(403, "sudo 认证失败或无执行权限，请重新输入服务账号的 sudo 密码；密码未保存")
 	}
-	prompt.clear()
+	prompt.Clear()
 	authTimer.Stop()
 	if err := childCtx.Err(); err != nil {
 		return err

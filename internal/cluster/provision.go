@@ -36,7 +36,7 @@ func (h *Control) initProvision() error {
 		if err := h.Bastion.Reserve(tx, m); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("INSERT INTO member_node_resources(member_id,node_id,state,updated_at) SELECT ?,id,'pending',? FROM cluster_nodes", m.ID, platform.Now()); err != nil {
+		if _, err := tx.Exec("INSERT INTO member_node_resources(member_id,node_id,state,updated_at) SELECT ?,id,'pending',? FROM cluster_nodes WHERE kind='worker'", m.ID, platform.Now()); err != nil {
 			return err
 		}
 		_, err := tx.Exec("INSERT INTO member_work VALUES(?,1)", m.ID)
@@ -239,7 +239,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),COALESCE(a.ssh_host,''),COALESCE(a.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? ORDER BY n.created_at,n.id`, id)
+	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),COALESCE(a.ssh_host,''),COALESCE(a.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -308,6 +308,9 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 		n, e := h.node(req.NodeID)
 		if e != nil {
 			return 0, nil, e
+		}
+		if n.Kind != "worker" {
+			return 0, nil, httpapi.NewError(400, "只能在 worker 节点创建容器")
 		}
 		var state string
 		e = h.DB.SQL.QueryRow("SELECT state FROM member_node_resources WHERE member_id=? AND node_id=?", id, req.NodeID).Scan(&state)

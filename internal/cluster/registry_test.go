@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"project-alpha/internal/bastion"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
@@ -46,18 +45,11 @@ func registryFixture(t *testing.T, f *fixture) (*registry.Server, *httptest.Serv
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.SQL.Close() })
-	h := registry.NewServer(db, "Abcd1234", strings.Repeat("s", 64), nil, false)
+	h := registry.NewServer(db, "Abcd1234", platform.RandomHex(32), nil, false)
 	s := httptest.NewServer(h)
 	t.Cleanup(s.Close)
 	t.Cleanup(h.Hub.Close)
-	id, err := f.db.CheckMode("control")
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); registry.Connect(ctx, s.URL, h.Hub.Token, id, f.control.RegistryDispatch) }()
-	t.Cleanup(func() { cancel(); <-done })
+	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", map[string]string{"kind": "registry", "name": "Public registration", "url": s.URL, "token": h.Hub.Token}), 201)
 	deadline := time.Now().Add(4 * time.Second)
 	for {
 		if _, err = h.Hub.Call(context.Background(), registry.Request{Action: "ping"}); err == nil {
@@ -105,9 +97,8 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 		}
 	}()
 	f.control.Bastion.Tailscale = registryNetwork{release}
-	f.control.Bastion.KeyEditor = func(bastion.Account, string, string) error { return nil }
-	if _, err := f.db.SQL.Exec(`INSERT INTO bastion_tailscale VALUES('device','network',1);
-INSERT INTO bastion_accounts VALUES('account','jump','/test',1000,1000,'jump.internal',22,1)`); err != nil {
+	f.control.Bastion.KeyEditor = func(string, string) error { return nil }
+	if _, err := f.db.SQL.Exec(`INSERT INTO bastion_tailscale VALUES('device','network',1)`); err != nil {
 		t.Fatal(err)
 	}
 	store := &members.Store{Database: f.db}
@@ -221,6 +212,15 @@ INSERT INTO bastion_accounts VALUES('account','jump','/test',1000,1000,'jump.int
 		if view.Access.InviteState == "invited" && view.Access.KeyState == "ready" && len(view.Nodes) == 1 && view.Nodes[0].State == "ready" {
 			if view.Access.InviteURL != "https://login.tailscale.com/admin/invite/test-share" {
 				t.Fatal(view.Access)
+			}
+			gateways, err := f.control.nodes("registry")
+			if err != nil || len(gateways) != 2 || gateways[0].Token == gateways[1].Token {
+				t.Fatalf("independent registry credentials: %v", err)
+			}
+			requireStatus(t, f.request(t, "POST", "/api/members/"+view.MemberID+"/containers", map[string]string{"node_id": gateways[0].ID}), 400)
+			_, result, err := f.control.memberStatus(context.Background(), view.MemberID)
+			if err != nil || len(result.(map[string]any)["nodes"].([]memberNodeStatus)) != 1 {
+				t.Fatalf("registry included in member status: %v", err)
 			}
 			return
 		}

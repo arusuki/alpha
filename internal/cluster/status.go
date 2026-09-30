@@ -72,7 +72,7 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 	if err != nil {
 		return 0, nil, err
 	}
-	nodes, err := h.nodes()
+	nodes, err := h.nodes("worker")
 	if err != nil {
 		return 0, nil, err
 	}

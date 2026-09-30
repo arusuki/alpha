@@ -29,25 +29,26 @@ function render(){
   $('clusterContainers').textContent=data.container_count;
   $('clusterOwners').textContent=data.members.filter(m=>m.count&&m.username).length;
   $('clusterNodeCount').textContent=String(data.nodes.length).padStart(2,'0');
-  $('clusterHealth').textContent=!data.nodes.length?'等待第一个节点接入':data.partial?`${data.nodes.length-data.online} 个节点暂时不可用`:'所有节点连接正常';
-  $('clusterHealth').parentElement.dataset.state=!data.nodes.length?'empty':data.partial?'partial':'online';
+  $('clusterHealth').textContent=!data.nodes.length?'等待第一个节点接入':data.online!==data.nodes.length?`${data.nodes.length-data.online} 个节点暂时不可用`:'所有节点连接正常';
+  $('clusterHealth').parentElement.dataset.state=!data.nodes.length?'empty':data.online!==data.nodes.length?'partial':'online';
   $('clusterChecked').textContent=`检查于 ${dateTime(data.checked_at)}`;
   $('clusterPartial').hidden=!data.partial;
-  $('clusterPartial').textContent='部分节点不可用，当前数量仅包含可访问节点，不能作为集群完整统计。';
+  $('clusterPartial').textContent='部分计算节点不可用，容器统计仅包含可访问的 worker。';
   renderNodes();
-  $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'全部节点已响应。')+` ${data.container_count} 个容器记录 · ${dateTime(data.checked_at)}`;
+  $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'计算节点统计完整。')+` ${data.container_count} 个容器记录 · ${dateTime(data.checked_at)}`;
   renderAllocations();
 }
 function renderNodes(){
   const data=state.data;if(!data)return;
   const query=$('clusterSearch').value.trim().toLowerCase();
-  const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.inventory?.host].join(' ').toLowerCase().includes(query)));
+  const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter===state.filter)));
   const html=nodes.map(n=>{
+    if(n.kind==='registry')return renderRegistryNode(n,data.nodes.indexOf(n)+1);
     const inventory=n.inventory;
     const owners=n.online?new Set(inventory.containers.map(c=>c.owner).filter(Boolean)).size:0;
     const scanned=inventory?.observed_at?new Date(inventory.observed_at).toLocaleString('zh-CN'):'';
-    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / NODE</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
+    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
   }).join('')||(!data.nodes.length?`<div class="cluster-empty"><span class="empty-node-symbol" aria-hidden="true">＋</span><h3>${admin()?'连接你的第一个节点':'等待节点接入'}</h3><p>${admin()?'添加主机后，在这里统一查看状态并进入管理。':'管理员添加节点后，这里会显示你的主机。'}</p>${admin()?'<button class="primary" data-add-node>添加节点 ↗</button>':''}</div>`:'<div class="cluster-empty"><h3>没有匹配的节点</h3><p>试试其他名称、主机地址或连接状态。</p><button data-clear-nodes>清除筛选</button></div>');
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
@@ -56,6 +57,16 @@ function renderNodes(){
   container.innerHTML=html;
   state.nodesHTML=html;
   if(focus){const [attr,value]=focus;const target=[...container.querySelectorAll(`[${attr}]`)].find(el=>el.getAttribute(attr)===value);(target||$('clusterSearch')).focus({preventScroll:true});}
+}
+function renderRegistryNode(n,index){
+  const connection=n.connection;
+  const status=n.online?'已连接':({connecting:'连接中',reconnecting:'重连中',disconnected:'未连接'}[connection?.state]||'未连接');
+  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${n.error?`<div class="node-unavailable"><p>${esc(n.error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑地址与令牌</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
+}
+function nodeKindControls(){
+  const registry=$('nodeKind').value==='registry';
+  $('nodeURL').placeholder=registry?'https://register.example.com':'http://10.0.0.11:8765';
+  $('nodeKindHint').textContent=registry?'公网注册入口：总控主动连接，支持多个入口各自设置令牌。公网地址需使用 HTTPS。':'计算节点：提供容器、存储扫描与进程管理。';
 }
 function renderAllocations(){
   const data=state.data;if(!data)return;
@@ -79,8 +90,9 @@ function edit(id=null){
   if(!admin()||state.busy)return;
   const n=state.data?.nodes.find(n=>n.id===id);state.editing=id;
   $('nodeForm').reset();$('nodeName').value=n?.name||'';$('nodeURL').value=n?.url||'';
+  $('nodeKind').value=n?.kind||'worker';$('nodeKind').disabled=!!id;nodeKindControls();
   $('nodeToken').required=!id;$('nodeDialogTitle').textContent=id?'编辑节点':'添加节点';
-  $('nodeTokenHint').textContent=id?'留空保留原令牌；更换地址时会核对节点身份。':'令牌只保存在总控服务端，用于连接这个节点。';
+  $('nodeTokenHint').textContent=id?'未输入新令牌时保留原值；更换地址时会核对节点身份。':'输入此节点的连接令牌；令牌只保存在总控服务端。';
   $('nodeFormError').textContent='';$('nodeDialog').showModal();
 }
 function busy(value){state.busy=value;for(const id of ['nodeSave','nodeCancel','nodeRemoveConfirm','nodeRemoveCancel'])$(id).disabled=value;}
@@ -144,6 +156,7 @@ $('allocationSearch').addEventListener('input',renderAllocations);
 $('clusterSearch').addEventListener('input',renderNodes);
 document.querySelectorAll('[data-node-filter]').forEach(button=>button.addEventListener('click',()=>{state.filter=button.dataset.nodeFilter;renderNodes();}));
 $('clusterAdd').addEventListener('click',()=>edit());
+$('nodeKind').addEventListener('change',nodeKindControls);
 $('nodeCancel').addEventListener('click',()=>$('nodeDialog').close());
 $('nodeDialog').addEventListener('close',()=>{$('nodeToken').value='';});
 for(const id of ['nodeDialog','nodeRemoveDialog'])$(id).addEventListener('cancel',e=>{if(state.busy)e.preventDefault();});
@@ -153,12 +166,12 @@ $('clusterNodes').addEventListener('click',e=>{
   const editButton=e.target.closest('[data-edit-node]');if(editButton){edit(editButton.dataset.editNode);return;}
   const remove=e.target.closest('[data-remove-node]');if(!remove||!admin()||state.busy)return;
   state.removing=state.data.nodes.find(n=>n.id===remove.dataset.removeNode);if(!state.removing)return;
-  $('nodeRemoveDescription').textContent=`从总控移除 ${state.removing.name}？`;$('nodeRemoveError').textContent='';$('nodeRemoveDialog').showModal();
+  $('nodeRemoveDescription').textContent=state.removing.kind==='registry'?`移除 ${state.removing.name} 并断开注册连接？此入口将无法办理注册；registry 保存的总控绑定与会话仍会保留。`:`从总控移除 ${state.removing.name}？`;$('nodeRemoveError').textContent='';$('nodeRemoveDialog').showModal();
 });
 $('nodeForm').addEventListener('submit',async e=>{
   e.preventDefault();if(state.busy||!admin())return;
   const epoch=state.epoch,id=state.editing;busy(true);$('nodeFormError').textContent='';
-  const body=JSON.stringify({name:$('nodeName').value,url:$('nodeURL').value,token:$('nodeToken').value});$('nodeToken').value='';
+  const body=JSON.stringify({kind:$('nodeKind').value,name:$('nodeName').value,url:$('nodeURL').value,token:$('nodeToken').value});$('nodeToken').value='';
   try{await api('/api/cluster/nodes'+(id?'/'+id:''),{method:id?'PUT':'POST',body});if(epoch!==state.epoch)return;$('nodeDialog').close();if(state.pending)await state.pending;await refresh();}
   catch(error){if(epoch===state.epoch)$('nodeFormError').textContent=error.message;}
   finally{if(epoch===state.epoch)busy(false);}

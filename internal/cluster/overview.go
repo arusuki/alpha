@@ -9,13 +9,15 @@ import (
 
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/registry"
 )
 
 type NodeStatus struct {
 	Node
-	Online    bool       `json:"online"`
-	Error     string     `json:"error,omitempty"`
-	Inventory *Inventory `json:"inventory,omitempty"`
+	Online     bool                 `json:"online"`
+	Error      string               `json:"error,omitempty"`
+	Inventory  *Inventory           `json:"inventory,omitempty"`
+	Connection *registry.LinkStatus `json:"connection,omitempty"`
 }
 type MemberNode struct {
 	ID         string      `json:"id"`
@@ -30,7 +32,7 @@ type MemberSummary struct {
 }
 
 func (h *Control) overview(r *http.Request, user platform.User) (int, any, error) {
-	nodes, err := h.nodes()
+	nodes, err := h.nodes("")
 	if err != nil {
 		return 0, nil, err
 	}
@@ -43,6 +45,13 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		wg.Go(func() {
 			status := NodeStatus{Node: n}
 			defer func() { out[i] = status }()
+			if n.Kind == "registry" {
+				connection := h.registryStatus(n.ID)
+				status.Connection = &connection
+				status.Online = connection.State == "connected"
+				status.Error = connection.Error
+				return
+			}
 			select {
 			case slots <- struct{}{}:
 				defer func() { <-slots }()
@@ -72,11 +81,18 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		}
 	}
 	online, total := 0, 0
+	workerPartial := false
 	for _, status := range out {
 		if !status.Online {
+			if status.Kind == "worker" {
+				workerPartial = true
+			}
 			continue
 		}
 		online++
+		if status.Kind != "worker" {
+			continue
+		}
 		perOwner := map[string][]Container{}
 		for _, c := range status.Inventory.Containers {
 			perOwner[c.Owner] = append(perOwner[c.Owner], c)
@@ -97,5 +113,5 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		owners = append(owners, s)
 	}
 	sort.Slice(owners, func(i, j int) bool { return owners[i].Username < owners[j].Username })
-	return 200, map[string]any{"nodes": out, "members": owners, "online": online, "container_count": total, "partial": online != len(nodes), "checked_at": platform.Now()}, nil
+	return 200, map[string]any{"nodes": out, "members": owners, "online": online, "container_count": total, "partial": workerPartial, "checked_at": platform.Now()}, nil
 }

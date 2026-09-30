@@ -144,13 +144,143 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.locator('#bastionDevicesRefresh').click()
                 expect(page.locator('#bastionDevices')).to_contain_text('<img')
                 assert page.locator('#bastionDevices img').count() == 0
-                page.locator('#bastionUsername').fill('root')
-                page.locator('#bastionHost').fill('jump.test')
-                page.locator('#bastionAccountForm .primary').click()
-                expect(page.locator('#bastionError')).to_contain_text('非 root')
+                install_data = context.request.get(url + '/api/bastion/resources').json()
+                assert not install_data['jump_installation']['ready']
+                expect(page.locator('#bastionJumpInstallation')).to_have_text(install_data['jump_installation']['error'])
+                # Exercise the password dialog without invoking host sudo.
+                install_data['jump_installation']['web'] = dict(available=True, service_user='service-test', error='')
+                install_data['jump_installation']['account'] = dict(exists=True, managed=False, released=False, removed=False)
+                page.route('**/api/bastion/resources', lambda route: route.fulfill(status=200,
+                    content_type='application/json', body=json.dumps(install_data)))
+                installs = []
+                page.route('**/api/bastion/install', lambda route: installs.append(route))
+                page.locator('#bastionRefresh').click()
+                expect(page.locator('#bastionAdopt')).to_be_visible()
+                expect(page.locator('#bastionInstall')).not_to_be_visible()
+                page.locator('#bastionAdopt').click()
+                expect(page.locator('#bastionInstallTitle')).to_have_text('接管已有 alpha-jump')
+                page.locator('#bastionInstallClose').click()
+                install_data['jump_installation']['account']['exists'] = False
+                with page.expect_response('**/api/bastion/resources') as refreshed:
+                    page.locator('#bastionRefresh').click()
+                assert not refreshed.value.json()['jump_installation']['account']['exists']
+                expect(page.locator('#bastionRefresh')).to_be_enabled()
+                expect(page.locator('#bastionError')).to_have_text('')
+                assert not errors, errors
+                expect(page.locator('#bastionInstall')).to_be_visible()
+                expect(page.locator('#bastionInstall')).to_be_enabled()
+                page.locator('#bastionInstall').click()
+                expect(page.locator('#bastionInstallUser')).to_contain_text('service-test')
+                page.locator('#bastionSudoPassword').fill('discard-on-close')
+                page.locator('#bastionInstallClose').click()
+                assert page.locator('#bastionSudoPassword').input_value() == ''
+                page.locator('#bastionInstall').click()
+                page.locator('#bastionSudoPassword').fill('browser-sudo-password')
+                page.locator('#bastionInstallSubmit').click()
+                expect(page.locator('#bastionSudoPassword')).to_have_value('')
+                expect(page.locator('#bastionInstallSubmit')).to_be_disabled()
+                page.wait_for_timeout(100)
+                assert len(installs) == 1
+                assert installs[0].request.post_data_json == dict(action='init', sudo_password='browser-sudo-password')
+                installs.pop().fulfill(status=403, content_type='application/json', body=json.dumps(dict(error='sudo 认证失败')))
+                expect(page.locator('#bastionInstallError')).to_contain_text('sudo 认证失败')
+                expect(page.locator('#bastionInstallSubmit')).to_be_enabled()
+                assert page.locator('#bastionSudoPassword').input_value() == ''
+                page.locator('#bastionSudoPassword').fill('browser-sudo-retry')
+                page.locator('#bastionInstallSubmit').click()
+                page.wait_for_timeout(100)
+                assert len(installs) == 1
+                install_data['jump_installation'].update(ready=True, error='', account=dict(exists=True, managed=True, released=False, removed=False))
+                installs.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                expect(page.locator('#bastionInstallDialog')).not_to_be_visible()
+                expect(page.locator('#bastionStatus')).to_contain_text('跳板安装完成')
+                assert page.locator('#bastionSudoPassword').input_value() == ''
+                assert 'browser-sudo' not in page.evaluate('JSON.stringify([localStorage, sessionStorage])')
+                expect(page.locator('#bastionJumpInstallation')).to_have_text('已安装，可管理 alpha-jump 公钥。')
+                page.locator('#bastionInstall').click()
+                page.locator('#bastionSudoPassword').fill('discard-on-navigation')
+                page.evaluate('BastionUI.leave()')
+                expect(page.locator('#bastionInstallDialog')).not_to_be_visible()
+                assert page.locator('#bastionSudoPassword').input_value() == ''
+                # The pool is a superset: show free keys and clean only the
+                # selected unreferenced entry; referenced rows have no cleanup.
+                used_id, free_id = '1' * 32, '2' * 32
+                install_data['key_pool'] = dict(error='', keys=[
+                    dict(id=used_id, public_key='ssh-ed25519 used-key', fingerprint='SHA256:used',
+                         state='used', members=[dict(id=member_id, username='alice', status='active')]),
+                    dict(id=free_id, public_key='ssh-ed25519 ' + 'A' * 360, fingerprint='SHA256:free',
+                         state='free', members=[])])
+                with page.expect_response('**/api/bastion/resources'):
+                    page.locator('#bastionRefresh').click()
+                expect(page.locator('#bastionKeyPool')).to_contain_text('free · 未关联用户')
+                expect(page.locator('#bastionKeyPool')).to_contain_text('alice')
+                assert page.locator('[data-clean-key]').count() == 1
+                assert page.locator('[data-clean-key="' + used_id + '"]').count() == 0
+                page.locator('#bastionKeyPool details').last.locator('summary').click()
+                page.set_viewport_size(dict(width=390, height=844))
+                assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'pool key mobile overflow'
+                page.set_viewport_size(dict(width=1440, height=1080))
+                cleanups = []
+                page.route('**/api/bastion/keys/' + free_id, lambda route: cleanups.append(route))
+                page.locator('[data-clean-key="' + free_id + '"]').click()
+                page.wait_for_timeout(100)
+                assert cleanups[0].request.method == 'DELETE'
+                cleanups.pop().fulfill(status=409, content_type='application/json',
+                    body=json.dumps(dict(error='该公钥已有使用者关联，不能按 free 清理')))
+                expect(page.locator('#bastionError')).to_contain_text('已有使用者关联')
+                expect(page.locator('[data-clean-key="' + free_id + '"]')).to_be_enabled()
+                page.locator('[data-clean-key="' + free_id + '"]').click()
+                page.wait_for_timeout(100)
+                install_data['key_pool']['keys'].pop()
+                cleanups.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                expect(page.locator('#bastionStatus')).to_have_text('已清理 free 公钥。')
+                expect(page.locator('[data-clean-key]')).to_have_count(0)
+                syncs = []
+                page.route('**/api/bastion/keys/sync', lambda route: syncs.append(route))
+                page.locator('#bastionKeySync').click()
+                page.wait_for_timeout(100)
+                assert syncs[0].request.method == 'POST' and syncs[0].request.post_data_json == {}
+                syncs.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                expect(page.locator('#bastionStatus')).to_contain_text('已补齐用户公钥')
+                expect(page.locator('#bastionRefresh')).to_be_enabled()
+                page.unroute('**/api/bastion/keys/' + free_id)
+                page.unroute('**/api/bastion/keys/sync')
+                # Account lifecycle choices share the one-shot sudo dialog.
+                for action, button in [('release', '#bastionRelease'), ('adopt', '#bastionAdopt'),
+                                       ('delete', '#bastionRemoveAccount')]:
+                    page.locator(button).click()
+                    expect(page.locator('#bastionInstallDescription')).to_contain_text('data')
+                    page.locator('#bastionSudoPassword').fill('account-action-password')
+                    if action == 'delete':
+                        page.locator('#bastionInstallSubmit').click()
+                        assert not installs, 'delete did not require account confirmation'
+                        page.locator('#bastionAccountConfirm').fill('alpha-jump')
+                    page.locator('#bastionInstallSubmit').click()
+                    expect(page.locator('#bastionSudoPassword')).to_have_value('')
+                    page.wait_for_timeout(100)
+                    assert len(installs) == 1
+                    payload = dict(action=action, sudo_password='account-action-password')
+                    if action == 'delete':
+                        payload['confirm'] = 'alpha-jump'
+                    assert installs[0].request.post_data_json == payload
+                    install_data['jump_installation'].update(ready=action == 'adopt',
+                        error='' if action == 'adopt' else '账号已停止管理',
+                        account=dict(exists=action != 'delete', managed=action == 'adopt',
+                                     released=action == 'release', removed=action == 'delete'))
+                    installs.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                    expect(page.locator('#bastionInstallDialog')).not_to_be_visible()
+                    expect(page.locator('#bastionRefresh')).to_be_enabled()
+                    if action == 'release':
+                        expect(page.locator('#bastionAdopt')).to_be_visible()
+                        expect(page.locator('#bastionInstall')).not_to_be_visible()
+                expect(page.locator('#bastionInstall')).to_have_text('添加账号')
+                expect(page.locator('#bastionInstall')).to_be_visible()
+                assert 'account-action-password' not in page.evaluate('JSON.stringify([localStorage, sessionStorage])')
+                page.unroute('**/api/bastion/resources')
+                page.unroute('**/api/bastion/install')
                 page.locator(f'[data-member="{member_id}"]').click()
                 expect(page.locator('#bastionMemberDialog')).to_be_visible()
-                expect(page.locator('#bastionMemberContent')).to_contain_text('暂无可分配')
+                expect(page.locator('#bastionMemberContent')).to_contain_text('alpha-jump')
                 page.locator('#bastionMemberClose').click()
                 page.screenshot(path='/tmp/project-alpha-bastion-desktop.png', full_page=True)
                 page.set_viewport_size(dict(width=390, height=844))

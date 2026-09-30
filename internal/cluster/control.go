@@ -21,9 +21,15 @@ import (
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/registry"
 )
 
 type Control struct {
+	identity        string
+	nodeMu          sync.Mutex
+	nodesClosed     bool
+	registryMu      sync.Mutex
+	registryLinks   map[string]*registryLink
 	Bastion         *bastion.Handler
 	memberGates     sync.Map
 	provisionWake   chan struct{}
@@ -58,6 +64,10 @@ func NewControl(db *platform.Database) (*Control, error) {
 		lock.Close()
 		return nil, err
 	}
+	if err := h.initRegistryLinks(); err != nil {
+		h.Close()
+		return nil, err
+	}
 	return h, nil
 }
 func (h *Control) Close() {
@@ -72,6 +82,7 @@ func (h *Control) Close() {
 		handlers = append(handlers, handler)
 	}
 	h.agentMu.Unlock()
+	h.closeRegistryLinks()
 	for _, handler := range handlers {
 		handler.Manager.Close()
 	}
@@ -93,9 +104,13 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var info Info
-	err := h.call(ctx, n, "GET", "/api/worker/info", nil, platform.User{}, &info)
-	if err == nil && (info.Mode != "worker" || info.Protocol != Protocol || !identifier.MatchString(info.ID)) {
-		err = httpapi.NewError(409, "目标不是支持当前协议的 worker")
+	path, protocol := "/api/worker/info", Protocol
+	if n.Kind == "registry" {
+		path, protocol = registry.InfoPath, registry.Protocol
+	}
+	err := h.call(ctx, n, "GET", path, nil, platform.User{}, &info)
+	if err == nil && (info.Mode != n.Kind || info.Protocol != protocol || !identifier.MatchString(info.ID)) {
+		err = httpapi.NewError(409, "目标不是支持当前协议的 "+n.Kind)
 	}
 	return info, err
 }
@@ -134,7 +149,7 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if r.URL.Path == "/api/cluster/nodes" {
 		if r.Method == "GET" {
-			nodes, err := h.nodes()
+			nodes, err := h.nodes("")
 			return 200, map[string]any{"nodes": nodes}, err
 		}
 		if r.Method == "POST" {
@@ -154,6 +169,11 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			case "PUT":
 				return h.saveNode(w, r, user, n.ID)
 			case "DELETE":
+				h.nodeMu.Lock()
+				defer h.nodeMu.Unlock()
+				if h.nodesClosed {
+					return fail(httpapi.NewError(503, "总控正在关闭"))
+				}
 				err = h.DB.Transaction(func(tx *sql.Tx) error {
 					var count int
 					if err := tx.QueryRow("SELECT count(*) FROM member_node_resources WHERE node_id=?", n.ID).Scan(&count); err != nil {
@@ -167,10 +187,16 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 					}
 					return platform.Audit(tx, user.Username, "cluster.node.remove", n.Name+" / "+n.ID)
 				})
+				if err == nil && n.Kind == "registry" {
+					h.stopRegistry(n.ID)
+				}
 				return 200, map[string]bool{"ok": true}, err
 			}
 		}
 		if len(parts) > 2 && parts[1] == "api" {
+			if n.Kind != "worker" {
+				return fail(httpapi.NewError(404, "registry 不提供计算节点操作"))
+			}
 			path := "/" + strings.Join(parts[1:], "/")
 			if agent.IsRoute(path) {
 				return h.dispatchAgent(w, r, user, n, path)
@@ -195,21 +221,33 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 }
 
 func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform.User, id string) (int, any, error) {
+	h.nodeMu.Lock()
+	defer h.nodeMu.Unlock()
+	if h.nodesClosed {
+		return 0, nil, httpapi.NewError(503, "总控正在关闭")
+	}
 	var value nodeInput
+	var previous Node
 	if err := decode(w, r, &value); err != nil {
 		return 0, nil, err
 	}
-	if id != "" && value.Token == "" {
+	if id != "" {
 		n, err := h.node(id)
 		if err != nil {
 			return 0, nil, err
 		}
-		value.Token = n.Token
+		if value.Kind != n.Kind {
+			return 0, nil, httpapi.NewError(400, "不能更改已有节点的类型，请添加新节点")
+		}
+		if value.Token == "" {
+			value.Token = n.Token
+		}
+		previous = n
 	}
 	if err := value.validate(); err != nil {
 		return 0, nil, err
 	}
-	n := Node{ID: id, Name: value.Name, URL: value.URL, Token: value.Token, CreatedAt: platform.Now()}
+	n := Node{Kind: value.Kind, ID: id, Name: value.Name, URL: value.URL, Token: value.Token, CreatedAt: platform.Now()}
 	info, err := h.probe(r.Context(), n)
 	if err != nil {
 		return 0, nil, err
@@ -229,7 +267,7 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 			if count >= 128 {
 				return httpapi.NewError(409, "最多可添加 128 个节点")
 			}
-			_, err = tx.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?)", n.ID, n.Name, n.URL, n.Token, n.CreatedAt)
+			_, err = tx.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?)", n.ID, n.Name, n.URL, n.Token, n.CreatedAt, n.Kind)
 			action = "cluster.node.add"
 		} else {
 			result, e := tx.Exec("UPDATE cluster_nodes SET name=?,url=?,token=? WHERE id=?", n.Name, n.URL, n.Token, id)
@@ -256,6 +294,9 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 		return 0, nil, err
 	}
 	n, err = h.node(n.ID)
+	if err == nil && n.Kind == "registry" && (id == "" || n.URL != previous.URL || n.Token != previous.Token) {
+		h.startRegistry(n)
+	}
 	status := 200
 	if id == "" {
 		status = 201

@@ -11,10 +11,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	web "project-alpha/dist"
+	"project-alpha/internal/bastion"
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
@@ -27,6 +27,33 @@ type stringFlags []string
 func (s *stringFlags) String() string     { return fmt.Sprint([]string(*s)) }
 func (s *stringFlags) Set(v string) error { *s = append(*s, v); return nil }
 func Run(ctx context.Context, args []string) error {
+	if len(args) == 2 && args[0] == "bastion" && args[1] == "install-helper" {
+		return bastion.ServeInstallHelper(ctx, os.Stdin, os.Stdout)
+	}
+	if len(args) == 3 && args[0] == "bastion" && (args[1] == "prepare-control" || args[1] == "sync-control-keys") {
+		if os.Geteuid() == 0 {
+			return fmt.Errorf("总控目录必须以普通服务用户初始化")
+		}
+		db, err := platform.OpenDatabase(args[2], cluster.Initialize)
+		if err != nil {
+			return err
+		}
+		defer db.SQL.Close()
+		id, err := db.CheckMode("control")
+		if err != nil {
+			return err
+		}
+		if args[1] == "sync-control-keys" {
+			if err = bastion.NewHandler(db).SyncKeys(); err != nil {
+				return err
+			}
+		}
+		_, err = fmt.Fprintln(os.Stdout, id)
+		return err
+	}
+	if len(args) > 0 && args[0] == "bastion" {
+		return bastion.CLI(ctx, args[1:], os.Stdout)
+	}
 	if len(args) == 1 && args[0] == "cleanup-helper" {
 		return storage.ServeCleanupHelper(ctx, os.Stdin, os.Stdout)
 	}
@@ -64,6 +91,10 @@ func Run(ctx context.Context, args []string) error {
 子命令：
   serve              启动总控（默认）、API-only worker 或公网 registry
   containers import  扫描并接管已有 Docker 容器，写入所在节点的 worker 数据目录
+  bastion init       添加或重装固定 alpha-jump 跳板；日常运行免 sudo
+  bastion adopt      接管已有 alpha-jump、工具和 data
+  bastion release    取消接管，保留账号、工具、data 和现有授权
+  bastion delete     删除 alpha-jump 账号，保留工具和 data
   scan               独立扫描存储并导出 JSON 快照
   process            采集容器进程或回放事件，导出 JSON 进程树
 
@@ -90,9 +121,7 @@ func Run(ctx context.Context, args []string) error {
 	control := p.Bool("control", false, "启动集群总控 Web 服务（默认）；与 --worker、--registry 互斥")
 	worker := p.Bool("worker", false, "启动 API-only 节点；与 --control、--registry 互斥")
 	registryMode := p.Bool("registry", false, "启动公网注册节点；由 control 主动建立长连接；无默认页面")
-	var registryURLs stringFlags
-	p.Var(&registryURLs, "registry-url", "control 主动连接的 registry HTTPS 地址；可重复指定多个 registry")
-	registryTokenFile := p.String("registry-token-file", "", "control 与 registry 的连接令牌文件；否则读取 PROJECT_ALPHA_REGISTRY_TOKEN")
+	registryTokenFile := p.String("registry-token-file", "", "registry 连接令牌文件（仅用于 --registry）；未指定时读取 PROJECT_ALPHA_REGISTRY_TOKEN，否则自动生成并保存到数据目录；在 control 网页填写相同令牌")
 	regPassFile := p.String("reg-pass-file", "", "registry 的 8 位字母数字入口密码文件；否则读取 REG_PASS")
 	workerTokenFile := p.String("worker-token-file", "", "节点令牌文件（仅用于 --worker）；未指定时读取 PROJECT_ALPHA_WORKER_TOKEN，否则自动生成并保存到数据目录")
 	secure := p.Bool("secure-cookie", false, "为 HTTPS 启用 Secure 会话 Cookie")
@@ -114,29 +143,23 @@ func Run(ctx context.Context, args []string) error {
 	if *control && *worker || *control && *registryMode || *worker && *registryMode {
 		return fmt.Errorf("--control, --worker and --registry are mutually exclusive")
 	}
-	if (*worker || *registryMode) && len(registryURLs) > 0 {
-		return fmt.Errorf("--registry-url requires control mode")
-	}
 	if !*registryMode && *regPassFile != "" {
 		return fmt.Errorf("--reg-pass-file requires --registry")
 	}
-	if (*worker || (!*registryMode && len(registryURLs) == 0)) && *registryTokenFile != "" {
-		return fmt.Errorf("--registry-token-file requires --registry or --registry-url")
-	}
-	for _, address := range registryURLs {
-		if _, err := registry.Endpoint(address); err != nil {
-			return err
-		}
+	if !*registryMode && *registryTokenFile != "" {
+		return fmt.Errorf("--registry-token-file requires --registry; configure registry nodes in the control web interface")
 	}
 	registryToken, regPass := "", ""
-	if *registryMode || len(registryURLs) > 0 {
+	automaticRegistryToken := false
+	if *registryMode {
 		var err error
 		registryToken, err = readSecret(*registryTokenFile, "PROJECT_ALPHA_REGISTRY_TOKEN")
 		if err != nil {
-			return err
+			return fmt.Errorf("read registry token: %w", err)
 		}
-		if !cluster.ValidToken(registryToken) {
-			return fmt.Errorf("registry connection token must contain 32–256 non-whitespace ASCII characters; set --registry-token-file or PROJECT_ALPHA_REGISTRY_TOKEN")
+		automaticRegistryToken = *registryTokenFile == "" && registryToken == ""
+		if !automaticRegistryToken && !cluster.ValidToken(registryToken) {
+			return fmt.Errorf("registry token from --registry-token-file or PROJECT_ALPHA_REGISTRY_TOKEN must contain 32–256 non-whitespace ASCII characters")
 		}
 	}
 	if *registryMode {
@@ -187,7 +210,7 @@ func Run(ctx context.Context, args []string) error {
 	var handler http.Handler
 	if *worker {
 		if automaticToken {
-			token, err = loadWorkerToken(db.Directory)
+			token, err = loadServiceToken(db.Directory, "worker")
 			if err != nil {
 				return fmt.Errorf("load worker token: %w", err)
 			}
@@ -215,6 +238,12 @@ func Run(ctx context.Context, args []string) error {
 			return err
 		}
 		defer lock.Close()
+		if automaticRegistryToken {
+			registryToken, err = loadServiceToken(db.Directory, "registry")
+			if err != nil {
+				return fmt.Errorf("load registry token: %w", err)
+			}
+		}
 		frontend := registry.NewServer(db, regPass, registryToken, hosts, *secure)
 		defer frontend.Hub.Close()
 		handler = frontend
@@ -224,18 +253,6 @@ func Run(ctx context.Context, args []string) error {
 			return err
 		}
 		defer controlHandler.Close()
-		linkCtx, cancelLinks := context.WithCancel(ctx)
-		var links sync.WaitGroup
-		defer func() { cancelLinks(); links.Wait() }()
-		seenURLs := map[string]bool{}
-		for _, address := range registryURLs {
-			endpoint, _ := registry.Endpoint(address)
-			if seenURLs[endpoint] {
-				continue
-			}
-			seenURLs[endpoint] = true
-			links.Go(func() { registry.Connect(linkCtx, address, registryToken, identity, controlHandler.RegistryDispatch) })
-		}
 		frontend := platform.NewServer(db, controlHandler, web.Assets, hosts, *secure)
 		frontend.Control = true
 		handler = frontend
@@ -263,6 +280,9 @@ func Run(ctx context.Context, args []string) error {
 	log.Printf("project alpha: http://%s (%s)", listener.Addr(), mode)
 	if automaticToken {
 		log.Printf("worker token (saved in data directory): %s", token)
+	}
+	if automaticRegistryToken {
+		log.Printf("registry token (saved in data directory): %s", registryToken)
 	}
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {

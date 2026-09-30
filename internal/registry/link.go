@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"crypto/hmac"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,7 +21,9 @@ import (
 )
 
 const LinkPath = "/api/registry/connect"
-const protocol = "alpha-registry-v1"
+const InfoPath = "/api/registry/info"
+const Protocol = 2
+const protocol = "alpha-registry-v2"
 
 var identityPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -38,6 +41,16 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 }
 type Dispatch func(context.Context, Request) (any, error)
+
+type LinkConfig struct {
+	Address, Token, ControlID, RegistryID string
+}
+type LinkStatus struct {
+	State       string  `json:"state"`
+	Error       string  `json:"error,omitempty"`
+	ConnectedAt float64 `json:"connected_at,omitempty"`
+	LastSeen    float64 `json:"last_seen,omitempty"`
+}
 
 func response(req Request, body any, err error) Response {
 	out := Response{ID: req.ID, Status: 200}
@@ -79,8 +92,15 @@ func Endpoint(address string) (string, error) {
 }
 
 // Connect runs on control. Every registry gets its own outbound, reconnecting link.
-func Connect(ctx context.Context, address, token, identity string, dispatch Dispatch) {
-	endpoint, err := Endpoint(address)
+func Connect(ctx context.Context, link LinkConfig, dispatch Dispatch, observe func(LinkStatus)) {
+	status := LinkStatus{State: "connecting"}
+	publish := func() {
+		if observe != nil {
+			observe(status)
+		}
+	}
+	publish()
+	endpoint, err := Endpoint(link.Address)
 	if err != nil {
 		log.Printf("registry: %v", err)
 		return
@@ -88,21 +108,29 @@ func Connect(ctx context.Context, address, token, identity string, dispatch Disp
 	delay := time.Second
 	for ctx.Err() == nil {
 		started := time.Now()
-		config, _ := websocket.NewConfig(endpoint, address)
+		config, _ := websocket.NewConfig(endpoint, link.Address)
 		config.Protocol = []string{protocol}
-		config.Header.Set("Authorization", "Bearer "+token)
-		config.Header.Set("X-Alpha-Control", identity)
+		config.Header.Set("Authorization", "Bearer "+link.Token)
+		config.Header.Set("X-Alpha-Control", link.ControlID)
+		config.Header.Set("X-Alpha-Registry", link.RegistryID)
 		dialCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		conn, err := config.DialContext(dialCtx)
 		cancel()
 		if err == nil {
-			log.Printf("registry connected: %s", address)
-			err = serveControl(ctx, conn, dispatch)
+			log.Printf("registry connected: %s", link.Address)
+			status = LinkStatus{State: "connected", ConnectedAt: platform.Now()}
+			err = serveControl(ctx, conn, dispatch, func() {
+				status.LastSeen = platform.Now()
+				publish()
+			})
 		}
 		if ctx.Err() != nil {
 			return
 		}
-		log.Printf("registry disconnected: %s (%v); reconnecting", address, err)
+		status.State = "reconnecting"
+		status.Error = "连接中断或认证失败，请检查地址、令牌与 registry 绑定；正在自动重连"
+		publish()
+		log.Printf("registry disconnected: %s (%v); reconnecting", link.Address, err)
 		if time.Since(started) > time.Minute {
 			delay = time.Second
 		}
@@ -117,7 +145,7 @@ func Connect(ctx context.Context, address, token, identity string, dispatch Disp
 	}
 }
 
-func serveControl(ctx context.Context, conn *websocket.Conn, dispatch Dispatch) error {
+func serveControl(ctx context.Context, conn *websocket.Conn, dispatch Dispatch, heartbeat func()) error {
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { conn.Close() })
 	defer stop()
@@ -144,6 +172,7 @@ func serveControl(ctx context.Context, conn *websocket.Conn, dispatch Dispatch) 
 		if err := websocket.JSON.Send(conn, response(req, body, err)); err != nil {
 			return err
 		}
+		heartbeat()
 	}
 }
 
@@ -224,7 +253,30 @@ func (h *Hub) Call(ctx context.Context, req Request) (json.RawMessage, error) {
 }
 func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id := r.Header.Get("X-Alpha-Control")
-	if r.Method != "GET" || h.Token == "" || !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+h.Token)) || !identityPattern.MatchString(id) || r.Header.Get("Sec-WebSocket-Protocol") != protocol {
+	if r.Method != "GET" || h.Token == "" || !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+h.Token)) || !identityPattern.MatchString(id) {
+		panic(http.ErrAbortHandler)
+	}
+	registryID, err := h.DB.CheckMode("registry")
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if r.URL.Path == InfoPath {
+		var bound string
+		err := h.DB.SQL.QueryRow("SELECT control_id FROM registry_control WHERE id=1").Scan(&bound)
+		if err != nil && err != sql.ErrNoRows {
+			writeError(w, err)
+			return
+		}
+		if bound != "" && bound != id {
+			writeError(w, httpapi.NewError(409, "registry 已绑定其他 control"))
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		httpapi.WriteJSON(w, 200, map[string]any{"id": registryID, "mode": "registry", "protocol": Protocol})
+		return
+	}
+	if r.Header.Get("Sec-WebSocket-Protocol") != protocol || r.Header.Get("X-Alpha-Registry") != registryID {
 		panic(http.ErrAbortHandler)
 	}
 	server := websocket.Server{

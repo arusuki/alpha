@@ -29,9 +29,12 @@ func (h *Control) request(ctx context.Context, node Node, method, path string, b
 	}
 	req.Header.Set("Content-Type", "application/json")
 	authenticate(req, node, user)
+	if node.Kind == "registry" {
+		req.Header.Set("X-Alpha-Control", h.identity)
+	}
 	response, err := h.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("节点连接中断，请检查地址、网络与服务状态")
+		return nil, fmt.Errorf("节点连接中断，请检查地址、令牌、节点类型与服务状态")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()

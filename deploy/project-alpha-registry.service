@@ -5,10 +5,10 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/project-alpha
-# Prepare 0600 secret files and replace the public hostname.
-LoadCredential=registry-token:/etc/project-alpha/registry-token
+# Prepare the 0600 entry password file and replace the public hostname.
+# The connection token is generated in the data directory and printed on startup.
 LoadCredential=reg-pass:/etc/project-alpha/reg-pass
-ExecStart=/opt/project-alpha/bin/project-alpha --registry --data-dir /var/lib/project-alpha-registry --host 127.0.0.1 --port 8767 --registry-token-file %d/registry-token --reg-pass-file %d/reg-pass --allowed-host register.example.com --secure-cookie
+ExecStart=/opt/project-alpha/bin/project-alpha --registry --data-dir /var/lib/project-alpha-registry --host 127.0.0.1 --port 8767 --reg-pass-file %d/reg-pass --allowed-host register.example.com --secure-cookie
 DynamicUser=true
 UMask=0077
 StateDirectory=project-alpha-registry

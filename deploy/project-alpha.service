@@ -6,7 +6,8 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/project-alpha
 ExecStart=/opt/project-alpha/bin/project-alpha --control --data-dir /var/lib/project-alpha-control --host 127.0.0.1 --port 8765
-DynamicUser=true
+# Must match bastion init --service-user; use an existing ordinary service user.
+User=project-alpha
 UMask=0077
 StateDirectory=project-alpha-control
 StateDirectoryMode=0700
@@ -14,7 +15,9 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
 KillMode=control-group
-NoNewPrivileges=true
+# Web installation uses a one-shot password-authenticated sudo command.
+# Set true only when password-authenticated sudo operations are no longer needed.
+NoNewPrivileges=false
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
