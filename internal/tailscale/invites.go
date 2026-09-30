@@ -120,7 +120,23 @@ func (h *Handler) DeleteInvite(ctx context.Context, id string) error {
 	if !remoteID.MatchString(id) {
 		return fmt.Errorf("无效的邀请 ID")
 	}
-	return h.invoke(ctx, "DELETE", "/device-invites/"+url.PathEscape(id), nil, nil)
+	path := "/device-invites/" + url.PathEscape(id)
+	err := h.invoke(ctx, "DELETE", path, nil, nil)
+	var remote *upstreamError
+	if !errors.As(err, &remote) || remote.status != http.StatusBadRequest {
+		return err
+	}
+	// Revoking an invite in the console can make DELETE return 400. Only a
+	// successful absence check makes that response safe to treat as completion.
+	var invite Invite
+	checkErr := h.invoke(ctx, "GET", path, nil, &invite)
+	if errors.As(checkErr, &remote) && remote.status == http.StatusNotFound {
+		return nil
+	}
+	if checkErr != nil {
+		return fmt.Errorf("撤销邀请返回 HTTP 400，无法确认邀请已不存在: %w", checkErr)
+	}
+	return err
 }
 
 type upstreamError struct{ status int }

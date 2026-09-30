@@ -2,6 +2,7 @@
 import os
 import json
 import re
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -341,6 +342,9 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.screenshot(path='/tmp/project-alpha-bastion-mobile.png', full_page=True)
                 page.set_viewport_size(dict(width=1440, height=1080))
                 page.locator(f'[data-member="{member_id}"]').click()
+                # This fixture never writes real alpha-jump keys or Tailscale shares.
+                with sqlite3.connect(root / 'data' / 'platform.sqlite3') as db:
+                    db.execute("UPDATE member_access SET invite_state='deleted',key_state='deleted'")
                 page.locator('#bastionDeleteConfirm').fill('alice')
                 page.locator('#bastionDeleteForm button').click()
                 expect(page.locator('#bastionMemberDialog')).not_to_be_visible()
@@ -350,7 +354,20 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                         break
                     page.wait_for_timeout(50)
                 assert response.status == 401
+                expect(page.locator('#bastionAssignments')).not_to_contain_text('alice')
+                assert context.request.get(url + '/api/members/' + member_id + '/resources').status == 404
                 page.locator('.platform-nav [data-page="members"]').click()
+                expect(page.locator('#membersBody')).not_to_contain_text('alice')
+                page.locator('#membersBody [data-delete-member]').click()
+                expect(page.locator('#memberDeleteDialog')).to_be_visible()
+                page.locator('#memberDeleteConfirm').fill('wrong-user')
+                page.locator('#memberDeleteSubmit').click()
+                expect(page.locator('#memberDeleteError')).to_contain_text('完整使用者标识')
+                page.locator('#memberDeleteConfirm').fill('bob')
+                page.locator('#memberDeleteSubmit').click()
+                expect(page.locator('#memberDeleteDialog')).not_to_be_visible()
+                expect(page.locator('#membersBody')).to_contain_text('暂无使用者')
+                expect(page.locator('#membersStatus')).to_contain_text('未归属')
                 # An invitation response arriving after logout must not expose its code.
                 pending = []
                 page.route('**/admin/member-invitations/create', lambda route: pending.append(route)

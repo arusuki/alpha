@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -108,6 +109,10 @@ func (h *Control) provisionLoop(ctx context.Context) {
 func (h *Control) provisionMember(ctx context.Context, id string) error {
 	var name, key, status string
 	if err := h.DB.SQL.QueryRow("SELECT username,ssh_public_key,status FROM members WHERE id=?", id).Scan(&name, &key, &status); err != nil {
+		if err == sql.ErrNoRows {
+			// A queue snapshot may outlive a synchronous administrator deletion.
+			return nil
+		}
 		return err
 	}
 	removing := status == "deleting"
@@ -117,6 +122,8 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 		return err
 	}
 	var wg sync.WaitGroup
+	var resultMu sync.Mutex
+	problems := []error{accessErr}
 	sem := make(chan struct{}, 8)
 	for _, row := range rows {
 		state := row["state"].(string)
@@ -131,18 +138,21 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 			defer func() { <-sem }()
 			if e := h.applyMemberNode(ctx, id, nodeID, name, key, removing); e != nil {
 				log.Printf("member resource result: %v", e)
+				resultMu.Lock()
+				problems = append(problems, e)
+				resultMu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
-	if removing && accessErr == nil {
+	if removing && errors.Join(problems...) == nil {
 		return h.DB.Transaction(func(tx *sql.Tx) error {
 			var count int
 			if e := tx.QueryRow("SELECT count(*) FROM member_node_resources WHERE member_id=? AND state<>'deleted'", id).Scan(&count); e != nil {
 				return e
 			}
 			if count != 0 {
-				return nil
+				return httpapi.NewError(409, "仍有节点未完成容器归属清除，请重试删除")
 			}
 			for _, table := range []string{"member_node_resources", "member_access", "member_work"} {
 				if _, e := tx.Exec("DELETE FROM "+table+" WHERE member_id=?", id); e != nil {
@@ -155,7 +165,7 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 			return platform.Audit(tx, "provisioner", "member.delete", name+" / "+id)
 		})
 	}
-	return accessErr
+	return errors.Join(problems...)
 }
 
 // applyMemberNode runs under the member gate and persists the result before returning.
@@ -185,7 +195,7 @@ func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key str
 		e = httpapi.NewError(502, "节点返回的容器分配无效，请重试核对")
 	}
 	if e == nil && removing && !out.OK {
-		e = httpapi.NewError(502, "节点未确认回收完成")
+		e = httpapi.NewError(502, "节点未确认容器归属已清除")
 	}
 	errorText := ""
 	state = "ready"
@@ -333,6 +343,13 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 			if _, e := tx.Exec("UPDATE members SET status='deleting' WHERE id=?", id); e != nil {
 				return e
 			}
+			// Include every worker: manually created/imported containers may have
+			// this owner without a member provisioning slot on that worker.
+			if _, e := tx.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,updated_at)
+ SELECT ?,id,'pending',? FROM cluster_nodes WHERE kind='worker'
+ ON CONFLICT(member_id,node_id) DO NOTHING`, id, platform.Now()); e != nil {
+				return e
+			}
 		} else if action == "containers" {
 			_, e := tx.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,updated_at) VALUES(?,?,'pending',?) ON CONFLICT(member_id,node_id) DO UPDATE SET state=CASE WHEN state='ready' THEN state ELSE 'pending' END,error='',updated_at=excluded.updated_at`, id, req.NodeID, platform.Now())
 			if e != nil {
@@ -354,6 +371,18 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 	})
 	if err != nil {
 		return 0, nil, err
+	}
+	if remove {
+		// Complete deletion before acknowledging success, keeping the durable
+		// work marker so an interrupted request can resume after restart.
+		err := h.provisionMember(r.Context(), id)
+		if err != nil {
+			if r.Context().Err() == nil {
+				_, _ = h.DB.SQL.Exec("UPDATE member_work SET pending=0 WHERE member_id=?", id)
+			}
+			return 0, nil, httpapi.NewError(409, "删除使用者未完成，请处理后重试: "+err.Error())
+		}
+		return 200, map[string]bool{"ok": true}, nil
 	}
 	if action == "containers" {
 		// Keep the durable work marker until the queue visits it, so a process

@@ -20,6 +20,8 @@ type Handler struct {
 	mu  sync.Mutex
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
 	Owner func(*sql.Tx, string, string) error
+	// UnassignOwner clears shared and managed ownership in the same transaction.
+	UnassignOwner func(*sql.Tx, string) error
 }
 
 func NewHandler(db *platform.Database) *Handler {

@@ -1,11 +1,11 @@
 'use strict';
 (()=>{
-const state={schema:null,busy:false,epoch:0};
+const state={schema:null,busy:false,epoch:0,deleting:null};
 const admin=()=>platform.user?.role==='admin';
 function controls(){
   $('memberSchemaEditor').disabled=state.busy||!state.schema;
-  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation'])$(id).disabled=state.busy;
-  document.querySelectorAll('[data-revoke-invitation] button,[data-update-invitation] button,[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
+  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm'])$(id).disabled=state.busy;
+  document.querySelectorAll('[data-delete-member],[data-revoke-invitation] button,[data-update-invitation] button,[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
 }
 function fields(){
   return [...$('memberSchemaFields').querySelectorAll('[data-member-field]')].map(row=>{
@@ -29,7 +29,7 @@ function renderSchema(schema){
 }
 function changed(){ $('memberSchemaStatus').textContent='有未保存的修改';preview(fields()); }
 function renderMembers(members){
-  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
+  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td><td><button class="danger" data-delete-member="${esc(m.id)}" data-username="${esc(m.username)}">删除</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
 
 }
 async function load(epoch,reloadSchema=false){
@@ -41,21 +41,39 @@ async function load(epoch,reloadSchema=false){
 async function task(fn){
   if(state.busy||!admin())return;
   const epoch=state.epoch;state.busy=true;controls();$('membersError').textContent='';
-  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$('membersError').textContent=error.message;}
+  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$(state.deleting?'memberDeleteError':'membersError').textContent=error.message;}
   finally{if(epoch===state.epoch){state.busy=false;controls();}}
 }
 function clearCode(){ $('memberInvitationCode').value='';$('memberInvitationCopyStatus').textContent=''; }
 window.MembersUI={
   open(){return task(epoch=>load(epoch));},
+  confirmDelete(id,username,onDeleted=null){
+    if(state.busy||!admin())return;
+    state.deleting={id,username,onDeleted};$('memberDeleteForm').reset();$('memberDeleteError').textContent='';
+    $('memberDeleteTitle').textContent='删除使用者 · '+username;$('memberDeleteDialog').showModal();$('memberDeleteConfirm').focus();
+  },
   invitationOptions(){return invitationPage(null,'/admin/member-invitations/select');},
   reset(){
-    state.epoch++;state.schema=null;state.busy=false;
+    state.epoch++;state.schema=null;state.busy=false;state.deleting=null;$('memberDeleteDialog').close();
     if($('memberInvitationDialog').open)$('memberInvitationDialog').close();clearCode();
     for(const id of ['membersBody','memberInvitationsPanel','memberSchemaFields','memberSchemaPreview'])$(id).innerHTML='';
     for(const id of ['membersError','membersStatus','memberSchemaStatus'])$(id).textContent='';
     $('memberInvitationForm').reset();controls();
   }
 };
+$('membersBody').addEventListener('click',event=>{
+  const button=event.target.closest('[data-delete-member]');if(button)window.MembersUI.confirmDelete(button.dataset.deleteMember,button.dataset.username);
+});
+$('memberDeleteCancel').addEventListener('click',()=>$('memberDeleteDialog').close());
+$('memberDeleteDialog').addEventListener('cancel',event=>{if(state.busy)event.preventDefault();});
+$('memberDeleteDialog').addEventListener('close',()=>{state.deleting=null;$('memberDeleteConfirm').value='';});
+$('memberDeleteForm').addEventListener('submit',event=>{event.preventDefault();task(async epoch=>{
+  const target=state.deleting;if(!target)return;
+  if($('memberDeleteConfirm').value!==target.username)throw Error('请填写完整使用者标识确认删除。');
+  await api(`/api/members/${target.id}`,{method:'DELETE',body:'{}'});if(epoch!==state.epoch)return;
+  $('memberDeleteDialog').close();$('membersStatus').textContent='使用者已删除，容器保留并标为未归属，等待管理员手动回收。';
+  if(target.onDeleted)await target.onDeleted();else await load(epoch);
+});});
 $('membersRefresh').addEventListener('click',()=>task(epoch=>load(epoch)));
 $('memberReloadSchema').addEventListener('click',()=>task(epoch=>load(epoch,true)));
 $('memberAddField').addEventListener('click',()=>{

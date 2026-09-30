@@ -1,6 +1,6 @@
 # 跳板机与使用者资源
 
-总控「跳板机管理」维护 Tailscale 分享节点池和固定 `alpha-jump` 账号。注册时发布成员公钥并分配容器，删除成员时回收。数据库格式及旧数据处理见 [运行与配置](operations.md#配置与数据)。
+总控「跳板机管理」维护 Tailscale 分享节点池和固定 `alpha-jump` 账号。注册时发布成员公钥并分配容器，删除成员时撤销授权并清空容器归属。数据库格式及旧数据处理见 [运行与配置](operations.md#配置与数据)。
 
 ## 配置
 
@@ -78,9 +78,9 @@ sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib
 
 ## 回收与管理接口
 
-删除成员先标记 `deleting`，停止本人令牌访问和新申请，再撤销分享、公钥，以及本流程分配的容器和带成员标记的 workspace/home。共享 `/data`、其他公钥和流程外容器保留。全部回收成功后删除成员及资源记录，保留审计和邀请码累计用量。
+删除成员先标记 `deleting`，停止本人令牌访问和新申请，再撤销 Tailscale 分享和跳板公钥，清空各 worker 上该使用者的容器归属。容器保持当前运行状态，管理记录、workspace/home 和共享 `/data` 均保留，显示为未归属，等待管理员手动回收。成功返回前直接删除成员及资源记录，保留审计和邀请码累计用量；失败时返回具体错误，管理员可重试删除。Tailscale 撤销返回 400 时再次按邀请 ID 查询，仅确认邀请不存在（404）后视为已撤销，权限、网络及其他错误保留。
 
-离线、失败或结果未知时保留记录，修复后再次 `DELETE` 继续；仍有资源引用的 worker 或分享节点不能移除。worker 保留已回收成员 ID 的分配槽，阻止迟到请求重建资源。
+离线、失败或结果未知时保留记录，修复后再次 `DELETE` 继续；仍有资源引用的 worker 或分享节点不能移除。worker 保留已删除成员 ID 的分配槽，阻止迟到请求重建资源。
 
 所有管理写操作要求平台管理员会话和 `X-CSRF-Token`。
 
@@ -103,6 +103,6 @@ sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib
 | POST | `/api/members/<id>/retry` | `{}` 重试资源分配 |
 | POST | `/api/members/<id>/containers` | `{node_id:"…"}` 立即申请指定 node，成功返回 200，失败返回错误 |
 | POST | `/api/members/<id>/token` | `{}` 重置并返回一次新的 `resource_token` |
-| DELETE | `/api/members/<id>` | `{}` 排队回收并删除使用者；返回 202 |
+| DELETE | `/api/members/<id>` | `{}` 撤销分享、公钥并清空容器归属后删除使用者；成功返回 200 |
 
 worker 内部接口为 `PUT/DELETE /api/containers/members/<member_id>`，由总控后台使用服务凭据调用，不经浏览器节点代理开放。

@@ -18,6 +18,35 @@ func newContainerHandler(db *platform.Database) *containers.Handler {
 		_, err := tx.Exec("INSERT INTO owners(container_id,owner) VALUES(?,?) ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner", id, owner)
 		return err
 	}
+	h.UnassignOwner = func(tx *sql.Tx, username string) error {
+		if _, err := tx.Exec(`UPDATE managed_containers SET owner=(SELECT owner FROM owners WHERE container_id=managed_containers.id)
+ WHERE owner=? AND EXISTS(SELECT 1 FROM owners WHERE container_id=managed_containers.id AND owner<>?)`, username, username); err != nil {
+			return err
+		}
+		// Empty overrides must survive future scans of immutable Docker labels,
+		// including containers present only in historical snapshots.
+		rows, err := platform.Rows(tx, `WITH candidates AS (
+ SELECT json_extract(c.value,'$.id') AS id,json_extract(c.value,'$.owner') AS owner
+ FROM snapshot_records r,json_each(r.metadata,'$.containers') c
+ UNION ALL SELECT id,owner FROM managed_containers
+ UNION ALL SELECT container_id,owner FROM owners
+ ) SELECT DISTINCT c.id FROM candidates c
+ LEFT JOIN managed_containers m ON m.id=c.id LEFT JOIN owners o ON o.container_id=c.id
+ WHERE COALESCE(o.owner,m.owner,c.owner)=?`, username)
+		if err != nil {
+			return err
+		}
+		for _, row := range rows {
+			id := row["id"].(string)
+			if err = h.Owner(tx, id, ""); err != nil {
+				return err
+			}
+			if _, err = tx.Exec("UPDATE managed_containers SET owner='' WHERE id=?", id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	return h
 }
 

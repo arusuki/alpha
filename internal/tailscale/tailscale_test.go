@@ -381,3 +381,48 @@ func TestDeviceInviteContractAndRedaction(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteInviteVerifiesAbsenceAfterBadRequest(t *testing.T) {
+	p := newHarness(t)
+	if _, err := p.h.saveSettings(fields(`{"revision":1,"tailnet":"-","api_token":"`+testToken+`"}`), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name                    string
+		deleteStatus, getStatus int
+		getBody                 string
+		wantOK                  bool
+		wantCalls               int
+	}{
+		{"revoked", 400, 404, testToken, true, 2},
+		{"still exists", 400, 200, `{"id":"invite1","accepted":true}`, false, 2},
+		{"check rejected", 400, 400, testToken, false, 2},
+		{"check forbidden", 400, 403, testToken, false, 2},
+		{"check unavailable", 400, 500, testToken, false, 2},
+		{"malformed check", 400, 200, `<html>`, false, 2},
+		{"deleted", 200, 0, "", true, 1},
+		{"already absent", 404, 0, "", true, 1},
+		{"delete forbidden", 403, 404, "", false, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var methods []string
+			p.h.client.Transport = transportFunc(func(r *http.Request) (*http.Response, error) {
+				methods = append(methods, r.Method)
+				if r.URL.Path != "/api/v2/device-invites/invite1" {
+					t.Fatal(r.URL)
+				}
+				if r.Method == "DELETE" {
+					return response(tc.deleteStatus, testToken), nil
+				}
+				return response(tc.getStatus, tc.getBody), nil
+			})
+			err := p.h.DeleteInvite(context.Background(), "invite1")
+			if (err == nil) != tc.wantOK || len(methods) != tc.wantCalls {
+				t.Fatalf("calls %v error %v", methods, err)
+			}
+			if err != nil && strings.Contains(err.Error(), testToken) {
+				t.Fatal("credential leaked")
+			}
+		})
+	}
+}

@@ -2,10 +2,10 @@ package containers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -74,14 +74,57 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	if !validOwner(req.Username) {
 		return fail(fmt.Errorf("使用者标识无效"))
 	}
-	if r.Method == "PUT" {
-		var err error
-		req.SSHKey, err = sshkeys.Normalize(req.SSHKey)
+	if r.Method == "DELETE" {
+		err := h.db.Transaction(func(tx *sql.Tx) error {
+			var username string
+			var deleted bool
+			err := tx.QueryRow("SELECT username,deleted FROM member_container_slots WHERE member_id=?", id).Scan(&username, &deleted)
+			if err != nil && err != sql.ErrNoRows {
+				return err
+			}
+			if err == nil && username != req.Username {
+				return fmt.Errorf("使用者身份不匹配")
+			}
+			if deleted {
+				return nil
+			}
+			if h.UnassignOwner != nil {
+				if err = h.UnassignOwner(tx, req.Username); err != nil {
+					return err
+				}
+			}
+			if h.UnassignOwner == nil {
+				rows, err := platform.Rows(tx, "SELECT id FROM managed_containers WHERE owner=?", req.Username)
+				if err != nil {
+					return err
+				}
+				for _, row := range rows {
+					if h.Owner != nil {
+						if err = h.Owner(tx, row["id"].(string), ""); err != nil {
+							return err
+						}
+					}
+				}
+				if _, err = tx.Exec("UPDATE managed_containers SET owner='' WHERE owner=?", req.Username); err != nil {
+					return err
+				}
+			}
+			if _, err = tx.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted) VALUES(?,?,'',1) ON CONFLICT(member_id) DO UPDATE SET deleted=1", id, req.Username); err != nil {
+				return err
+			}
+			return platform.Audit(tx, u.Username, "member.containers.unassign", req.Username+" / "+id)
+		})
 		if err != nil {
 			return fail(err)
 		}
+		return 200, map[string]bool{"ok": true}, nil
 	}
-	_, err := h.db.SQL.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted) VALUES(?,?,'',0) ON CONFLICT(member_id) DO NOTHING", id, req.Username)
+	var err error
+	req.SSHKey, err = sshkeys.Normalize(req.SSHKey)
+	if err != nil {
+		return fail(err)
+	}
+	_, err = h.db.SQL.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted) VALUES(?,?,'',0) ON CONFLICT(member_id) DO NOTHING", id, req.Username)
 	if err != nil {
 		return fail(err)
 	}
@@ -94,10 +137,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		return fail(fmt.Errorf("使用者身份不匹配"))
 	}
 	if deleted {
-		if r.Method == "DELETE" {
-			return 200, map[string]bool{"ok": true}, nil
-		}
-		return fail(fmt.Errorf("该使用者的资源已回收"))
+		return fail(fmt.Errorf("该使用者已删除，不能重新分配资源"))
 	}
 	plan, err := h.memberPlan(id)
 	if err != nil {
@@ -150,67 +190,6 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 				return fail(e)
 			}
 		}
-	}
-	if r.Method == "DELETE" {
-		if record.ID != "" {
-			// Prove absence using a successful complete Docker list; an inspect error
-			// alone is never evidence that a container has been removed.
-			ids, e := h.run(ctx, record.Endpoint, []string{"ps", "-aq", "--no-trunc"}, "")
-			if e != nil {
-				return fail(e)
-			}
-			exists := false
-			for _, cid := range strings.Fields(ids) {
-				if cid == record.ID {
-					exists = true
-				}
-			}
-			if exists {
-				c, e := h.verify(ctx, record)
-				if e != nil {
-					return fail(e)
-				}
-				if c.Config.Labels["project-alpha.member"] != id {
-					return fail(fmt.Errorf("容器成员标签不匹配"))
-				}
-				if c.State.Running {
-					if _, e = h.run(ctx, record.Endpoint, []string{"stop", "--time", "10", record.ID}, ""); e != nil {
-						return fail(e)
-					}
-				}
-				if _, e = h.run(ctx, record.Endpoint, []string{"rm", record.ID}, ""); e != nil {
-					return fail(e)
-				}
-			}
-			if e = h.removeRecord(record, u.Username, "delete"); e != nil {
-				return fail(e)
-			}
-		}
-		if plan.BaseDir != "" {
-			root, e := os.OpenRoot(plan.BaseDir)
-			if e != nil && !os.IsNotExist(e) {
-				return fail(e)
-			}
-			if e == nil {
-				defer root.Close()
-				marker := filepath.Join(plan.Request.Name, ".project-alpha-member")
-				raw, e := root.ReadFile(marker)
-				if e == nil {
-					if string(raw) != id {
-						return fail(fmt.Errorf("容器数据目录标记不匹配"))
-					}
-					if e = root.RemoveAll(plan.Request.Name); e != nil {
-						return fail(e)
-					}
-				} else if !os.IsNotExist(e) {
-					return fail(e)
-				} else if _, e = root.Lstat(plan.Request.Name); e == nil {
-					return fail(fmt.Errorf("数据目录缺少归属标记，保留待核对"))
-				}
-			}
-		}
-		_, err = h.db.SQL.Exec("UPDATE member_container_slots SET deleted=1 WHERE member_id=?", id)
-		return 200, map[string]bool{"ok": err == nil}, err
 	}
 	if record.ID == "" {
 		next := CreateRequest{Name: "alpha-" + id, Owner: owner, MemberID: id, SSHKey: req.SSHKey}

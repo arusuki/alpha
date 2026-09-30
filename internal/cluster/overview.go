@@ -25,6 +25,7 @@ type MemberNode struct {
 	Containers []Container `json:"containers"`
 }
 type MemberSummary struct {
+	ID         string       `json:"id,omitempty"`
 	Username   string       `json:"username"`
 	Registered bool         `json:"registered"`
 	Count      int          `json:"count"`
@@ -77,7 +78,7 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 			return 0, nil, err
 		}
 		for _, m := range list {
-			summary[m.Username] = &MemberSummary{Username: m.Username, Registered: true, Nodes: []MemberNode{}}
+			summary[m.Username] = &MemberSummary{ID: m.ID, Username: m.Username, Registered: true, Nodes: []MemberNode{}}
 		}
 	}
 	online, total := 0, 0

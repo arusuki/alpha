@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -74,7 +75,7 @@ func awaitIdle(t *testing.T, f *fixture, id string) {
 	}
 	t.Fatal("member queue never idle")
 }
-func TestMemberSelfServiceRetryIsolationAndCleanup(t *testing.T) {
+func TestMemberSelfServiceRetryIsolationAndUnassign(t *testing.T) {
 	f := setup(t)
 	var mu sync.Mutex
 	fail := true
@@ -159,7 +160,7 @@ func TestMemberSelfServiceRetryIsolationAndCleanup(t *testing.T) {
 	mu.Lock()
 	deleteFail = true
 	mu.Unlock()
-	requireStatus(t, f.request(t, "DELETE", "/api/members/"+alice, map[string]string{}), 202)
+	requireStatus(t, f.request(t, "DELETE", "/api/members/"+alice, map[string]string{}), 409)
 	awaitResource(t, f, alice, nodeID, "failed")
 	awaitIdle(t, f, alice)
 	requireStatus(t, selfCall(f, "GET", "/api/members/me/resources", token, nil), 401)
@@ -167,17 +168,24 @@ func TestMemberSelfServiceRetryIsolationAndCleanup(t *testing.T) {
 	mu.Lock()
 	deleteFail = false
 	mu.Unlock()
-	requireStatus(t, f.request(t, "DELETE", "/api/members/"+alice, map[string]string{}), 202)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		var count int
-		f.db.SQL.QueryRow("SELECT count(*) FROM members WHERE id=?", alice).Scan(&count)
-		if count == 0 {
-			return
+	requireStatus(t, f.request(t, "DELETE", "/api/members/"+alice, map[string]string{}), 200)
+	for _, table := range []string{"members", "member_access", "member_node_resources", "member_work"} {
+		column := "member_id"
+		if table == "members" {
+			column = "id"
 		}
-		time.Sleep(10 * time.Millisecond)
+		var count int
+		if err := f.db.SQL.QueryRow("SELECT count(*) FROM "+table+" WHERE "+column+"=?", alice).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("successful delete retained %s: %d %v", table, count, err)
+		}
 	}
-	t.Fatal("member not deleted after retry")
+	requireStatus(t, f.request(t, "GET", "/api/members/"+alice+"/resources", nil), 404)
+	if err := f.control.provisionMember(context.Background(), alice); err != nil {
+		t.Fatalf("stale queue entry failed after deletion: %v", err)
+	}
+	response = selfCall(f, "GET", "/api/members/me/resources", bobToken, nil)
+	requireStatus(t, response, 200)
+
 }
 func TestRegistrationReservesResourcesAtomically(t *testing.T) {
 	f := setup(t)
@@ -204,6 +212,30 @@ func TestRegistrationReservesResourcesAtomically(t *testing.T) {
 	if used != 0 {
 		t.Fatal("quota consumed")
 	}
+}
+
+func TestMemberDeletionIncludesWorkersWithoutProvisioningSlots(t *testing.T) {
+	f := setup(t)
+	id, token := registerResource(t, f, "alice")
+	awaitIdle(t, f, id)
+	if _, err := f.db.SQL.Exec("UPDATE member_access SET invite_state='deleted',key_state='deleted' WHERE member_id=?", id); err != nil {
+		t.Fatal(err)
+	}
+	deleted := false
+	module := moduleFunc(func(_ http.ResponseWriter, r *http.Request, _ platform.User) (int, any, error) {
+		if r.Method != "DELETE" || r.URL.Path != "/api/containers/members/"+id {
+			t.Fatalf("unexpected node request: %s %s", r.Method, r.URL.Path)
+		}
+		deleted = true
+		return 200, map[string]bool{"ok": true}, nil
+	})
+	node, server := worker(t, strings.Repeat("9", 32), Inventory{}, module)
+	add(t, f, node, server, "new worker")
+	requireStatus(t, f.request(t, "DELETE", "/api/members/"+id, map[string]string{}), 200)
+	if !deleted {
+		t.Fatal("worker with manually assigned containers was skipped")
+	}
+	requireStatus(t, selfCall(f, "GET", "/api/members/me/resources", token, nil), 401)
 }
 func TestInterruptedQueueRestartsWithoutDuplicatingNodeSlots(t *testing.T) {
 	f := setup(t)

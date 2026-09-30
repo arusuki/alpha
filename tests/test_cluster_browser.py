@@ -358,14 +358,31 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             with sqlite3.connect(root / 'control' / 'platform.sqlite3') as db:
                 db.execute("UPDATE member_access SET invite_state='deleted',key_state='deleted' WHERE member_id=?",
                            (registered_member_id,))
-            deleted = context.request.delete(url + '/api/members/' + registered_member_id, headers={'X-CSRF-Token': csrf}, data={})
-            assert deleted.status == 202, deleted.text()
-            for _ in range(100):
-                remaining = context.request.get(url + '/api/members/' + registered_member_id + '/resources')
-                if remaining.status == 404:
-                    break
-                page.wait_for_timeout(50)
+            page.locator('.platform-nav [data-page="allocations"]').click()
+            page.set_viewport_size(dict(width=390, height=844))
+            assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'member delete mobile overflow'
+            expect(page.locator(f'[data-delete-member="{registered_member_id}"]')).to_be_visible()
+            page.set_viewport_size(dict(width=1440, height=1000))
+            page.locator(f'[data-delete-member="{registered_member_id}"]').click()
+            expect(page.locator('#memberDeleteDialog')).to_be_visible()
+            page.locator('#memberDeleteConfirm').fill('alice')
+            page.locator('#memberDeleteSubmit').click()
+            expect(page.locator('#memberDeleteDialog')).not_to_be_visible()
+            expect(page.locator('#allocationRows')).not_to_contain_text('alice')
+            expect(page.locator('#allocationRows')).to_contain_text('未归属')
+            expect(page.locator('#allocationRows')).to_contain_text('node-one-training')
+            expect(page.locator('#allocationRows')).to_contain_text('node-two-training')
+            expect(page.locator('#allocationContainerCount')).to_have_text('2')
+            remaining = context.request.get(url + '/api/members/' + registered_member_id + '/resources')
             assert remaining.status == 404, remaining.text()
+            for node_name in ['node-one', 'node-two']:
+                with sqlite3.connect(root / node_name / 'platform.sqlite3') as db:
+                    assert db.execute('SELECT owner FROM managed_containers').fetchall() == [('',)]
+                    assert db.execute('SELECT owner FROM owners').fetchall() == [('',)]
+            page.set_viewport_size(dict(width=390, height=844))
+            assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'allocation mobile overflow'
+            page.set_viewport_size(dict(width=1440, height=1000))
+            page.locator('.platform-nav [data-page="cluster"]').click()
             page.locator(f'[data-remove-node="{second["id"]}"]').click()
             page.locator('#nodeRemoveConfirm').click()
             expect(page.locator('#nodeRemoveDialog')).not_to_be_visible()

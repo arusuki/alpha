@@ -1,7 +1,9 @@
 package containers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,7 +16,28 @@ func memberCall(h *Handler, method, id string) (int, string) {
 	raw, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey})
 	return call(h, method, "/api/containers/members/"+id, string(raw), admin)
 }
-func TestMemberRetryAfterCreateStartFailureAndDeleteData(t *testing.T) {
+
+func TestMemberUnassignmentRollsBackOnOwnershipFailure(t *testing.T) {
+	h, f, _ := fixture(t)
+	f.absent = true
+	id := strings.Repeat("1", 32)
+	if status, body := memberCall(h, "PUT", id); status != 200 {
+		t.Fatalf("create %d %s", status, body)
+	}
+	h.UnassignOwner = func(*sql.Tx, string) error { return errors.New("ownership unavailable") }
+	if status, _ := memberCall(h, "DELETE", id); status == 200 {
+		t.Fatal("forgot ownership failure")
+	}
+	records, err := h.records()
+	if err != nil || len(records) != 1 || records[0].Owner != "bob" {
+		t.Fatalf("changed ownership: %+v %v", records, err)
+	}
+	var deleted bool
+	if err = h.db.SQL.QueryRow("SELECT deleted FROM member_container_slots WHERE member_id=?", id).Scan(&deleted); err != nil || deleted {
+		t.Fatalf("lost retry slot: %v %v", deleted, err)
+	}
+}
+func TestMemberRetryAfterCreateStartFailureAndUnassign(t *testing.T) {
 	h, f, cfg := fixture(t)
 	f.absent = true
 	f.failAction = "start"
@@ -44,19 +67,39 @@ func TestMemberRetryAfterCreateStartFailureAndDeleteData(t *testing.T) {
 	}
 	sentinel := filepath.Join(cfg.BaseDir, "data", "shared")
 	os.WriteFile(sentinel, []byte("keep"), 0600)
+	callsBeforeDelete := len(f.calls)
 	for range 2 {
 		if status, body := memberCall(h, "DELETE", id); status != 200 {
 			t.Fatalf("delete %d %s", status, body)
 		}
 	}
-	if _, e := os.Stat(filepath.Join(cfg.BaseDir, "alpha-"+id)); !os.IsNotExist(e) {
-		t.Fatalf("member data remains: %v", e)
+	if len(f.calls) != callsBeforeDelete || f.absent || !f.c.State.Running {
+		t.Fatal("unassignment changed the Docker container")
+	}
+	records, err := h.records()
+	if err != nil || len(records) != 1 || records[0].Owner != "" {
+		t.Fatalf("container management/ownership: %+v %v", records, err)
+	}
+	if _, e := os.Stat(filepath.Join(cfg.BaseDir, "alpha-"+id)); e != nil {
+		t.Fatalf("member data was removed: %v", e)
 	}
 	if raw, e := os.ReadFile(sentinel); e != nil || string(raw) != "keep" {
 		t.Fatal("shared data removed")
 	}
 	if status, _ := memberCall(h, "PUT", id); status == 200 {
 		t.Fatal("deleted identity recreated")
+	}
+	// A delayed repeat of the old deletion cannot clear a later assignment,
+	// including a new member that reuses the same username.
+	if _, err := h.db.SQL.Exec("UPDATE managed_containers SET owner='bob'"); err != nil {
+		t.Fatal(err)
+	}
+	if status, body := memberCall(h, "DELETE", id); status != 200 {
+		t.Fatalf("repeat %d %s", status, body)
+	}
+	records, err = h.records()
+	if err != nil || records[0].Owner != "bob" {
+		t.Fatalf("repeat changed later ownership: %+v %v", records, err)
 	}
 }
 func TestMemberCreateFailureReusesOnlyMarkedDirectory(t *testing.T) {
@@ -95,7 +138,7 @@ func TestMemberRecoversDockerSuccessBeforeDatabaseWrite(t *testing.T) {
 		t.Fatal("duplicate create")
 	}
 }
-func TestMemberDeleteRetainsRecordsWhenDaemonUnavailable(t *testing.T) {
+func TestMemberDeleteUnassignsWhenDaemonUnavailable(t *testing.T) {
 	h, f, _ := fixture(t)
 	f.absent = true
 	id := strings.Repeat("e", 32)
@@ -103,12 +146,16 @@ func TestMemberDeleteRetainsRecordsWhenDaemonUnavailable(t *testing.T) {
 		t.Fatalf("create %d %s", status, body)
 	}
 	f.failAction = "info"
-	if status, _ := memberCall(h, "DELETE", id); status == 200 {
-		t.Fatal("forgot offline resources")
+	callsBeforeDelete := len(f.calls)
+	if status, body := memberCall(h, "DELETE", id); status != 200 {
+		t.Fatalf("unassign with unavailable daemon: %d %s", status, body)
+	}
+	if len(f.calls) != callsBeforeDelete {
+		t.Fatal("unassignment called Docker")
 	}
 	records, e := h.records()
-	if e != nil || len(records) != 1 {
-		t.Fatal("record lost")
+	if e != nil || len(records) != 1 || records[0].Owner != "" {
+		t.Fatal("record/ownership lost")
 	}
 	f.failAction = ""
 	if status, body := memberCall(h, "DELETE", id); status != 200 {
