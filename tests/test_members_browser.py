@@ -149,6 +149,35 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
                 page.screenshot(path='/tmp/project-alpha-members-mobile.png', full_page=True)
                 page.set_viewport_size(dict(width=1440, height=1080))
+                # Delete invitations in every state through the real admin form.
+                exhausted_row = page.locator('#memberInvitationsBody tr').filter(has_text='名额已用尽')
+                exhausted_row.locator('[data-delete-invitation] button').click()
+                expect(exhausted_row).to_have_count(0)
+                expect(page.locator('#membersStatus')).to_have_text('邀请码已删除，已登记的使用者不受影响。')
+                page.locator('#membersRefresh').click()
+                expect(page.locator('#membersRefresh')).to_be_enabled()
+                expect(page.locator('#memberInvitationsBody tr')).to_have_count(1)
+                expect(page.locator('#membersBody')).to_contain_text('alice')
+                expect(page.locator('#membersBody')).to_contain_text('bob')
+                mine = public.get('/api/members/me/resources', headers={'Authorization': 'Bearer ' + member_token})
+                assert mine.status == 200 and mine.json()['member_id'] == member_id
+                revoked_row.locator('[data-delete-invitation] button').click()
+                expect(page.locator('#memberInvitationsBody')).to_contain_text('尚未生成邀请码')
+                expect(page.locator('[data-delete-invitation]')).to_have_count(0)
+                page.locator('#memberInvitationLabel').fill('删除可用的邀请码')
+                page.locator('#memberInvitationQuota').fill('2')
+                page.locator('#memberCreateInvitation').click()
+                page.locator('#memberInvitationDialog').wait_for(state='visible')
+                deleted_code = page.locator('#memberInvitationCode').input_value()
+                page.locator('#memberInvitationClose').click()
+                expect(page.locator('#memberInvitationsBody')).to_contain_text('可使用')
+                page.locator('[data-delete-invitation] button').click()
+                expect(page.locator('#memberInvitationsBody')).to_contain_text('尚未生成邀请码')
+                payload.update(invitation_code=deleted_code)
+                assert public.post('/api/members/register', data=payload).status == 400
+                page.locator('#membersRefresh').click()
+                expect(page.locator('#membersRefresh')).to_be_enabled()
+                expect(page.locator('[data-delete-invitation]')).to_have_count(0)
                 # Control-only access management, using the real local API without
                 # provisioning any real host account or contacting Tailscale.
                 page.locator('.platform-nav [data-page="bastion"]').click()
@@ -338,7 +367,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert not errors, errors
                 public.dispose()
                 browser.close()
-            print('Member browser checks passed: real API, schema editor, quota, independent identity, escaping, schema conflicts, revocation, mobile layout and stale logout responses.')
+            print('Member browser checks passed: real API, schema editor, quota, independent identity, escaping, schema conflicts, revocation, invitation deletion, retained resources, mobile layout and stale logout responses.')
         finally:
             service.terminate()
             try:

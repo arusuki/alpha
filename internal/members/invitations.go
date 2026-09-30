@@ -27,7 +27,7 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 	switch {
 	case r.Method == "GET" && r.URL.Path == invitationPage:
 	case r.Method == "GET" && r.URL.Path == invitationPage+"/select":
-	case r.Method == "POST" && (r.URL.Path == invitationPage+"/create" || r.URL.Path == invitationPage+"/update" || r.URL.Path == invitationPage+"/revoke"):
+	case r.Method == "POST" && (r.URL.Path == invitationPage+"/create" || r.URL.Path == invitationPage+"/update" || r.URL.Path == invitationPage+"/revoke" || r.URL.Path == invitationPage+"/delete"):
 		typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || typ != "application/x-www-form-urlencoded" {
 			return 0, nil, httpapi.NewError(415, "请通过管理员页面提交邀请码表单")
@@ -64,6 +64,8 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 			var err error
 			if update {
 				err = h.store.UpdateInvitationLabel(id, r.PostForm.Get("label"), actor)
+			} else if r.URL.Path == invitationPage+"/delete" {
+				err = h.store.DeleteInvitation(id, actor)
 			} else {
 				err = h.store.RevokeInvitation(id, actor)
 			}

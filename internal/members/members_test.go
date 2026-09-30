@@ -308,6 +308,114 @@ func TestInvitationLabelUpdates(t *testing.T) {
 	}
 }
 
+func TestInvitationDeletion(t *testing.T) {
+	for _, status := range []string{"unused", "active", "exhausted", "revoked"} {
+		t.Run(status, func(t *testing.T) {
+			s := testStore(t)
+			quota := 2
+			if status == "exhausted" {
+				quota = 1
+			}
+			i, err := s.CreateInvitation("删除测试", quota, "operator")
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := s.CreateInvitation("保留", 1, "operator")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := NewHandler(s.Database)
+			req := Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "alice", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}
+			token := platform.RandomHex(32)
+			var member Member
+			if status != "unused" {
+				member, err = h.RegisterRegistry(req, token)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if status == "revoked" {
+				if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := s.Members()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = s.DeleteInvitation(i.ID, "editor"); err != nil {
+				t.Fatal(err)
+			}
+			var count int
+			if err = s.SQL.QueryRow("SELECT count(*) FROM member_invitations WHERE id=?", i.ID).Scan(&count); err != nil || count != 0 {
+				t.Fatalf("invitation was not physically deleted: %d %v", count, err)
+			}
+			rows, err := s.Invitations()
+			if err != nil || len(rows) != 1 || rows[0].ID != other.ID {
+				t.Fatalf("deletion changed other invitations: %+v %v", rows, err)
+			}
+			_, err = s.InvitationCode(i.ID)
+			expectError(t, err, 400)
+			expectError(t, s.CheckInvitation(i.Code), 400)
+			expectError(t, s.DeleteInvitation(i.ID, "editor"), 404)
+			_, err = s.RegisterWith(req, nil)
+			expectError(t, err, 400)
+			if status != "unused" {
+				// A committed registry registration remains recoverable after deletion,
+				// but its token cannot be reused with different registration content.
+				recovered, err := h.RegisterRegistry(req, token)
+				if err != nil || httpapi.JSONText(recovered) != httpapi.JSONText(member) || recovered.ResourceToken != token {
+					t.Fatalf("lost committed registration: %+v %v", recovered, err)
+				}
+				req.InvitationCode = other.Code
+				_, err = h.RegisterRegistry(req, token)
+				expectError(t, err, 409)
+				req.InvitationCode, req.Username = i.Code, "bob"
+				_, err = h.RegisterRegistry(req, token)
+				expectError(t, err, 409)
+				_, err = h.RegisterRegistry(req, platform.RandomHex(32))
+				expectError(t, err, 400)
+			}
+			after, err := s.Members()
+			if err != nil || httpapi.JSONText(before) != httpapi.JSONText(after) {
+				t.Fatalf("deletion changed registered members: %+v %v", after, err)
+			}
+			var detail string
+			if err = s.SQL.QueryRow("SELECT count(*),detail FROM audit WHERE action='member.invitation.delete' AND actor='editor'").Scan(&count, &detail); err != nil || count != 1 || detail != i.ID {
+				t.Fatalf("missing deletion audit: %d %q %v", count, detail, err)
+			}
+			// Reopening also preserves the source ID without needing the deleted row.
+			db, err := platform.OpenDatabase(s.Directory, Initialize)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.SQL.Close()
+			after, err = (&Store{db}).Members()
+			if err != nil || httpapi.JSONText(before) != httpapi.JSONText(after) {
+				t.Fatalf("lost members after reopening: %+v %v", after, err)
+			}
+		})
+	}
+}
+
+func TestInvitationDeletionRollsBackWithoutAudit(t *testing.T) {
+	s := testStore(t)
+	i, err := s.CreateInvitation("保留", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SQL.Exec("CREATE TRIGGER fail_invitation_delete_audit BEFORE INSERT ON audit WHEN NEW.action='member.invitation.delete' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DeleteInvitation(i.ID, "editor"); err == nil {
+		t.Fatal("expected audit failure")
+	}
+	code, err := s.InvitationCode(i.ID)
+	if err != nil || code != i.Code {
+		t.Fatalf("failed audit retained deletion: %v", err)
+	}
+}
+
 func TestSchemaValidationAndConflicts(t *testing.T) {
 	s := testStore(t)
 	cases := []Schema{
@@ -544,6 +652,16 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	expect(403, call("PUT", "/api/members/registration-schema", exampleSchema(), viewer, vs.CSRF, nil))
 	expect(403, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, viewer, vs.CSRF, nil))
 	expect(403, call("POST", invitationPage+"/update", update, viewer, vs.CSRF, nil))
+	deletion := object{"id": invitation.ID}
+	expect(401, call("POST", invitationPage+"/delete", deletion, "", "", nil))
+	expect(403, call("POST", invitationPage+"/delete", deletion, token, "", nil))
+	expect(403, call("POST", invitationPage+"/delete", deletion, viewer, vs.CSRF, nil))
+	expect(415, call("POST", invitationPage+"/delete", deletion, token, csrf, map[string]string{"Content-Type": "application/json"}))
+	for _, invalid := range []object{{}, {"id": "bad"}, {"id": invitation.ID, "label": "unexpected"}} {
+		expect(400, call("POST", invitationPage+"/delete", invalid, token, csrf, nil))
+	}
+	expect(404, call("POST", invitationPage+"/delete", object{"id": strings.Repeat("0", 32)}, token, csrf, nil))
+	expect(404, call("GET", invitationPage+"/delete", deletion, token, csrf, nil))
 	expect(200, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, token, csrf, nil))
 	w = call("GET", invitationPage+"/select", nil, token, csrf, nil)
 	expect(200, w)
@@ -551,6 +669,28 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 		t.Fatal("revoked invitation offered for sharing")
 	}
 	req.Username = "bob"
+	expect(400, call("POST", "/api/members/register", req, "", "", nil))
+	w = call("POST", invitationPage+"/delete", deletion, token, csrf, nil)
+	expect(200, w)
+	if !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") || strings.Contains(w.Body.String(), invitation.ID) || strings.Contains(w.Body.String(), invitation.Code) || strings.Contains(w.Body.String(), "data-issued-invitation") {
+		t.Fatalf("unsafe invitation deletion view: %s", w.Body.String())
+	}
+	expect(404, call("POST", invitationPage+"/delete", deletion, token, csrf, nil))
+	w = call("GET", invitationPage, nil, token, csrf, nil)
+	expect(200, w)
+	if strings.Contains(w.Body.String(), invitation.ID) {
+		t.Fatal("deleted invitation remains in the list")
+	}
+	w = call("GET", invitationPage+"/select", nil, token, csrf, nil)
+	expect(200, w)
+	if strings.Contains(w.Body.String(), invitation.ID) {
+		t.Fatal("deleted invitation offered for sharing")
+	}
+	w = call("GET", "/api/members", nil, token, csrf, nil)
+	expect(200, w)
+	if !strings.Contains(w.Body.String(), invitation.ID) || !strings.Contains(w.Body.String(), "alice") || strings.Contains(w.Body.String(), "invitation_code_hash") {
+		t.Fatalf("deletion changed members or leaked private provenance: %s", w.Body.String())
+	}
 	expect(400, call("POST", "/api/members/register", req, "", "", nil))
 	// Registration throttling is independent of platform login attempts.
 	h.attempts = map[string]attempt{}

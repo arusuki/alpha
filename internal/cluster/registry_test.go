@@ -164,8 +164,27 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if used != 1 || count != 1 {
 		t.Fatalf("duplicate registration: used=%d members=%d", used, count)
 	}
+	// Removing the invitation must still allow recovery and resource access for
+	// this committed registration, while denying new registration sessions.
+	if err = store.DeleteInvitation(i.ID, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0"); err != nil {
+		t.Fatal(err)
+	}
+	if status, raw := registryHTTP(t, client, "POST", s.URL+base+"/api/register", s.URL, initial.CSRF, map[string]string{}); status != 200 {
+		t.Fatalf("recovery after invitation deletion %d %s", status, raw)
+	}
+	if err = f.db.SQL.QueryRow("SELECT count(*) FROM members").Scan(&count); err != nil || count != 1 {
+		t.Fatalf("recovery duplicated members: %d %v", count, err)
+	}
+	freshClient := &http.Client{Timeout: 5 * time.Second}
+	if response, err := freshClient.Get(s.URL + base); err == nil {
+		response.Body.Close()
+		t.Fatal("deleted invitation allowed a new registry session")
+	}
 	if status, _ := registryHTTP(t, client, "GET", s.URL+base, "", "", nil); status != 200 {
-		t.Fatal("refresh lost exhausted-invite session")
+		t.Fatal("refresh lost committed session after invitation deletion")
 	}
 	// Another registry does not get a quota exception from this browser's session.
 	_, secondRaw := registryHTTP(t, secondClient, "GET", second.URL+base+"/api/session", "", "", nil)

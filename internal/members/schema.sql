@@ -13,5 +13,6 @@ CREATE TABLE members (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE,
  profile TEXT NOT NULL, registration_schema TEXT NOT NULL,
  ssh_public_key TEXT NOT NULL, resource_token_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('active','deleting')),
- invitation_id TEXT NOT NULL REFERENCES member_invitations(id), created_at REAL NOT NULL
+ -- Registration provenance survives invitation deletion and binds registry retries.
+ invitation_id TEXT NOT NULL, invitation_code_hash TEXT NOT NULL, created_at REAL NOT NULL
 );

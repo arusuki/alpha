@@ -265,6 +265,23 @@ func (s *Store) RevokeInvitation(id, actor string) error {
 	})
 }
 
+func (s *Store) DeleteInvitation(id, actor string) error {
+	return s.Transaction(func(tx *sql.Tx) error {
+		result, err := tx.Exec("DELETE FROM member_invitations WHERE id=?", id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return httpapi.NewError(404, "邀请码不存在")
+		}
+		return platform.Audit(tx, actor, "member.invitation.delete", id)
+	})
+}
+
 type Registration struct {
 	SSHKey         string                     `json:"ssh_public_key"`
 	Username       string                     `json:"username"`
@@ -346,7 +363,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 		if token != "" {
 			var previous Member
 			var profile, schema, invitationHash string
-			err := tx.QueryRow(`SELECT m.id,m.username,m.profile,m.registration_schema,m.ssh_public_key,m.status,m.invitation_id,m.created_at,i.code_hash FROM members m JOIN member_invitations i ON i.id=m.invitation_id WHERE m.resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash)
+			err := tx.QueryRow(`SELECT id,username,profile,registration_schema,ssh_public_key,status,invitation_id,created_at,invitation_code_hash FROM members WHERE resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash)
 			if err == nil {
 				if err = json.Unmarshal([]byte(schema), &previous.Schema); err != nil {
 					return err
@@ -395,7 +412,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 		if n != 1 {
 			return httpapi.NewError(400, "邀请码无效或已失效")
 		}
-		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,created_at,ssh_public_key,resource_token_hash,status) VALUES(?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status); err != nil {
+		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,invitation_code_hash,created_at,ssh_public_key,resource_token_hash,status) VALUES(?,?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, hashCode(req.InvitationCode), m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status); err != nil {
 			if platform.IsConstraint(err) {
 				return httpapi.NewError(409, "该使用者标识已注册")
 			}
