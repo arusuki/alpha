@@ -1,7 +1,7 @@
-import copy,json,threading,time,mimetypes,os
-from http.server import ThreadingHTTPServer,BaseHTTPRequestHandler
+import copy,json,threading,time,mimetypes
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
 from playwright.sync_api import sync_playwright
 root=Path(__file__).resolve().parents[1]/'dist';g=1024**3
 sample=json.loads((root.parent/'tests/fixtures/snapshot.json').read_text());id='a'*32
@@ -35,9 +35,9 @@ def work(path,job):
    job['progress']=dict(entries=stage*100,path=path,allocated=stage*10*g,phase='directory')
    base['snapshot_revision']=sample['revision']
    updates.append(patch(previous,sample,path))
-class Handler(BaseHTTPRequestHandler):
- def log_message(self,*args):pass
+class Handler(NodeHandler):
  def do_GET(self):
+  if self.control_request():return
   parsed=urlparse(self.path);path=parsed.path;requests.append(path)
   if path.endswith('/events'):
    cursor=int(self.headers.get('Last-Event-ID') or parse_qs(parsed.query).get('revision',['0'])[0]);self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Cache-Control','no-store');self.end_headers()
@@ -72,11 +72,11 @@ class Handler(BaseHTTPRequestHandler):
    state.update(active=job,directory_jobs=[job]);body=json.dumps(job).encode()
   self.send_response(202);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
   threading.Thread(target=work,args=(data['path'],job),daemon=True).start()
-server=ThreadingHTTPServer(('127.0.0.1',0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
+server=start_server(Handler)
 with sync_playwright() as p:
- browser=p.chromium.launch(headless=True,args=['--no-sandbox'],**({'executable_path':os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']} if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE') else {}))
+ browser=p.chromium.launch(**launch_options())
  page=browser.new_page(viewport=dict(width=1440,height=1000));errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
- page.goto('http://127.0.0.1:'+str(server.server_port));page.locator('.platform-nav [data-page=overview]').click();page.wait_for_function('platform.loaded!==null')
+ page.goto('http://127.0.0.1:'+str(server.server_port)+NODE_PATH);page.locator('.platform-nav [data-page=overview]').click();page.wait_for_function('platform.loaded!==null')
  assert page.locator('#taskStatus').inner_text()=='累计扫描结果'
  assert page.locator('#taskScanned').inner_text()=='60 GiB'
  assert '30 GiB' in page.locator('#taskCapacityNote').inner_text()

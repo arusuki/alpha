@@ -1,9 +1,7 @@
 package members
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
@@ -43,22 +41,6 @@ func (h *Handler) RegisterRegistry(req Registration, token string) (Member, erro
 func IsRoute(path string) bool {
 	return path == "/api/members" || strings.HasPrefix(path, "/api/members/") || path == invitationPage || strings.HasPrefix(path, invitationPage+"/")
 }
-func decode(w http.ResponseWriter, r *http.Request, target any) error {
-	value, err := httpapi.RequestBody(w, r)
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err = d.Decode(target); err != nil {
-		return httpapi.NewError(400, "请求字段无效："+err.Error())
-	}
-	return nil
-}
 func (h *Handler) checkAttempts(r *http.Request) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -96,7 +78,7 @@ func (h *Handler) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 			return 0, nil, err
 		}
 		var req Registration
-		if err := decode(w, r, &req); err != nil {
+		if err := httpapi.DecodeBody(w, r, &req); err != nil {
 			return 0, nil, err
 		}
 		v, err := h.store.RegisterWith(req, h.Reserve)
@@ -121,7 +103,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if path == "/api/members/registration-schema" && r.Method == "PUT" {
 		var req Schema
-		if err := decode(w, r, &req); err != nil {
+		if err := httpapi.DecodeBody(w, r, &req); err != nil {
 			return 0, nil, err
 		}
 		v, err := h.store.SaveSchema(req, user.Username)

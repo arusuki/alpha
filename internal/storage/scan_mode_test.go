@@ -74,15 +74,15 @@ func TestScanModeCPUBudgets(t *testing.T) {
 
 func TestScanModesPersistAndReachWorker(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	historical := p.configure()
 	parentParallelism := runtime.GOMAXPROCS(0)
 	t.Setenv("GOMAXPROCS", "1")
 	for i, mode := range []string{"fast", "normal"} {
 		c := historical
 		c.ScanMode = mode
-		p.expect(200, "PUT", "/api/settings", object{"revision": i + 2, "value": c}, nil)
-		saved := p.expect(200, "GET", "/api/settings", nil, nil)
+		p.Expect(200, "PUT", "/api/settings", object{"revision": i + 2, "value": c}, nil)
+		saved := p.Expect(200, "GET", "/api/settings", nil, nil)
 		if saved["value"].(map[string]any)["scan_mode"] != mode {
 			t.Fatal("mode not persisted")
 		}

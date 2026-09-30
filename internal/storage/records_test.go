@@ -15,14 +15,14 @@ import (
 
 func TestRecordQueriesShareWebExploration(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	deep := filepath.Join(p.storage, "a", "b", "c", "d", "e", "f", "g", "h")
 	if err := os.MkdirAll(deep, 0700); err != nil {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(deep, "deep.bin"), []byte("deep data"))
-	job := p.expect(202, "POST", "/api/jobs", nil, nil)
+	job := p.Expect(202, "POST", "/api/jobs", nil, nil)
 	id := job["id"].(string)
 	if done := waitJob(t, p.db, id); done["status"] != "completed" {
 		t.Fatalf("scan failed: %v", done)
@@ -37,7 +37,7 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		web := p.expect(200, "GET", "/api/jobs/"+id+"/directory?path="+url.QueryEscape(p.storage), nil, nil)
+		web := p.Expect(200, "GET", "/api/jobs/"+id+"/directory?path="+url.QueryEscape(p.storage), nil, nil)
 		var normalized object
 		if err := json.Unmarshal([]byte(httpapi.JSONText(shared)), &normalized); err != nil {
 			t.Fatal(err)
@@ -49,7 +49,7 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 	}
 	initial := compare()
 	mustWrite(t, filepath.Join(p.storage, "new.parquet"), make([]byte, 32768))
-	expansion := p.expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 32}, nil)
+	expansion := p.Expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 32}, nil)
 	if numberInt64(expansion["config"].(object)["max_depth"]) != 32 {
 		t.Fatal("requested depth did not reach worker plan")
 	}
@@ -75,7 +75,7 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 	if numberInt64(current["revision"]) <= numberInt64(initial["revision"]) || !strings.Contains(httpapi.JSONText(current["analysis"]), "new.parquet") {
 		t.Fatalf("stale query: %v", current)
 	}
-	p.expect(409, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 1}, nil)
+	p.Expect(409, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": initial["revision"], "depth": 1}, nil)
 	snapshot, err := p.api.Service.Snapshot(id)
 	if err != nil {
 		t.Fatal(err)
@@ -101,12 +101,12 @@ func TestRecordQueriesShareWebExploration(t *testing.T) {
 		if strings.HasPrefix(path, "/container?") {
 			status = 404
 		}
-		p.expect(status, "GET", "/api/jobs/"+id+path, nil, nil)
+		p.Expect(status, "GET", "/api/jobs/"+id+path, nil, nil)
 	}
-	p.expect(201, "POST", "/api/users", object{"username": "reader", "password": "Reader-password-123", "role": "viewer"}, nil)
-	p.login(false, "reader", "Reader-password-123")
+	p.Expect(201, "POST", "/api/users", object{"username": "reader", "password": "Reader-password-123", "role": "viewer"}, nil)
+	p.Login(false, "reader", "Reader-password-123")
 	compare()
-	p.expect(403, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": current["revision"]}, nil)
+	p.Expect(403, "POST", "/api/jobs/"+id+"/expand", object{"path": p.storage, "revision": current["revision"]}, nil)
 }
 
 func TestDirectoryAnalysisInvalidation(t *testing.T) {

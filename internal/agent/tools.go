@@ -57,7 +57,7 @@ func agentToolDefinitions(protocol string) []object {
 type agentTools struct {
 	agent                                              *Manager
 	sessionID, userID, actor, recordID, groupID, scope string
-	reportGroup                                        []reportContainer
+	reportGroup                                        []reportSubject
 	inspectedContainers                                map[string]bool
 	reportDirectories                                  []reportDirectory
 	inspectedHostDirectories                           map[string]bool

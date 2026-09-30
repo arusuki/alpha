@@ -25,7 +25,6 @@ type loginAttempt struct {
 	At    time.Time
 }
 type Server struct {
-	Control      bool
 	DB           *Database
 	Module       Module
 	Assets       fs.ReadFileFS
@@ -78,15 +77,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js", "/bastion.js": "bastion.js",
 	}
 	assetPath := r.URL.Path
-	if s.Control && nodePageRoute.MatchString(assetPath) {
+	if nodePageRoute.MatchString(assetPath) {
 		assetPath = "/"
 	}
-	if s.Control {
-		assets["/status.js"] = "status.js"
-		assets["/status.css"] = "status.css"
-		if statusPageRoute.MatchString(assetPath) {
-			assets[assetPath] = "status.html"
-		}
+	assets["/status.js"] = "status.js"
+	assets["/status.css"] = "status.css"
+	if statusPageRoute.MatchString(assetPath) {
+		assets[assetPath] = "status.html"
 	}
 	if filename, ok := assets[assetPath]; r.Method == "GET" && ok {
 		body, err := s.Assets.ReadFile(filename)
@@ -181,17 +178,17 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 			return failure(err)
 		}
 		if !configured {
-			return 200, object{"setup_required": true, "control": s.Control}, nil
+			return 200, object{"setup_required": true}, nil
 		}
 		session, err := db.Session(httpapi.SessionToken(r))
 		if err != nil {
 			var api *httpapi.Error
 			if errors.As(err, &api) && api.Status == 401 {
-				return 200, object{"setup_required": false, "user": nil, "control": s.Control}, nil
+				return 200, object{"setup_required": false, "user": nil}, nil
 			}
 			return failure(err)
 		}
-		return 200, object{"setup_required": false, "user": session.User, "csrf": session.CSRF, "control": s.Control}, nil
+		return 200, object{"setup_required": false, "user": session.User, "csrf": session.CSRF}, nil
 	}
 	if method == "POST" && (route == "/api/setup" || route == "/api/login") {
 		value, err := httpapi.RequestBody(w, r)
@@ -219,7 +216,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 		delete(s.attempts, ip)
 		s.mu.Unlock()
 		s.cookie(w, token)
-		return 200, object{"user": session.User, "csrf": session.CSRF, "control": s.Control}, nil
+		return 200, object{"user": session.User, "csrf": session.CSRF}, nil
 	}
 	if public, ok := s.Module.(PublicModule); ok {
 		status, value, err := public.DispatchPublic(w, r)

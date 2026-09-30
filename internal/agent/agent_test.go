@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 )
@@ -24,7 +25,7 @@ func waitAgentSession(t *testing.T, p *testPlatform, id string) object {
 	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		r := p.expect(200, "GET", "/api/agent/sessions/"+id, nil, nil)
+		r := p.Expect(200, "GET", "/api/agent/sessions/"+id, nil, nil)
 		s := r["session"].(map[string]any)
 		switch s["status"] {
 		case "completed", "failed", "cancelled", "interrupted":
@@ -37,7 +38,7 @@ func waitAgentSession(t *testing.T, p *testPlatform, id string) object {
 }
 func configureTestAgent(t *testing.T, p *testPlatform, protocol, endpoint string) {
 	t.Helper()
-	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "timeout_seconds": 10}}, nil)
+	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "timeout_seconds": 10}}, nil)
 
 }
 
@@ -45,7 +46,7 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 	for _, protocol := range []string{"completions", "responses"} {
 		t.Run(protocol, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
 			dir := filepath.Join(p.storage, "datasets")
 			os.MkdirAll(dir, 0700)
@@ -119,7 +120,7 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, protocol, mock.URL+"/v1")
-			started := p.expect(202, "POST", "/api/agent/sessions", object{"message": "先扫描再分析"}, nil)
+			started := p.Expect(202, "POST", "/api/agent/sessions", object{"message": "先扫描再分析"}, nil)
 			id := httpapi.String(started["id"])
 			r := waitAgentSession(t, p, id)
 			session := r["session"].(map[string]any)
@@ -134,13 +135,13 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			if details != 1 {
 				t.Fatalf("identical detail request scanned %d times", details)
 			}
-			latestResult := p.expect(200, "GET", "/api/state", nil, nil)
+			latestResult := p.Expect(200, "GET", "/api/state", nil, nil)
 			latestID, _ := latestResult["latest_id"].(string)
 			latest := &latestID
 			if latest == nil || *latest != session["snapshot_id"] {
 				t.Fatal("detail replaced overview")
 			}
-			p.expect(202, "POST", "/api/agent/sessions/"+id+"/messages", object{"message": "继续分析"}, nil)
+			p.Expect(202, "POST", "/api/agent/sessions/"+id+"/messages", object{"message": "继续分析"}, nil)
 			r = waitAgentSession(t, p, id)
 			if r["session"].(map[string]any)["status"] != "completed" {
 				t.Fatalf("followup failed: %v", r)
@@ -152,13 +153,13 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			}
 			// Tool exploration must be visible through every Web record reader.
 			recordID := session["snapshot_id"].(string)
-			web := p.expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
+			web := p.Expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
 			if web["revision"].(float64) <= 0 || !strings.Contains(httpapi.JSONText(web["analysis"]), "train.parquet") {
 				t.Fatalf("tool result missing from web: %v", web)
 			}
 			// A subsequent manual exploration must be visible in this same session.
 			mustWrite(t, filepath.Join(dir, "manual.jsonl"), make([]byte, 8192))
-			manual := p.expect(202, "POST", "/api/jobs/"+recordID+"/expand", object{"path": dir, "revision": web["revision"], "depth": 1}, nil)
+			manual := p.Expect(202, "POST", "/api/jobs/"+recordID+"/expand", object{"path": dir, "revision": web["revision"], "depth": 1}, nil)
 			if done := waitJob(t, p.records, manual["id"].(string)); done["status"] != "completed" {
 				t.Fatalf("manual exploration failed: %v", done)
 			}
@@ -171,7 +172,7 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 			if err != nil || !strings.Contains(httpapi.JSONText(result), "manual.jsonl") {
 				t.Fatalf("tool missed manual update: %v %v", result, err)
 			}
-			fresh := p.expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
+			fresh := p.Expect(200, "GET", "/api/jobs/"+recordID+"/directory?path="+url.QueryEscape(dir), nil, nil)
 			var normalized object
 			if err := json.Unmarshal([]byte(httpapi.JSONText(result)), &normalized); err != nil {
 				t.Fatal(err)
@@ -189,11 +190,11 @@ func TestAgentInterfacesScanToolLoopAndFollowup(t *testing.T) {
 
 func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	p := newTestPlatform(t)
-	p.expect(401, "GET", "/api/agent/settings", nil, nil)
-	p.login(true, "administrator", "A-test-password-123")
-	p.expect(403, "PUT", "/api/agent/settings", object{}, map[string]string{"X-CSRF-Token": "wrong"})
+	p.Expect(401, "GET", "/api/agent/settings", nil, nil)
+	p.Login(true, "administrator", "A-test-password-123")
+	p.Expect(403, "PUT", "/api/agent/settings", object{}, map[string]string{"X-CSRF-Token": "wrong"})
 	value := object{"protocol": "completions", "endpoint": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key": "keep-this-private", "timeout_seconds": 30}
-	r := p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
+	r := p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
 	if strings.Contains(httpapi.JSONText(r), "keep-this-private") || r["value"].(map[string]any)["has_api_key"] != true {
 		t.Fatal("key leaked or was not saved")
 	}
@@ -201,15 +202,15 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	if err := p.db.SQL.QueryRow("SELECT value,api_key_ciphertext FROM agent_settings WHERE id=1").Scan(&storedValue, &ciphertext); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(storedValue, "keep-this-private") || strings.Contains(ciphertext, "keep-this-private") || !strings.HasPrefix(ciphertext, apiKeyPrefix) {
+	if strings.Contains(storedValue, "keep-this-private") || strings.Contains(ciphertext, "keep-this-private") || !strings.HasPrefix(ciphertext, credentials.Prefix) {
 		t.Fatal("API key was not encrypted in the database")
 	}
 	keyInfo, err := os.Stat(filepath.Join(p.db.Directory, apiKeyFile))
 	if err != nil || keyInfo.Mode().Perm() != 0600 {
 		t.Fatalf("encryption key file permissions: %v, %v", keyInfo, err)
 	}
-	p.expect(409, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
-	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 2, "value": object{"api_key": "", "model": "updated-model"}}, nil)
+	p.Expect(409, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
+	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 2, "value": object{"api_key": "", "model": "updated-model"}}, nil)
 	c, _, _ := p.agent.db.agentConfig()
 	if c.APIKey != "keep-this-private" {
 		t.Fatal("blank key erased saved key")
@@ -224,9 +225,9 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 		t.Fatal("key not persisted")
 	}
 	for _, endpoint := range []string{"file:///tmp/test", "http://user:pass@example.com/v1", "https://example.com/v1?key=secret"} {
-		p.expect(400, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"endpoint": endpoint}}, nil)
+		p.Expect(400, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"endpoint": endpoint}}, nil)
 	}
-	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"clear_api_key": true}}, nil)
+	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"clear_api_key": true}}, nil)
 	c, _, _ = p.agent.db.agentConfig()
 	if c.APIKey != "" {
 		t.Fatal("explicit key clear failed")
@@ -234,20 +235,20 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	if err := p.db.SQL.QueryRow("SELECT api_key_ciphertext FROM agent_settings WHERE id=1").Scan(&ciphertext); err != nil || ciphertext != "" {
 		t.Fatalf("cleared API key remains in database: %v", err)
 	}
-	if strings.Contains(httpapi.JSONText(p.expect(200, "GET", "/api/audit", nil, nil)), "keep-this-private") {
+	if strings.Contains(httpapi.JSONText(p.Expect(200, "GET", "/api/audit", nil, nil)), "keep-this-private") {
 		t.Fatal("key in audit")
 	}
-	p.expect(201, "POST", "/api/users", object{"username": "readonly", "password": "A-viewer-password-123", "role": "viewer"}, nil)
-	p.login(false, "readonly", "A-viewer-password-123")
-	p.expect(403, "GET", "/api/agent/settings", nil, nil)
-	p.expect(403, "GET", "/api/agent/sessions", nil, nil)
-	p.expect(403, "POST", "/api/agent/sessions", object{"message": "test"}, nil)
+	p.Expect(201, "POST", "/api/users", object{"username": "readonly", "password": "A-viewer-password-123", "role": "viewer"}, nil)
+	p.Login(false, "readonly", "A-viewer-password-123")
+	p.Expect(403, "GET", "/api/agent/settings", nil, nil)
+	p.Expect(403, "GET", "/api/agent/sessions", nil, nil)
+	p.Expect(403, "POST", "/api/agent/sessions", object{"message": "test"}, nil)
 }
 
 func TestAgentAPIKeyEncryptionRejectsMissingKeyAndTampering(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
-	p.expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"api_key": "secret-for-encryption-test"}}, nil)
+	p.Login(true, "administrator", "A-test-password-123")
+	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"api_key": "secret-for-encryption-test"}}, nil)
 	keyPath := filepath.Join(p.db.Directory, apiKeyFile)
 	key, err := os.ReadFile(keyPath)
 	if err != nil {
@@ -275,7 +276,7 @@ func TestAgentAPIKeyEncryptionRejectsMissingKeyAndTampering(t *testing.T) {
 
 func TestAgentCancellationAndSessionIsolation(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	entered := make(chan struct{})
 	disconnected := make(chan struct{})
@@ -287,21 +288,21 @@ func TestAgentCancellationAndSessionIsolation(t *testing.T) {
 	}))
 	defer func() { p.agent.Close(); mock.Close() }()
 	configureTestAgent(t, p, "responses", mock.URL)
-	start := p.expect(202, "POST", "/api/agent/sessions", object{"message": "test cancellation"}, nil)
+	start := p.Expect(202, "POST", "/api/agent/sessions", object{"message": "test cancellation"}, nil)
 	id := httpapi.String(start["id"])
 	select {
 	case <-entered:
 	case <-time.After(10 * time.Second):
 		t.Fatal("model did not start")
 	}
-	p.expect(409, "POST", "/api/agent/sessions", object{"message": "concurrent"}, nil)
-	p.expect(201, "POST", "/api/users", object{"username": "secondadmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
-	oldCookie, oldCSRF := p.cookie, p.csrf
-	p.login(false, "secondadmin", "Second-admin-pass-123")
-	p.expect(404, "GET", "/api/agent/sessions/"+id, nil, nil)
-	p.expect(404, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
-	p.cookie, p.csrf = oldCookie, oldCSRF
-	p.expect(200, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
+	p.Expect(409, "POST", "/api/agent/sessions", object{"message": "concurrent"}, nil)
+	p.Expect(201, "POST", "/api/users", object{"username": "secondadmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
+	oldCookie, oldCSRF := p.Cookie, p.CSRF
+	p.Login(false, "secondadmin", "Second-admin-pass-123")
+	p.Expect(404, "GET", "/api/agent/sessions/"+id, nil, nil)
+	p.Expect(404, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
+	p.Cookie, p.CSRF = oldCookie, oldCSRF
+	p.Expect(200, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
 	r := waitAgentSession(t, p, id)
 	if r["session"].(map[string]any)["status"] != "cancelled" {
 		t.Fatalf("not cancelled: %v", r)
@@ -338,7 +339,7 @@ func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 		c.Protocol = "completions"
 		c.Endpoint = mock.URL
 		c.APIKey = "secret-key-value"
-		_, err := (agentProvider{Config: c}).complete(context.Background(), []object{}, true)
+		_, err := (agentProvider{Config: c}).complete(context.Background(), []object{})
 		mock.Close()
 		if err == nil || strings.Contains(err.Error(), c.APIKey) {
 			t.Fatalf("bad error handling: %v", err)
@@ -352,7 +353,7 @@ func TestAgentProviderErrorsAndEndpoint(t *testing.T) {
 	c := defaultConfig()
 	c.Endpoint = redirect.URL
 	c.APIKey = "secret"
-	_, err := (agentProvider{Config: c}).complete(context.Background(), nil, true)
+	_, err := (agentProvider{Config: c}).complete(context.Background(), nil)
 	if err == nil || redirected.Load() {
 		t.Fatal("followed model redirect with credentials")
 	}
@@ -367,7 +368,7 @@ func TestAgentProviderSessionErrorDoesNotExposeUpstreamText(t *testing.T) {
 			defer mock.Close()
 			c := defaultConfig()
 			c.Endpoint, c.APIKey = mock.URL, "secret-key-value"
-			_, err := (agentProvider{Config: c, SessionID: "test-session"}).complete(context.Background(), nil, true)
+			_, err := (agentProvider{Config: c, SessionID: "test-session"}).complete(context.Background(), nil)
 			if err == nil {
 				t.Fatal("accepted upstream error")
 			}
@@ -423,14 +424,14 @@ func TestAgentRecovery(t *testing.T) {
 
 func TestAgentFullScanFailureNeverCallsModel(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	var called atomic.Bool
 	mock := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called.Store(true) }))
 	defer mock.Close()
 	configureTestAgent(t, p, "responses", mock.URL)
 	p.records.failStart = true
-	s := p.expect(202, "POST", "/api/agent/sessions", object{"message": "scan first"}, nil)
+	s := p.Expect(202, "POST", "/api/agent/sessions", object{"message": "scan first"}, nil)
 	r := waitAgentSession(t, p, httpapi.String(s["id"]))
 	session := r["session"].(map[string]any)
 	if session["status"] != "failed" || session["snapshot_id"] != nil || called.Load() {
@@ -469,7 +470,7 @@ func TestBoundedJSONPreservesUTF8AndByteBudget(t *testing.T) {
 
 func TestAgentMessagePaginationBoundary(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	var uid string
 	if err := p.db.SQL.QueryRow("SELECT id FROM users").Scan(&uid); err != nil {
 		t.Fatal(err)
@@ -487,13 +488,13 @@ func TestAgentMessagePaginationBoundary(t *testing.T) {
 		if count != 0 && count != 199 && count != 200 && count != 201 {
 			continue
 		}
-		page := p.expect(200, "GET", "/api/agent/sessions/"+id, nil, nil)
+		page := p.Expect(200, "GET", "/api/agent/sessions/"+id, nil, nil)
 		messages := page["messages"].([]any)
 		if len(messages) != min(count, 200) || page["has_more"] != (count > 200) {
 			t.Fatalf("count=%d page=%v", count, page)
 		}
 		if count == 201 {
-			next := p.expect(200, "GET", fmt.Sprintf("/api/agent/sessions/%s?after=%d", id, int64(page["next_after"].(float64))), nil, nil)
+			next := p.Expect(200, "GET", fmt.Sprintf("/api/agent/sessions/%s?after=%d", id, int64(page["next_after"].(float64))), nil, nil)
 			tail := next["messages"].([]any)
 			if len(tail) != 1 || tail[0].(map[string]any)["content"] != "201" || next["has_more"] != false {
 				t.Fatalf("bad last page: %v", next)
@@ -504,7 +505,7 @@ func TestAgentMessagePaginationBoundary(t *testing.T) {
 
 func TestAgentRetriesFailedCompletionWithoutClientPolling(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Fail only the terminal write, after scans and messages have succeeded.
@@ -515,7 +516,7 @@ func TestAgentRetriesFailedCompletionWithoutClientPolling(t *testing.T) {
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	session := p.expect(202, "POST", "/api/agent/sessions", object{"message": "分析磁盘"}, nil)
+	session := p.Expect(202, "POST", "/api/agent/sessions", object{"message": "分析磁盘"}, nil)
 	id := session["id"].(string)
 	a := p.agent
 	deadline := time.Now().Add(20 * time.Second)

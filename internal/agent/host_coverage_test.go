@@ -32,9 +32,9 @@ func TestHostReportReviewsCoverageOnceAndResumesWithoutRepeatedScan(t *testing.T
 	for _, retry := range []bool{false, true} {
 		t.Run(map[bool]string{false: "remaining gap", true: "provider retry"}[retry], func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
-			job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			snapshotID := job["id"].(string)
 			waitJob(t, p.records, snapshotID)
 			records := &hostCoverageRecords{Records: p.records, root: p.storage}
@@ -71,7 +71,7 @@ func TestHostReportReviewsCoverageOnceAndResumesWithoutRepeatedScan(t *testing.T
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, "completions", mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
+			created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
 			id := created["id"].(string)
 			finished := waitAgentSession(t, p, id)
 			if retry {
@@ -82,7 +82,7 @@ func TestHostReportReviewsCoverageOnceAndResumesWithoutRepeatedScan(t *testing.T
 				if err := p.db.SQL.QueryRow(`SELECT json_extract(content,'$.request_id') FROM agent_messages WHERE session_id=? AND role='model_request' ORDER BY id DESC LIMIT 1`, id).Scan(&requestID); err != nil {
 					t.Fatal(err)
 				}
-				p.expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
+				p.Expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
 				finished = waitAgentSession(t, p, id)
 			}
 			if finished["session"].(object)["status"] != "completed" || records.scans.Load() != 1 {

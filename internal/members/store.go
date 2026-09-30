@@ -246,8 +246,6 @@ func validateProfile(fields []Field, values map[string]json.RawMessage) (map[str
 	}
 	return out, nil
 }
-func (s *Store) Register(req Registration) (Member, error) { return s.RegisterWith(req, nil) }
-
 func (s *Store) RegisterWith(req Registration, reserve func(*sql.Tx, Member) error) (Member, error) {
 	return s.registerWithToken(req, reserve, "")
 }

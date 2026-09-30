@@ -24,6 +24,9 @@ func Recover(db *platform.Database) error {
 		if _, err := tx.Exec("UPDATE agent_sessions SET status='interrupted',error='服务重启，分析已中断，可继续提问',active_job_id=NULL,updated_at=? WHERE status IN ('queued','scanning','running','cancelling')", platform.Now()); err != nil {
 			return err
 		}
+		if _, err := tx.Exec("UPDATE agent_cleanups SET status='interrupted',error='服务重启，删除已中断',updated_at=? WHERE status IN ('running','cancelling')", platform.Now()); err != nil {
+			return err
+		}
 		_, err := tx.Exec("UPDATE agent_cleanup_entries SET status='uncertain',error='服务重启，删除结果未确认；请检查实际路径后重新扫描' WHERE status='deleting'")
 		return err
 	})

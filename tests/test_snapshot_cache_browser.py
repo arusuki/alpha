@@ -2,11 +2,9 @@
 import hashlib
 import json
 import mimetypes
-import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -26,10 +24,7 @@ def encoded():
     return json.dumps(sample, ensure_ascii=False).encode()
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
+class Handler(NodeHandler):
     def respond(self, body, status=200, headers=None):
         raw = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.send_response(status)
@@ -42,6 +37,8 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
 
     def do_GET(self):
+        if self.control_request():
+            return
         path = urlparse(self.path).path
         if path == '/api/session':
             return self.respond(dict(user=user, csrf='test', setup_required=False))
@@ -82,20 +79,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(raw)
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-threading.Thread(target=server.serve_forever, daemon=True).start()
+server = start_server(Handler)
 try:
     with sync_playwright() as p:
-        launch = dict(headless=True, args=['--no-sandbox'])
-        if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
-            launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**launch_options())
         context = browser.new_context()
         page = context.new_page()
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         base = 'http://127.0.0.1:' + str(server.server_port)
-        page.goto(base)
+        page.goto(base + NODE_PATH)
         page.wait_for_function('platform.user !== null')
         page.locator('.platform-nav [data-page="overview"]').click()
         page.wait_for_function('platform.loaded !== null && platform.resultLoad === null')
@@ -109,7 +102,7 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.locator('#snapshotCachePanel').screenshot(path='/tmp/project-alpha-snapshot-cache-mobile.png')
         page.set_viewport_size(dict(width=1280, height=720))
-        assert page.evaluate('async () => (await SnapshotCache.read(platform.user.id, `/api/jobs/${platform.loaded}/snapshot`)).blob.text()') == encoded().decode()
+        assert page.evaluate('async () => (await SnapshotCache.read(platform.user.id, apiURL(`/api/jobs/${platform.loaded}/snapshot`))).blob.text()') == encoded().decode()
         # Exploration publishes a newer revision while the cached download still
         # contains revision zero. Closing the tab must not force a full download.
         sample['revision'] = job['snapshot_revision'] = 1
@@ -118,7 +111,7 @@ try:
         page.close()
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.goto(base)
+        page.goto(base + NODE_PATH)
         page.wait_for_function('platform.user !== null')
         page.locator('.platform-nav [data-page="overview"]').click()
         page.wait_for_function('platform.loaded !== null && platform.resultLoad === null')
@@ -126,7 +119,7 @@ try:
         assert change_requests[-1] == 0, change_requests
         assert page.evaluate('snapshot.revision') == 1
         assert page.evaluate('snapshot.tree.allocated') == sample['tree']['allocated']
-        assert page.evaluate('async () => JSON.parse(await (await SnapshotCache.read(platform.user.id, `/api/jobs/${platform.loaded}/snapshot`)).blob.text()).revision') == 1
+        assert page.evaluate('async () => JSON.parse(await (await SnapshotCache.read(platform.user.id, apiURL(`/api/jobs/${platform.loaded}/snapshot`))).blob.text()).revision') == 1
         page.reload()
         page.wait_for_function('platform.user !== null')
         page.locator('.platform-nav [data-page="overview"]').click()
@@ -137,8 +130,8 @@ try:
             return page.evaluate('''async scope => {
                 const progress=[];
                 try {
-                    const result=await SnapshotLoader.read('/api/jobs/'+'c'.repeat(32)+'/snapshot', {
-                        changesURL:'/api/jobs/'+'c'.repeat(32)+'/changes',
+                    const result=await SnapshotLoader.read(apiURL('/api/jobs/'+'c'.repeat(32)+'/snapshot'), {
+                        changesURL:apiURL('/api/jobs/'+'c'.repeat(32)+'/changes'),
                         scope, signal:new AbortController().signal, onProgress:p=>progress.push(p.detail)});
                     return {revision:result.data.revision, owner:result.data.containers[0].owner, progress, cacheError:result.cacheError};
                 } catch(error) { return {status:error.status,error:error.message}; }
@@ -159,7 +152,7 @@ try:
 
         # Deletion invalidates writers from both this tab and other Workers.
         assert page.evaluate('''async () => {
-            const url='/api/jobs/'+'c'.repeat(32)+'/snapshot';
+            const url=apiURL('/api/jobs/'+'c'.repeat(32)+'/snapshot');
             const old=await SnapshotCache.read('reader-one',url);
             await SnapshotCache.remove('reader-one',url);
             const saved=await SnapshotCache.save('reader-one',url,old.epoch,old.blob,{job_id:'test'});
@@ -170,7 +163,7 @@ try:
 
         # Invalid cached JSON retries with an unconditional network request.
         page.evaluate('''async () => {
-            const url='/api/jobs/'+'c'.repeat(32)+'/snapshot', state=await SnapshotCache.read('reader-one',url);
+            const url=apiURL('/api/jobs/'+'c'.repeat(32)+'/snapshot'), state=await SnapshotCache.read('reader-one',url);
             await SnapshotCache.save('reader-one',url,state.epoch,new Blob(['{broken']),{job_id:'broken'});
         }''')
         before = len(requests)

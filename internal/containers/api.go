@@ -1,7 +1,6 @@
 package containers
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -28,22 +27,6 @@ func NewHandler(db *platform.Database) *Handler {
 }
 func IsRoute(path string) bool {
 	return path == "/api/containers" || strings.HasPrefix(path, "/api/containers/")
-}
-func decode(w http.ResponseWriter, r *http.Request, target any) error {
-	value, err := httpapi.RequestBody(w, r)
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err = d.Decode(target); err != nil {
-		return httpapi.NewError(400, "请求字段无效: "+err.Error())
-	}
-	return nil
 }
 func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
 	fail := func(err error) (int, any, error) { return 0, nil, httpapi.NewError(409, err.Error()) }
@@ -73,7 +56,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		}
 		if r.Method == "PUT" {
 			var next Config
-			if err = decode(w, r, &next); err != nil {
+			if err = httpapi.DecodeBody(w, r, &next); err != nil {
 				return 0, nil, err
 			}
 			if err = next.validate(); err != nil {
@@ -108,7 +91,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if path == "/api/containers" && r.Method == "POST" {
 		var req CreateRequest
-		if err = decode(w, r, &req); err != nil {
+		if err = httpapi.DecodeBody(w, r, &req); err != nil {
 			return 0, nil, err
 		}
 		value, e := h.create(ctx, cfg, req, user.Username)
@@ -127,7 +110,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			Confirm  string `json:"confirm"`
 			Password string `json:"password"`
 		}
-		if err = decode(w, r, &req); err != nil {
+		if err = httpapi.DecodeBody(w, r, &req); err != nil {
 			return 0, nil, err
 		}
 		records, e := h.records()

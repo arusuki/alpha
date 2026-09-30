@@ -14,11 +14,12 @@ class TestAbortController {
   constructor(){this.signal={aborted:false,listeners:[],addEventListener(type,fn){this.listeners.push(fn);},removeEventListener(type,fn){this.listeners=this.listeners.filter(f=>f!==fn);}};}
   abort(){this.signal.aborted=true;this.signal.listeners.slice().forEach(fn=>fn());}
 }
-const sandbox={console,EventSource:class {addEventListener(){} close(){}},document,window:{addEventListener(){},SettingsUI:{reset(){},open(){}}},AbortController:TestAbortController,requestAnimationFrame:fn=>setImmediate(fn),setTimeout:()=>1,clearTimeout(){},fetch:()=>new Promise(()=>{})};
+const sandbox={console,EventSource:class {addEventListener(){} close(){}},document,window:{location:{pathname:'/nodes/'+ 'e'.repeat(32)+'/'},addEventListener(){},SettingsUI:{reset(){},open(){}}},AbortController:TestAbortController,requestAnimationFrame:fn=>setImmediate(fn),setTimeout:()=>1,clearTimeout(){},fetch:()=>new Promise(()=>{})};
 vm.createContext(sandbox);
 for(const path of ['dist/usage.js','dist/snapshot.js','dist/app.js','dist/snapshot-loader.js','dist/platform.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
 sandbox.sampleText=fs.readFileSync('tests/fixtures/snapshot.json','utf8');
 vm.runInContext(`
+apiURL=path=>path;
 var sample=JSON.parse(sampleText);sample.containers.forEach(c=>c.label_owner=c.owner);sample.job_id='a'.repeat(32);
 var calls=[];
 var job={id:'a'.repeat(32),created_at:100,status:'completed',trigger:'manual',created_by:'admin',snapshot_revision:0,allocated:123,progress:{phase:'completed',entries:12},finished_at:101};
@@ -164,9 +165,9 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   run('showPage("overview")');await run('syncState()');if(run('platform.resultLoad'))await run('platform.resultLoad.promise');
   run('platform.user.role="viewer";renderHistory()');assert(!element('jobsBody').innerHTML.includes('data-delete-job'));
   run('platform.user.role="viewer";select("container",snapshot.containers[0]);showPage("overview");showPage("scan-settings")');assert.equal(run('platform.page'),'overview');assert(!element('detail').innerHTML.includes('data-edit-owner'));
-  run('showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'账号管理');
-  run('showPage("agent-settings");showPage("accounts")');assert.equal(run('platform.page'),'settings');
-  run('showPage("overview")');assert(!element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'空间用量');
+  run('platform.nodeID="";showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'账号管理');
+  run('showPage("agent-settings")');assert.equal(run('platform.page'),'settings');
+  run('platform.nodeID="e".repeat(32);showPage("overview")');assert(!element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'空间用量');
   run(`
     var previousSnapshot=snapshot,previousLoaded=platform.loaded;
     var pendingReads=[];

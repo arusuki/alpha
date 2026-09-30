@@ -3,7 +3,7 @@
 const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:''};
 const admin=()=>platform.user?.role==='admin';
 function configure(){
-  const central=platform.control&&!platform.nodeID;
+  const central=!platform.nodeID;
   document.body.classList.toggle('control-room',central);
   document.querySelectorAll('[data-control-only]').forEach(e=>e.hidden=!central);
   document.querySelectorAll('.platform-nav [data-page]').forEach(e=>{
@@ -14,7 +14,7 @@ function configure(){
   $('agentGuideStorage').hidden=central;
   $('agentGuideNodes').hidden=!central;
   $('nodeContext').hidden=!platform.nodeID;
-  $('newContainerOwner').required=platform.control;
+  $('newContainerOwner').required=true;
   $('workspaceDate').textContent=new Date().toLocaleDateString('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'long'});
   if(platform.nodeID){
     const epoch=state.epoch;
@@ -76,7 +76,7 @@ function renderAllocations(){
   $('allocationRows').innerHTML=rows.map(m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||expanded.has(m.username)?'open':''}><summary><strong>${esc(m.username||'未归属')}</strong><span>${m.count} 个容器 · ${m.nodes.length} 个节点${admin()&&!m.registered&&m.username?' · 未登记使用者':''}</span></summary>${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers">${esc(n.name)} ↗</a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th>容器</th><th>记录来源</th><th>扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td>${c.managed?'已接管':'扫描发现'}</td><td>${esc(c.state||'尚无扫描状态')}<small class="sub">${esc(c.observed_at||'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||'<p>在线节点尚无该使用者的容器记录。</p>'}</details>`).join('')||'<p class="empty">没有匹配的使用者或容器。</p>';
 }
 async function refresh(){
-  if(!platform.user||!platform.control||platform.nodeID)return;
+  if(!platform.user||platform.nodeID)return;
   if(state.pending)return state.pending;
   const epoch=state.epoch;
   const pending=(async()=>{try{

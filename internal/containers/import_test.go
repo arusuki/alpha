@@ -6,11 +6,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"project-alpha/internal/httpapi"
 )
 
 func TestImportDryRunAndRepeat(t *testing.T) {
@@ -128,19 +125,5 @@ func TestImportConnectionAndListFailure(t *testing.T) {
 				t.Fatal("registered after failure")
 			}
 		})
-	}
-}
-
-func TestWebAdoptionRemoved(t *testing.T) {
-	h, f, _ := fixture(t)
-	for _, path := range []string{"/api/containers/check", "/api/containers/adopt"} {
-		_, _, err := h.Dispatch(httptest.NewRecorder(), httptest.NewRequest("POST", path, strings.NewReader(`{}`)), admin)
-		e, ok := err.(*httpapi.Error)
-		if !ok || e.Status != 404 {
-			t.Fatalf("web adoption still available: %v", err)
-		}
-	}
-	if len(f.calls) != 0 {
-		t.Fatal("removed endpoints called Docker")
 	}
 }

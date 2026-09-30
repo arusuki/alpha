@@ -45,10 +45,10 @@ func anotherPoolKey() string {
 func TestPoolSupersetAndContentIndex(t *testing.T) {
 	h, s, c, member := poolFixture(t)
 	foreign, extra := strings.Repeat("d", 32), strings.Repeat("e", 32)
-	if err := s.edit(c.ControlID, foreign, testKey); err != nil {
+	if err := setPoolEntry(s, c.ControlID, foreign, testKey); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.edit(c.ControlID, extra, anotherPoolKey()); err != nil {
+	if err := setPoolEntry(s, c.ControlID, extra, anotherPoolKey()); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.SyncKeys(); err != nil {
@@ -71,7 +71,7 @@ func TestPoolSupersetAndContentIndex(t *testing.T) {
 	if err = h.cleanFreeKey(extra, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.edit(c.ControlID, foreign, ""); err != nil {
+	if err = setPoolEntry(s, c.ControlID, foreign, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err = h.SyncKeys(); err != nil {
@@ -86,7 +86,7 @@ func TestPoolSupersetAndContentIndex(t *testing.T) {
 func TestPoolSharedKeyAndCleanupRechecksCurrentMembers(t *testing.T) {
 	h, s, c, first := poolFixture(t)
 	freeID := strings.Repeat("e", 32)
-	if err := s.edit(c.ControlID, freeID, anotherPoolKey()); err != nil {
+	if err := setPoolEntry(s, c.ControlID, freeID, anotherPoolKey()); err != nil {
 		t.Fatal(err)
 	}
 	before, err := h.keyPool()
@@ -144,7 +144,7 @@ func TestPoolSharedKeyAndCleanupRechecksCurrentMembers(t *testing.T) {
 func TestPoolAPIAdminAndFreeCleanup(t *testing.T) {
 	h, s, c, _ := poolFixture(t)
 	entry := strings.Repeat("f", 32)
-	if err := s.edit(c.ControlID, entry, anotherPoolKey()); err != nil {
+	if err := setPoolEntry(s, c.ControlID, entry, anotherPoolKey()); err != nil {
 		t.Fatal(err)
 	}
 	for _, role := range []string{"viewer", "admin"} {
@@ -159,7 +159,7 @@ func TestPoolAPIAdminAndFreeCleanup(t *testing.T) {
 
 func TestSyncPreservesUnrelatedEntryAndDoesNotReauthorizeDeletingUser(t *testing.T) {
 	h, s, c, member := poolFixture(t)
-	if err := s.edit(c.ControlID, member.ID, anotherPoolKey()); err != nil {
+	if err := setPoolEntry(s, c.ControlID, member.ID, anotherPoolKey()); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.SyncKeys(); err != nil {

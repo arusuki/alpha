@@ -103,17 +103,8 @@ func (b *Builder) Apply(resp *tetragon.GetEventsResponse) {
 	}
 }
 
-// Observe records a process as running, creating its node on first sight.
-//
-// An in-place exec reports a new exec ID for the same PID and never reports an
-// exit for the image it replaced. Left alone that puts two nodes on one PID,
-// and a shared PID is exactly what the reconciliation prober cannot reason
-// about, so it protects neither. When the new process matches an existing node
-// on PID, container and start time, it is that task's next image and the node
-// is re-labelled in place rather than duplicated: the forest keeps one node per
-// running process and the live image keeps the prober's protection. Start time
-// is the discriminator against a PID the kernel handed to an unrelated process,
-// which begins later; an exec keeps it.
+// Observe adds or refreshes a process. Matching PID, container and start time
+// identifies an in-place exec; relabeling preserves the parent and children.
 func (b *Builder) Observe(p *tetragon.Process) {
 	if p == nil || p.GetExecId() == "" {
 		return
@@ -259,8 +250,8 @@ type Drift struct {
 	Matched int // present in both
 	Added   int // known to the cache, missing from the forest; now restored
 	Ghosts  int // absent from the cache, missing once; kept until confirmed again
-	Evicted int // absent from the cache but still running; kept, and never dropped
-	Removed int // absent from the cache twice in a row; dropped from the forest
+	Evicted int // absent from the cache, confirmed running by the prober
+	Removed int // repeated cache misses without a positive probe; removed from display
 }
 
 // absentLimit is how many consecutive reconciliations must miss a process before
@@ -270,28 +261,9 @@ type Drift struct {
 // no prober could confirm the process is still running.
 const absentLimit = 2
 
-// Reconcile aligns the tracked forest with a fresh listing of the source's
-// process cache, the only recovery path for events the agent itself dropped.
-//
-// Processes the cache knows but the forest lost are added back. Processes the
-// forest has but the cache does not are assumed to have exited without their
-// exit event reaching us, and are dropped once the miss repeats; until then
-// they are only counted.
-//
-// That assumption breaks when the agent evicts a running process from its
-// capacity-bounded cache. The cache cannot list an entry it dropped, so a
-// deletion here is permanent: no later reconciliation could restore it. prober
-// is the backstop for exactly that case, consulted only once a process is about
-// to be dropped. A probe confirming the process still runs keeps it, and it is
-// re-probed every reconciliation so a later genuine exit is still noticed. A nil
-// prober, or one that cannot tell, leaves the decision to the miss counter.
-// The probe is also withheld from a process that shares its PID with another
-// node, where it could not distinguish a running process from a PID the kernel
-// recycled to a different one.
-//
-// grace suppresses both the count and the drop for processes younger than it,
-// which are expected to be missing rather than genuinely gone. Without it a
-// busy host would churn through the tree on every reconciliation.
+// Reconcile restores cache entries and removes nodes after repeated misses.
+// A positive probe keeps a node until a later exit or failed probe. Processes
+// younger than grace are skipped; ambiguous reused PIDs are not probed.
 func (b *Builder) Reconcile(live []*tetragon.Process, grace time.Duration, prober Prober) Drift {
 	var drift Drift
 	seen := make(map[string]bool, len(live))
@@ -341,8 +313,7 @@ func (b *Builder) Reconcile(live []*tetragon.Process, grace time.Duration, probe
 		// happened to yield first. One node on the PID is what tells the prober
 		// the PID identifies the process it is asked about.
 		if prober != nil && len(b.byPID[n.pid]) == 1 && prober.Alive(n.pid, n.start) {
-			// The agent evicted a running process from its cache. Its exit event
-			// is the only thing that may remove it from now on.
+			// Keep the live process and probe it again on the next reconciliation.
 			drift.Evicted++
 			continue
 		}

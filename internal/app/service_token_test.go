@@ -230,15 +230,8 @@ func testServiceRejectsInvalidExplicitToken(t *testing.T, mode string) {
 	}
 }
 
-func TestWorkerTokenConcurrentCreationAndInvalidFile(t *testing.T) {
-	testServiceTokenConcurrentCreationAndInvalidFile(t, "worker")
-}
-func TestRegistryTokenConcurrentCreationAndInvalidFile(t *testing.T) {
-	testServiceTokenConcurrentCreationAndInvalidFile(t, "registry")
-}
-
-func testServiceTokenConcurrentCreationAndInvalidFile(t *testing.T, mode string) {
-	t.Helper()
+func TestServiceTokenConcurrentCreationAndInvalidFile(t *testing.T) {
+	const mode = "worker"
 	directory := t.TempDir()
 	var workers sync.WaitGroup
 	tokens := make(chan string, 8)

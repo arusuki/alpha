@@ -91,22 +91,22 @@ func withinReportRoot(p, root string) bool {
 	return root == "/" || p == root || strings.HasPrefix(p, root+"/")
 }
 
-func hostReportContainers(directories []reportDirectory) []reportContainer {
-	result := make([]reportContainer, 0, len(directories))
+func hostReportSubjects(directories []reportDirectory) []reportSubject {
+	result := make([]reportSubject, 0, len(directories))
 	for _, directory := range directories {
 		name := directory.Name
 		if name == "" {
 			name = directory.Path
 		}
-		result = append(result, reportContainer{ID: directory.Path, Name: name})
+		result = append(result, reportSubject{ID: directory.Path, Name: name})
 	}
 	return result
 }
 
-func hostReportResults(results []hostReportDirectoryResult) []reportContainerResult {
-	converted := make([]reportContainerResult, 0, len(results))
+func hostReportResults(results []hostReportDirectoryResult) []reportResult {
+	converted := make([]reportResult, 0, len(results))
 	for _, directory := range results {
-		item := reportContainerResult{ContainerID: directory.Path, Note: directory.Note}
+		item := reportResult{SubjectID: directory.Path, Note: directory.Note}
 		for _, f := range directory.Findings {
 			item.Findings = append(item.Findings, reportFinding{Path: f.Path, Category: f.Category, Kind: f.Kind, Bytes: f.Bytes, Summary: f.Summary, Reason: f.Reason})
 		}

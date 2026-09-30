@@ -14,7 +14,7 @@ import (
 	"project-alpha/internal/platform"
 )
 
-var legacyPort = regexp.MustCompile(`Port ([0-9]+)/`)
+var hostSSHPortPattern = regexp.MustCompile(`Port ([0-9]+)/`)
 
 type CreateRequest struct {
 	MemberID   string `json:"-"`
@@ -122,9 +122,9 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 				}
 			}
 		}
-		// The original script embeds the host-network SSH port in its sed command.
+		// Reserve SSH ports encoded in host-network container commands.
 		if c.HostConfig.NetworkMode == "host" {
-			for _, match := range legacyPort.FindAllStringSubmatch(strings.Join(c.Config.Cmd, " "), -1) {
+			for _, match := range hostSSHPortPattern.FindAllStringSubmatch(strings.Join(c.Config.Cmd, " "), -1) {
 				p, _ := strconv.Atoi(match[1])
 				used[p] = true
 			}

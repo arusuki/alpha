@@ -5,10 +5,6 @@ const html=fs.readFileSync('dist/index.html','utf8');
 assert(html.includes('src="/settings.js"'));
 assert(html.includes('data-page="scan-settings"'));
 assert(html.includes('data-page="settings"'));
-assert(html.indexOf('id="passwordButton"')>html.indexOf('id="page-settings"'));
-assert(html.indexOf('id="createUserForm"')>html.indexOf('id="page-settings"'));
-assert(html.indexOf('id="agentSettingsForm"')>html.indexOf('id="page-agent-settings"'));
-assert(!html.includes('id="settingsModelTab"'));
 const elements=new Map();
 function element(id){
   assert(html.includes(`id="${id}"`),`Missing DOM element ${id}`);

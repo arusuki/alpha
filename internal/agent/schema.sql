@@ -19,13 +19,13 @@ CREATE TABLE agent_reports (
  entries TEXT NOT NULL
 );
 CREATE TABLE agent_cleanups (
- session_id TEXT PRIMARY KEY REFERENCES agent_sessions(id) ON DELETE CASCADE,
- report_id INTEGER NOT NULL UNIQUE REFERENCES agent_reports(message_id),
- phase TEXT NOT NULL DEFAULT 'extract'
+ id TEXT PRIMARY KEY, report_id INTEGER NOT NULL UNIQUE REFERENCES agent_reports(message_id) ON DELETE CASCADE,
+ status TEXT NOT NULL DEFAULT 'ready', error TEXT NOT NULL DEFAULT '',
+ created_at REAL NOT NULL, updated_at REAL NOT NULL
 );
 CREATE TABLE agent_cleanup_entries (
- id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES agent_cleanups(session_id) ON DELETE CASCADE,
+ id TEXT PRIMARY KEY, cleanup_id TEXT NOT NULL REFERENCES agent_cleanups(id) ON DELETE CASCADE,
  path TEXT NOT NULL, category INTEGER NOT NULL, summary TEXT NOT NULL, detail TEXT NOT NULL,
  status TEXT NOT NULL DEFAULT 'pending', error TEXT NOT NULL DEFAULT '',
- UNIQUE(session_id,path)
+ UNIQUE(cleanup_id,path)
 );

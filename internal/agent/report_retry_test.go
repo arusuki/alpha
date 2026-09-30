@@ -19,9 +19,9 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 	for _, protocol := range []string{"completions", "responses"} {
 		t.Run(protocol, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
-			job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			recordID := job["id"].(string)
 			waitJob(t, p.records, recordID)
 			fixture := &reportFixture{Records: p.records, containers: fixtureContainers(17)}
@@ -121,7 +121,7 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 			defer unblockOthers()
 			defer unblock()
 			configureTestAgent(t, p, protocol, mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
+			created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
 			id := created["id"].(string)
 			if result := waitAgentSession(t, p, id); result["session"].(object)["status"] != "failed" {
 				t.Fatal(result)
@@ -136,13 +136,13 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 			}
 			target := object{"group_id": "group-2", "request_id": latestRequest("group-2")}
 			route := "/api/agent/sessions/" + id + "/retry"
-			p.expect(409, "POST", route, retryBatch(object{"group_id": "group-1", "request_id": latestRequest("group-1")}), nil)
-			p.expect(409, "POST", route, retryBatch(object{"group_id": "group-2", "request_id": "stale"}), nil)
-			p.expect(400, "POST", route, object{"group_id": "group-2"}, nil)
-			p.expect(201, "POST", "/api/users", object{"username": "anotheradmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
-			p.login(false, "anotheradmin", "Second-admin-pass-123")
-			p.expect(404, "POST", route, retryBatch(target), nil)
-			p.login(false, "administrator", "A-test-password-123")
+			p.Expect(409, "POST", route, retryBatch(object{"group_id": "group-1", "request_id": latestRequest("group-1")}), nil)
+			p.Expect(409, "POST", route, retryBatch(object{"group_id": "group-2", "request_id": "stale"}), nil)
+			p.Expect(400, "POST", route, object{"group_id": "group-2"}, nil)
+			p.Expect(201, "POST", "/api/users", object{"username": "anotheradmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
+			p.Login(false, "anotheradmin", "Second-admin-pass-123")
+			p.Expect(404, "POST", route, retryBatch(target), nil)
+			p.Login(false, "administrator", "A-test-password-123")
 
 			// No live goroutine or private checkpoint is needed after a restart.
 			p.agent.Close()
@@ -161,9 +161,9 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 				batch = append(batch, object{"group_id": group, "request_id": latestRequest(group)})
 			}
 			// Validate the entire batch before starting even its first group.
-			p.expect(409, "POST", route, retryBatch(target, object{"group_id": "group-3", "request_id": "stale"}), nil)
-			p.expect(400, "POST", route, retryBatch(target, target), nil)
-			p.expect(202, "POST", route, retryBatch(batch...), nil)
+			p.Expect(409, "POST", route, retryBatch(target, object{"group_id": "group-3", "request_id": "stale"}), nil)
+			p.Expect(400, "POST", route, retryBatch(target, target), nil)
+			p.Expect(202, "POST", route, retryBatch(batch...), nil)
 			receive := func() string {
 				t.Helper()
 				select {
@@ -183,7 +183,7 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 				t.Fatalf("retry concurrency limit exceeded: %s", extra)
 			case <-time.After(50 * time.Millisecond):
 			}
-			p.expect(409, "POST", route, retryBatch(target), nil)
+			p.Expect(409, "POST", route, retryBatch(target), nil)
 			unblockOthers()
 			if receive() != "group-4" || receive() != "group-5" {
 				t.Fatal("queued retries did not refill slots while another agent was blocked")
@@ -192,13 +192,13 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 			if result := waitAgentSession(t, p, id); result["session"].(object)["status"] != "failed" {
 				t.Fatal(result)
 			}
-			p.expect(409, "POST", route, retryBatch(target), nil)
+			p.Expect(409, "POST", route, retryBatch(target), nil)
 			state, err := p.agent.savedReport(id)
 			if err != nil || state.States["group-1"] != "completed" || state.States["group-2"] != "failed" || state.States["group-3"] != "completed" || state.States["group-4"] != "completed" || state.States["group-5"] != "completed" {
 				t.Fatalf("one failed retry blocked other agents: %+v %v", state, err)
 			}
 			target["request_id"] = latestRequest("group-2")
-			p.expect(202, "POST", route, retryBatch(target), nil)
+			p.Expect(202, "POST", route, retryBatch(target), nil)
 			if result := waitAgentSession(t, p, id); result["session"].(object)["status"] != "completed" {
 				t.Fatal(result)
 			}
@@ -219,7 +219,7 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 					t.Errorf("report lost completed container %s", container.Name)
 				}
 			}
-			p.expect(409, "POST", route, retryBatch(target), nil)
+			p.Expect(409, "POST", route, retryBatch(target), nil)
 		})
 	}
 }

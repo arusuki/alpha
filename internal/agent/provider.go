@@ -24,15 +24,14 @@ type modelReply struct {
 }
 
 type agentProvider struct {
-	Config           Config
-	SessionID        string
-	StreamLimitBytes int64
-	OnRequest        func(object) error
-	OnDelta          func(modelDelta) error
+	Config    Config
+	SessionID string
+	OnRequest func(object) error
+	OnDelta   func(modelDelta) error
 }
 
 // Keep endpoint and credentials inside this adapter; neither is exposed to tools.
-func (p agentProvider) complete(ctx context.Context, history []object, allowTools bool) (modelReply, error) {
+func (p agentProvider) complete(ctx context.Context, history []object) (modelReply, error) {
 	var reply modelReply
 	endpoint, err := p.Config.endpointURL()
 	if err != nil {
@@ -50,10 +49,8 @@ func (p agentProvider) complete(ctx context.Context, history []object, allowTool
 			body["reasoning"] = object{"summary": "auto"}
 		}
 	}
-	if allowTools {
-		body["tools"] = agentToolDefinitions(p.Config.Protocol)
-		body["tool_choice"] = "auto"
-	}
+	body["tools"] = agentToolDefinitions(p.Config.Protocol)
+	body["tool_choice"] = "auto"
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return reply, err

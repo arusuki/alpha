@@ -6,13 +6,14 @@ function element(id){
   if(!elements.has(id))elements.set(id,{id,value:'',hidden:false,disabled:false,open:false,innerHTML:'',textContent:'',dataset:{},style:{},listeners:{},querySelector(){return {focus(){}};},classList:{toggle(){},remove(){}},setAttribute(){},removeAttribute(){},addEventListener(type,fn){this.listeners[type]=fn;},showModal(){this.open=true;},close(){this.open=false;}});
   return elements.get(id);
 }
-const sandbox={console,EventSource:class {addEventListener(){} close(){}},AbortController:class {constructor(){this.signal={aborted:false};}abort(){this.signal.aborted=true;}},requestAnimationFrame:fn=>setImmediate(fn),setTimeout:()=>1,clearTimeout(){},fetch:()=>new Promise(()=>{}),window:{addEventListener(){},SettingsUI:{reset(){},open(){}}},document:{getElementById:element,querySelectorAll:()=>[],addEventListener(type,fn){if(!listeners[type])listeners[type]=[];listeners[type].push(fn);}}};
+const sandbox={console,EventSource:class {addEventListener(){} close(){}},AbortController:class {constructor(){this.signal={aborted:false};}abort(){this.signal.aborted=true;}},requestAnimationFrame:fn=>setImmediate(fn),setTimeout:()=>1,clearTimeout(){},fetch:()=>new Promise(()=>{}),window:{location:{pathname:'/nodes/'+ 'e'.repeat(32)+'/'},addEventListener(){},SettingsUI:{reset(){},open(){}}},document:{getElementById:element,querySelectorAll:()=>[],addEventListener(type,fn){if(!listeners[type])listeners[type]=[];listeners[type].push(fn);}}};
 vm.createContext(sandbox);
 for(const path of ['dist/usage.js','dist/snapshot.js','dist/app.js','dist/snapshot-loader.js','dist/platform.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
 const run=code=>vm.runInContext(code,sandbox);
 const click=dataset=>listeners.click.forEach(fn=>fn({target:{closest:()=>({dataset})}}));
 sandbox.sampleText=fs.readFileSync('tests/fixtures/snapshot.json','utf8');
 run(`
+apiURL=path=>path;
 var sample=JSON.parse(sampleText);sample.containers.forEach(c=>c.label_owner=c.owner);sample.job_id='a'.repeat(32);sample.revision=0;
 var currentRoot=Usage.build(sample).inspect(sample.containers[0].upper_path).node;
 var leafPath=currentRoot.path+'/cache';

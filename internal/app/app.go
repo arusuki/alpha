@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	web "project-alpha/dist"
@@ -161,9 +160,6 @@ func Run(ctx context.Context, args []string) error {
 		if !automaticRegistryToken && !cluster.ValidToken(registryToken) {
 			return fmt.Errorf("registry token from --registry-token-file or PROJECT_ALPHA_REGISTRY_TOKEN must contain 32–256 non-whitespace ASCII characters")
 		}
-	}
-	if *registryMode {
-		var err error
 		regPass, err = readSecret(*regPassFile, "REG_PASS")
 		if err != nil {
 			return err
@@ -179,16 +175,12 @@ func Run(ctx context.Context, args []string) error {
 	if *worker {
 		mode = "worker"
 		initialize = Initialize
-		token = os.Getenv("PROJECT_ALPHA_WORKER_TOKEN")
-		if *workerTokenFile != "" {
-			raw, err := os.ReadFile(*workerTokenFile)
-			if err != nil {
-				return fmt.Errorf("read worker token: %w", err)
-			}
-			token = strings.TrimSpace(string(raw))
-		} else if token == "" {
-			automaticToken = true
+		var err error
+		token, err = readSecret(*workerTokenFile, "PROJECT_ALPHA_WORKER_TOKEN")
+		if err != nil {
+			return fmt.Errorf("read worker token: %w", err)
 		}
+		automaticToken = *workerTokenFile == "" && token == ""
 		if !automaticToken && !cluster.ValidToken(token) {
 			return fmt.Errorf("worker token from --worker-token-file or PROJECT_ALPHA_WORKER_TOKEN must contain 32–256 non-whitespace ASCII characters")
 		}
@@ -254,7 +246,7 @@ func Run(ctx context.Context, args []string) error {
 		}
 		defer controlHandler.Close()
 		frontend := platform.NewServer(db, controlHandler, web.Assets, hosts, *secure)
-		frontend.Control = true
+
 		handler = frontend
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))

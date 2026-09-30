@@ -1,10 +1,7 @@
 package cluster
 
 import (
-	"bytes"
 	"database/sql"
-	"encoding/json"
-	"net/http"
 	"net/url"
 	"strings"
 	"unicode/utf8"
@@ -52,22 +49,6 @@ type nodeInput struct {
 	Token string `json:"token"`
 }
 
-func decode(w http.ResponseWriter, r *http.Request, target any) error {
-	value, err := httpapi.RequestBody(w, r)
-	if err != nil {
-		return err
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	d := json.NewDecoder(bytes.NewReader(raw))
-	d.DisallowUnknownFields()
-	if err = d.Decode(target); err != nil {
-		return httpapi.NewError(400, "请求字段格式无效")
-	}
-	return nil
-}
 func (v *nodeInput) validate() error {
 	if v.Kind != "worker" && v.Kind != "registry" {
 		return httpapi.NewError(400, "请选择 worker 或 registry 节点类型")

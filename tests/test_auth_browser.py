@@ -1,10 +1,8 @@
 """Exercise the opening sequence and auth states in a real browser."""
 import json
-import mimetypes
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from browser_support import BrowserHandler, launch_options, start_server
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -12,21 +10,9 @@ artifacts = Path(os.environ.get('PROJECT_ALPHA_AUTH_ARTIFACTS', '/tmp/project-al
 artifacts.mkdir(parents=True, exist_ok=True)
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
+class Handler(BrowserHandler):
     def do_GET(self):
-        file = repo / 'dist' / ('index.html' if self.path == '/' else self.path.lstrip('/'))
-        if not file.is_file():
-            self.send_error(404)
-            return
-        body = file.read_bytes()
-        self.send_response(200)
-        self.send_header('Content-Type', mimetypes.guess_type(str(file))[0] or 'text/plain')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.serve_asset()
 
 
 def mock_api(page, setup=False, authenticated=False):
@@ -39,6 +25,8 @@ def mock_api(page, setup=False, authenticated=False):
         if path == 'session':
             value = dict(user=dict(id='test', username='admin', role='admin') if authenticated else None,
                          csrf='test', setup_required=setup)
+        elif path == 'cluster/overview':
+            value = dict(nodes=[], members=[], online=0, container_count=0, checked_at=1, partial=False)
         elif path == 'state':
             value = dict(jobs=[], directory_jobs=[], latest_id=None, active=None, interval_minutes=0)
         elif path in ('login', 'setup'):
@@ -49,14 +37,10 @@ def mock_api(page, setup=False, authenticated=False):
     return calls
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-threading.Thread(target=server.serve_forever, daemon=True).start()
+server = start_server(Handler)
 try:
     with sync_playwright() as p:
-        launch = dict(headless=True, args=['--no-sandbox'])
-        if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
-            launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**launch_options())
         url = f'http://127.0.0.1:{server.server_port}'
         page = browser.new_page(viewport=dict(width=1440, height=1000))
         errors = []
@@ -141,7 +125,7 @@ try:
         restored = browser.new_page()
         mock_api(restored, authenticated=True)
         restored.goto(url)
-        restored.wait_for_selector('#page-dashboard')
+        restored.wait_for_selector('#page-cluster')
         assert restored.locator('#authPanel').is_hidden()
         restored.locator('#logoutButton').click()
         assert restored.locator('#authSkip').is_hidden()

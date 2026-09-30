@@ -28,7 +28,7 @@ type hostCoverageItem struct {
 	Depth    int    `json:"depth,omitempty"`
 }
 
-func (a *Manager) hostReportCoverage(ctx context.Context, snapshotID string, directories []reportDirectory, results []reportContainerResult) (*hostCoverage, error) {
+func (a *Manager) hostReportCoverage(ctx context.Context, snapshotID string, directories []reportDirectory, results []reportResult) (*hostCoverage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

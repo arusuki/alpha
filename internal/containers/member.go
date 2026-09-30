@@ -65,7 +65,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		Username string `json:"username"`
 		SSHKey   string `json:"ssh_public_key"`
 	}
-	if err := decode(w, r, &req); err != nil {
+	if err := httpapi.DecodeBody(w, r, &req); err != nil {
 		return 0, nil, err
 	}
 	if r.Method != "PUT" && r.Method != "DELETE" {

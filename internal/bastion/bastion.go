@@ -270,19 +270,6 @@ func (h *Handler) Refresh(ctx context.Context, id, resolve string, absent bool, 
 	}
 	return httpapi.NewError(409, "未找到对应邀请；请在 Tailscale 控制台核对，不自动重新分享")
 }
-func read(w http.ResponseWriter, r *http.Request, out any) error {
-	v, e := httpapi.RequestBody(w, r)
-	if e != nil {
-		return e
-	}
-	raw, _ := json.Marshal(v)
-	d := json.NewDecoder(strings.NewReader(string(raw)))
-	d.DisallowUnknownFields()
-	if e = d.Decode(out); e != nil {
-		return httpapi.NewError(400, "请求字段无效")
-	}
-	return nil
-}
 func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.User) (int, any, error) {
 	if u.Role != "admin" {
 		return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
@@ -295,7 +282,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 		return 200, map[string]any{"keys": keys}, err
 	}
 	if r.Method == "POST" && r.URL.Path == "/api/bastion/keys/sync" {
-		if err := read(w, r, &struct{}{}); err != nil {
+		if err := httpapi.DecodeBody(w, r, &struct{}{}); err != nil {
 			return 0, nil, err
 		}
 		err := h.SyncKeys()
@@ -305,7 +292,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 		return 200, map[string]bool{"ok": err == nil}, err
 	}
 	if r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/api/bastion/keys/") {
-		if err := read(w, r, &struct{}{}); err != nil {
+		if err := httpapi.DecodeBody(w, r, &struct{}{}); err != nil {
 			return 0, nil, err
 		}
 		err := h.cleanFreeKey(strings.TrimPrefix(r.URL.Path, "/api/bastion/keys/"), u.Username)
@@ -365,7 +352,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 			InviteID      string `json:"invite_id"`
 			ConfirmAbsent bool   `json:"confirm_absent"`
 		}
-		if e := read(w, r, &req); e != nil {
+		if e := httpapi.DecodeBody(w, r, &req); e != nil {
 			return 0, nil, e
 		}
 		if parts[2] == "resolve-invite" && req.InviteID == "" && !req.ConfirmAbsent {
@@ -381,18 +368,16 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if len(parts) == 2 && parts[0] == "tailscale" {
-		table := "bastion_tailscale"
-		column := "tailscale_id"
 		if r.Method == "DELETE" {
 			e := h.DB.Transaction(func(tx *sql.Tx) error {
 				var count int
-				if e := tx.QueryRow("SELECT count(*) FROM member_access WHERE "+column+"=?", parts[1]).Scan(&count); e != nil {
+				if e := tx.QueryRow("SELECT count(*) FROM member_access WHERE tailscale_id=?", parts[1]).Scan(&count); e != nil {
 					return e
 				}
 				if count > 0 {
 					return httpapi.NewError(409, "该资源仍有关联使用者，请先回收分配")
 				}
-				if _, e := tx.Exec("DELETE FROM "+table+" WHERE id=?", parts[1]); e != nil {
+				if _, e := tx.Exec("DELETE FROM bastion_tailscale WHERE id=?", parts[1]); e != nil {
 					return e
 				}
 				return platform.Audit(tx, u.Username, "bastion.resource.remove", parts[1])
@@ -403,7 +388,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 			var req struct {
 				Enabled *bool `json:"enabled"`
 			}
-			if e := read(w, r, &req); e != nil {
+			if e := httpapi.DecodeBody(w, r, &req); e != nil {
 				return 0, nil, e
 			}
 			if req.Enabled == nil {

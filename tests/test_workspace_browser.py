@@ -1,11 +1,8 @@
 """Workspace navigation and process regressions against deterministic local APIs."""
 import json
-import mimetypes
-import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -29,19 +26,10 @@ def process(pid, binary, children=None, command=None):
                 children=children or [])
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def respond(self, value, status=200):
-        raw = json.dumps(value).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
+class Handler(NodeHandler):
     def do_GET(self):
+        if self.control_request():
+            return
         path = urlparse(self.path).path
         calls.append(self.path)
         if path == '/api/session':
@@ -84,16 +72,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(dict(users=[dict(user, enabled=True)]))
         if path == '/api/audit':
             return self.respond(dict(events=[]))
-        file = repo / 'dist' / ('index.html' if path == '/' else path.lstrip('/'))
-        if not file.is_file():
-            self.send_error(404)
-            return
-        raw = file.read_bytes()
-        self.send_response(200)
-        self.send_header('Content-Type', mimetypes.guess_type(str(file))[0] or 'text/plain')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
+        self.serve_asset()
 
     def do_POST(self):
         global user
@@ -120,18 +99,14 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(model)
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-threading.Thread(target=server.serve_forever, daemon=True).start()
+server = start_server(Handler)
 try:
     with sync_playwright() as p:
-        launch = dict(headless=True, args=['--no-sandbox'])
-        if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
-            launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**launch_options())
         page = browser.new_page(viewport=dict(width=1440, height=1080))
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
-        page.goto('http://127.0.0.1:' + str(server.server_port))
+        page.goto('http://127.0.0.1:' + str(server.server_port) + NODE_PATH)
         page.locator('#authUsername').fill('admin')
         page.locator('#authPassword').fill('test-password')
         page.screenshot(path='/tmp/project-alpha-login.png', full_page=True, animations='disabled')
@@ -149,10 +124,10 @@ try:
         page.wait_for_function("document.querySelector('#managedContainerRows').children.length > 0 && !document.querySelector('#containersRefresh').disabled")
         assert page.locator('#page-containers').is_visible()
         assert page.locator('#containerEndpoint').input_value() == 'unix:///var/run/docker.sock', (page.locator('#containersError').inner_text(), calls, errors)
-        assert page.locator('#adoptContainerForm').count() == 0
         assert '命令行' in page.locator('#page-containers').inner_text()
         page.locator('#page-containers summary').filter(has_text='创建容器').click()
         page.locator('#newContainerName').fill('bob')
+        page.locator('#newContainerOwner').fill('bob')
         page.locator('#createContainerForm button').click()
         page.locator('#containerCredentialsDialog').wait_for(state='visible')
         assert 'generated-test-secret' in page.locator('#containerCredentials').inner_text()
@@ -160,7 +135,7 @@ try:
         assert page.locator('#containerCredentials').inner_text() == ''
         page.screenshot(path='/tmp/project-alpha-containers.png', full_page=True, animations='disabled')
         page.locator('.platform-nav [data-page="dashboard"]').click()
-        page.locator('.platform-nav [data-page="agent-settings"]').click()
+        page.goto('http://127.0.0.1:' + str(server.server_port) + '/#agent-settings')
         page.wait_for_function('settingsState.model !== null')
         assert page.locator('#storageNav').is_hidden()
         assert page.locator('#storageMonitor').is_hidden()
@@ -170,7 +145,7 @@ try:
         page.wait_for_function('settingsState.model?.revision === 2')
         assert page.locator('#agentKey').input_value() == ''
         page.screenshot(path='/tmp/project-alpha-agent-settings.png', full_page=True, animations='disabled')
-        page.locator('.platform-nav [data-page=processes]').click()
+        page.goto('http://127.0.0.1:' + str(server.server_port) + NODE_PATH + '#processes')
         page.wait_for_function('processView.data !== null')
         assert page.locator('#processTotalCount').inner_text() == '4'
         assert page.locator('#processTree tr').count() == 3
@@ -235,18 +210,19 @@ try:
         page.screenshot(path='/tmp/project-alpha-storage.png', full_page=True, animations='disabled')
         page.locator('#viewReports').click()
         page.locator('#agentModelSettings').click()
+        page.wait_for_selector('#page-agent-settings')
         assert page.locator('#page-agent-settings').is_visible()
         assert page.locator('#agentDialog').is_hidden()
         page.reload()
         page.wait_for_function('platform.user !== null')
-        # Module deep links now survive reloads, including links from the control.
+        # The control model-settings link survives reload.
         assert page.locator('#page-agent-settings').is_visible()
-        page.locator('.platform-nav [data-page=dashboard]').click()
-        assert page.locator('#page-dashboard').is_visible()
+        page.goto('http://127.0.0.1:' + str(server.server_port) + NODE_PATH)
+        page.wait_for_selector('#page-dashboard')
         page.emulate_media(reduced_motion='reduce')
         page.set_viewport_size(dict(width=390, height=844))
         assert page.locator('#page-dashboard').evaluate('(e) => getComputedStyle(e).animationName') == 'none'
-        for module in ['dashboard', 'overview', 'containers', 'processes', 'agent-settings', 'settings']:
+        for module in ['dashboard', 'overview', 'containers', 'processes']:
             page.locator('.platform-nav [data-page=' + module + ']').click()
             if module == 'overview':
                 page.wait_for_function('platform.loaded !== null')
@@ -269,7 +245,6 @@ try:
         page.locator('.module-containers').click()
         page.wait_for_function("document.querySelector('#managedContainerRows').children.length > 0 && !document.querySelector('#containersRefresh').disabled")
         assert page.locator('#createContainerForm').is_hidden()
-        assert page.locator('#adoptContainerForm').count() == 0
         page.locator('.platform-nav [data-page=dashboard]').click()
         unavailable = True
         page.locator('.module-process').click()

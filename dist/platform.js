@@ -1,9 +1,9 @@
 'use strict';
-const platform = {control:false,nodeID:(window.location?.pathname||'').match(/^\/nodes\/([a-f0-9]{32})\/$/)?.[1]||'',user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,expandDepth:3,deletedIDs:new Set(),deleteTarget:null,deleting:false};
+const platform = {nodeID:(window.location?.pathname||'').match(/^\/nodes\/([a-f0-9]{32})\/$/)?.[1]||'',user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,expandDepth:3,deletedIDs:new Set(),deleteTarget:null,deleting:false};
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
 const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
-const actionNames = {'bastion.key.sync':'补齐跳板用户公钥','bastion.key.clean':'清理 free 跳板公钥','bastion.account.init.start':'安装跳板开始','bastion.account.init.completed':'安装跳板完成','bastion.account.init.failed':'安装跳板失败','bastion.account.adopt.start':'接管跳板开始','bastion.account.adopt.completed':'接管跳板完成','bastion.account.adopt.failed':'接管跳板失败','bastion.account.release.start':'取消跳板接管开始','bastion.account.release.completed':'取消跳板接管完成','bastion.account.release.failed':'取消跳板接管失败','bastion.account.delete.start':'删除跳板账号开始','bastion.account.delete.completed':'删除跳板账号完成','bastion.account.delete.failed':'删除跳板账号失败','bastion.install.start':'开始安装跳板','bastion.install.completed':'跳板安装完成','bastion.install.failed':'跳板安装失败','bastion.jump.update':'修改跳板连接','cluster.node.add':'添加节点','cluster.node.update':'修改节点连接','cluster.node.remove':'移除节点连接','member.schema':'修改使用者注册配置','member.register':'登记机器使用者','member.invitation.create':'生成注册邀请码','member.invitation.revoke':'作废注册邀请码','container.create':'创建容器','container.adopt':'接管容器','container.start':'启动容器','container.stop':'停止容器','container.restart':'重启容器','container.delete':'删除容器','container.release':'解除容器接管','container.initialize':'初始化容器密码','container.settings':'修改容器配置','scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.extract':'提取报告目录','agent.extract.delete':'删除提取记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
+const actionNames = {'bastion.key.sync':'补齐跳板用户公钥','bastion.key.clean':'清理 free 跳板公钥','bastion.account.init.start':'安装跳板开始','bastion.account.init.completed':'安装跳板完成','bastion.account.init.failed':'安装跳板失败','bastion.account.adopt.start':'接管跳板开始','bastion.account.adopt.completed':'接管跳板完成','bastion.account.adopt.failed':'接管跳板失败','bastion.account.release.start':'取消跳板接管开始','bastion.account.release.completed':'取消跳板接管完成','bastion.account.release.failed':'取消跳板接管失败','bastion.account.delete.start':'删除跳板账号开始','bastion.account.delete.completed':'删除跳板账号完成','bastion.account.delete.failed':'删除跳板账号失败','cluster.node.add':'添加节点','cluster.node.update':'修改节点连接','cluster.node.remove':'移除节点连接','member.schema':'修改使用者注册配置','member.register':'登记机器使用者','member.invitation.create':'生成注册邀请码','member.invitation.revoke':'作废注册邀请码','container.create':'创建容器','container.adopt':'接管容器','container.start':'启动容器','container.stop':'停止容器','container.restart':'重启容器','container.delete':'删除容器','container.release':'解除容器接管','container.initialize':'初始化容器密码','container.settings':'修改容器配置','scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','storage.cleanup.prepare':'读取报告清理条目','storage.cleanup.remove':'删除清理记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
 const dateTime = value => value ? new Date(value*1000).toLocaleString('zh-CN') : '—';
 function apiURL(path) {
   if(path==='/api/agent/settings')return path;
@@ -43,7 +43,7 @@ function showAuth(setup,error='') {
   window.AuthUI?.show({immediate:!!error});
 }
 async function enter(session,restorePage=false) {
-  platform.control=!!session.control;
+
   stopSnapshotStream();
   if(platform.resultLoad)platform.resultLoad.controller.abort();
   if(platform.changesLoad)platform.changesLoad.controller.abort();
@@ -67,7 +67,7 @@ async function enter(session,restorePage=false) {
   $('hostInfo').textContent='尚未完成扫描 · 启用 Docker 自动发现后开始扫描';message('');
   $('firstScanHint').textContent=session.user.role==='admin'?'完成扫描后可独立分析 Host 容量；如需分析容器，请在扫描配置中启用 Docker 自动发现。':'管理员完成首次扫描后，这里会显示 Host 和容器的空间用量。';
   window.ClusterUI?.configure();
-  const home=platform.control&&!platform.nodeID?'cluster':'dashboard';
+  const home=!platform.nodeID?'cluster':'dashboard';
   showPage(home,false);
   if(restorePage&&window.location?.hash)showPage(window.location.hash.slice(1),false);
   window.history?.replaceState(null,'',`#${platform.page}`);
@@ -75,7 +75,7 @@ async function enter(session,restorePage=false) {
 }
 function schedulePoll() {
   clearTimeout(platform.poll);
-  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},platform.control&&!platform.nodeID?10000:platform.active?1000:2000);
+  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},!platform.nodeID?10000:platform.active?1000:2000);
 }
 function controls() {
   window.AgentUI?.controls();
@@ -87,7 +87,7 @@ function controls() {
   refreshDirectoryScan();
 }
 async function syncState() {
-  if(platform.control&&!platform.nodeID){if(["cluster","allocations"].includes(platform.page))await window.ClusterUI?.refresh();return;}
+  if(!platform.nodeID){if(["cluster","allocations"].includes(platform.page))await window.ClusterUI?.refresh();return;}
   const generation=platform.generation;
   const state=await api('/api/state');if(generation!==platform.generation)return;
   if(platform.nodeID)window.ClusterUI?.connected();
@@ -332,8 +332,8 @@ function showPage(page,navigate=true) {
   if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','bastion','members','agent-settings','settings','cluster','allocations'].includes(page))return;
   if(['scan-settings','agent-settings','cleanup','bastion','members'].includes(page) && platform.user.role!=='admin')return;
   const central=['cluster','allocations','bastion','members','agent-settings','settings'].includes(page);
-  if(platform.control&&platform.nodeID&&central){window.location.href='/#'+page;return;}
-  if(platform.control&&!platform.nodeID&&!central)return;
+  if(platform.nodeID&&central){window.location.href='/#'+page;return;}
+  if(!platform.nodeID&&!central)return;
   const changed=platform.page!==page;
   platform.page=page;
   $('console').dataset.page=page;
@@ -361,7 +361,7 @@ function showPage(page,navigate=true) {
   if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
   if(page==='cleanup')window.CleanupUI?.open();else window.CleanupUI?.close();
 }
-window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||(platform.control&&!platform.nodeID?'cluster':'dashboard'),false));
+window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||(!platform.nodeID?'cluster':'dashboard'),false));
 let cacheListSequence = 0;
 async function refreshSnapshotCache() {
   const scope=platform.user?.id, generation=platform.generation, sequence=++cacheListSequence;
@@ -558,4 +558,4 @@ document.addEventListener('change',e=>{
   const el=e.target;if(el.dataset && el.dataset.userRole)act(async()=>{try{await api(`/api/users/${el.dataset.userRole}`,{method:'PATCH',body:JSON.stringify({enabled:el.dataset.enabled==='1',role:el.value})});}finally{await loadAccounts();}},el);
 });
 // Deferred modules must finish registering before restoring a session.
-window.addEventListener('DOMContentLoaded',async()=>{try{const session=await api('/api/session');platform.control=!!session.control;if(session.user)await enter(session,true);else showAuth(session.setup_required);}catch(error){showAuth(false,'无法连接后端：'+error.message);}},{once:true});
+window.addEventListener('DOMContentLoaded',async()=>{try{const session=await api('/api/session');if(session.user)await enter(session,true);else showAuth(session.setup_required);}catch(error){showAuth(false,'无法连接后端：'+error.message);}},{once:true});

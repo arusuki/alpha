@@ -1,19 +1,14 @@
-"""Report extraction, selection and explicit deletion through the storage subpage."""
+"""Report selection, persisted cleanup results and explicit deletion in the node UI."""
 import json
-import mimetypes
-import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from urllib.parse import urlparse
 from playwright.sync_api import sync_playwright
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
 
-repo = Path(__file__).resolve().parents[1]
 user = dict(id='admin', username='admin', role='admin')
-session = dict(id='a' * 32, status='running', snapshot_id='b' * 32, error='')
-host_session = dict(id='h' * 32, status='completed', snapshot_id='b' * 32, error='', report_scope='host')
+cleanup = dict(id='a' * 32, status='ready', snapshot_id='b' * 32, error='', report_scope='container')
+host_cleanup = dict(id='c' * 32, status='ready', snapshot_id='b' * 32, error='', report_scope='host')
 host_entries = [dict(id='8' * 32, path='/srv/host-cache', category=1, summary='Host 缓存',
-                     detail=json.dumps(dict(bytes=8192, locations=['Host：/srv'], kind='缓存', summary='缓存目录', reason='可重建')),
+                     detail=json.dumps(dict(bytes=8192, locations=['Host：/srv'], kind='下载与包缓存', summary='缓存目录', reason='可重建')),
                      status='pending', error='')]
 entries = [dict(id=str(i) * 32, path=f'/data/{name}', category=i,
                 summary='用途 <script>unsafe()</script>；处理前请核对依赖',
@@ -21,39 +16,16 @@ entries = [dict(id=str(i) * 32, path=f'/data/{name}', category=i,
                                        kind='其他', summary='原始用途', reason='原始处理条件')),
                 status='pending', error='')
            for i, name in enumerate(['cache', 'uncertain', 'keep', 'misplaced'], 1)]
-extracted = False
-host_extracted = False
-reads = 0
-deleting = False
-delete_attempts = 0
-history_deletes = 0
+prepared = host_prepared = deleting = False
+reads = delete_attempts = history_deletes = 0
 writes = []
-trace_release = threading.Event()
-long_output = 'x' * 40000
-trace_tail = long_output[-32000:]
-trace_messages = [
-    dict(id=1, role='model_request', content=json.dumps(dict(request_id='extract-1', round=1, protocol='responses')), created_at=1789372800),
-    dict(id=2, role='model_delta', content=json.dumps(dict(request_id='extract-1', deltas=[dict(kind='summary', text='先核对四类条目 <script>unsafe()</script>'), dict(kind='text', text='{"entries":[')])), created_at=1789372801),
-    dict(id=3, role='model_delta', content=json.dumps(dict(request_id='extract-1', deltas=[dict(kind='summary_snapshot', text='先核对四类条目 <script>unsafe()</script>；再验证路径'), dict(kind='text_snapshot', text=trace_tail, dropped_bytes=8000)])), created_at=1789372802),
-    dict(id=4, role='model_response', content=json.dumps(dict(request_id='extract-1', status='completed', text=trace_tail, text_dropped_bytes=8000, summary='先核对四类条目；再验证路径')), created_at=1789372803),
-    dict(id=5, role='assistant', content='已从完整报告提取 4 个条目。', created_at=1789372804),
-]
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def respond(self, value, status=200):
-        raw = json.dumps(value).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
+class Handler(NodeHandler):
     def do_GET(self):
         global reads
+        if self.control_request():
+            return
         path = urlparse(self.path).path
         if path == '/api/session':
             return self.respond(dict(user=user, csrf='test', setup_required=False))
@@ -61,74 +33,42 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(dict(jobs=[], directory_jobs=[], latest_id=None, active=None, interval_minutes=0))
         if path == '/api/agent/cleanup-reports':
             return self.respond(dict(reports=[dict(report_id=2, title='Host 空间报告', report_scope='host',
-                snapshot_id=host_session['snapshot_id'], created_at=1789372801,
-                cleanup_id=host_session['id'] if host_extracted else None, cleanup_status=host_session['status'], phase='extract'),
+                snapshot_id=host_cleanup['snapshot_id'], created_at=1789372801,
+                cleanup_id=host_cleanup['id'] if host_prepared else None, cleanup_status=host_cleanup['status']),
                 dict(report_id=1, title='空间消耗总报告', report_scope='container',
-                snapshot_id=session['snapshot_id'], created_at=1789372800,
-                cleanup_id=session['id'] if extracted else None, cleanup_status=session['status'], phase='delete' if deleting else 'extract')]))
-        if path == '/api/agent/cleanups/' + host_session['id']:
-            return self.respond(dict(session=host_session, report_id=2, phase='extract', entries=host_entries))
-        if path == '/api/agent/sessions/' + host_session['id']:
-            return self.respond(dict(session=host_session, messages=[], next_after=0, has_more=False, active_job=None))
-        if path == '/api/agent/cleanups/' + session['id']:
+                snapshot_id=cleanup['snapshot_id'], created_at=1789372800,
+                cleanup_id=cleanup['id'] if prepared else None, cleanup_status=cleanup['status'])]))
+        if path == '/api/agent/cleanups/' + host_cleanup['id']:
+            return self.respond(dict(cleanup=host_cleanup, entries=host_entries))
+        if path == '/api/agent/cleanups/' + cleanup['id']:
             reads += 1
-            if (deleting and reads >= 2) or (not deleting and trace_release.is_set()):
-                session['status'] = 'completed'
-                if deleting:
-                    entries[0]['status'] = 'deleted'
-                    entries[0]['error'] = '已清理；保留 socket 1 个、字符设备 2 个及其所在目录'
-            return self.respond(dict(session=session, report_id=1, phase='delete' if deleting else 'extract',
-                                     entries=entries if session['status'] == 'completed' else []))
-        if path == '/api/agent/sessions/' + session['id']:
-            after = int(dict(x.split('=', 1) for x in urlparse(self.path).query.split('&') if '=' in x).get('after', '0'))
-            available = trace_messages if trace_release.is_set() else trace_messages[:1]
-            messages = [item for item in available if item['id'] > after]
-            return self.respond(dict(session=session, messages=messages, next_after=messages[-1]['id'] if messages else after, has_more=False, active_job=None))
-        if path == '/api/agent/sessions/' + session['id'] + '/events':
-            after = int(dict(x.split('=', 1) for x in urlparse(self.path).query.split('&') if '=' in x).get('after', '0'))
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/event-stream')
-            self.end_headers()
-            try:
-                first = [item for item in trace_messages[:2] if item['id'] > after]
-                update = dict(session=session.copy(), messages=first, next_after=2, has_more=False, active_job=None)
-                self.wfile.write(('id: 2\nevent: session\ndata: ' + json.dumps(update) + '\n\n').encode())
-                self.wfile.flush()
-                if not trace_release.wait(10):
-                    return
-                session['status'] = 'completed'
-                update = dict(session=session.copy(), messages=trace_messages[2:], next_after=5, has_more=False, active_job=None)
-                self.wfile.write(('id: 5\nevent: session\ndata: ' + json.dumps(update) + '\n\n').encode())
-                self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            return
+            if deleting and reads >= 2:
+                cleanup['status'] = 'completed'
+                entries[0]['status'] = 'deleted'
+                entries[0]['error'] = '已清理；保留 socket 1 个、字符设备 2 个及其所在目录'
+            return self.respond(dict(cleanup=cleanup, entries=entries))
         if path == '/api/agent/sessions':
             return self.respond(dict(sessions=[]))
-        target = repo / 'dist' / ('index.html' if path == '/' else path.lstrip('/'))
-        if target.is_file() and str(target.resolve()).startswith(str(repo / 'dist') + '/'):
-            data = target.read_bytes()
-            self.send_response(200)
-            self.send_header('Content-Type', mimetypes.guess_type(str(target))[0] or 'application/octet-stream')
-            self.send_header('Content-Length', str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-            return
-        self.send_error(404)
+        self.serve_asset()
 
     def do_POST(self):
-        global extracted, host_extracted, user, deleting, reads, delete_attempts
+        global prepared, host_prepared, user, deleting, reads, delete_attempts
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         password = body.pop('sudo_password', None)
         writes.append((self.path, body))
         assert self.headers.get('X-CSRF-Token') == 'test'
         if self.path == '/api/agent/cleanups':
             if body == dict(report_id=2):
-                host_extracted = True
-                return self.respond(host_session, 202)
+                host_prepared = True
+                return self.respond(dict(cleanup=host_cleanup, entries=host_entries), 201)
             assert body == dict(report_id=1)
-            extracted = True
-            return self.respond(session, 202)
+            if not prepared:
+                deleting = False
+                cleanup['status'] = 'ready'
+                for entry in entries:
+                    entry.update(status='pending', error='')
+            prepared = True
+            return self.respond(dict(cleanup=cleanup, entries=entries), 201)
         if self.path.endswith('/delete'):
             assert password == 'test-only-browser-sudo'
             password = None
@@ -137,50 +77,39 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(dict(error='测试服务暂时不可用，请重新输入密码后再提交'), 503)
             assert body == dict(entry_ids=['1' * 32])
             entries[0]['status'] = 'deleting'
-            session['status'] = 'running'
+            cleanup['status'] = 'running'
             deleting = True
             reads = 0
-            return self.respond(dict(session=session, report_id=1, phase='delete', entries=entries), 202)
+            return self.respond(dict(cleanup=cleanup, entries=entries), 202)
         if self.path == '/api/logout':
             user = None
             return self.respond(dict(ok=True))
         self.send_error(404)
 
     def do_DELETE(self):
-        global extracted, history_deletes
+        global prepared, history_deletes
         assert self.headers.get('X-CSRF-Token') == 'test'
-        if self.path == '/api/agent/cleanups/' + session['id'] and session['status'] == 'completed':
+        if self.path == '/api/agent/cleanups/' + cleanup['id'] and cleanup['status'] == 'completed':
             history_deletes += 1
-            extracted = False
+            prepared = False
             return self.respond(dict(ok=True))
         self.send_error(404)
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-threading.Thread(target=server.serve_forever, daemon=True).start()
+server = start_server(Handler)
 try:
     with sync_playwright() as p:
-        launch = dict(headless=True, args=['--no-sandbox'])
-        if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
-            launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**launch_options())
         page = browser.new_page(viewport=dict(width=1440, height=1000))
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
         url = 'http://127.0.0.1:' + str(server.server_port)
-        page.goto(url)
+        page.goto(url + NODE_PATH)
         page.locator('.platform-nav [data-page="overview"]').click()
         page.locator('#storageNav [data-page="cleanup"]').click()
-        page.wait_for_function('!document.getElementById("cleanupExtract").disabled')
+        page.wait_for_function('!document.getElementById("cleanupPrepare").disabled')
         assert page.locator('#pageTitle').inner_text() == '诊断清理'
-        page.locator('#cleanupExtract').click()
-        page.wait_for_function('document.getElementById("cleanupAgentLog").textContent.includes("先核对四类条目")')
-        assert page.locator('#cleanupAgentPanel').is_visible()
-        assert page.locator('#cleanupAgentLog script').count() == 0
-        assert '{"entries":[' in page.locator('#cleanupAgentLog').inner_text()
-        page.locator('#cleanupAgentLog details summary').first.click()
-        assert page.locator('#cleanupAgentLog details').first.evaluate('(element) => element.open')
-        trace_release.set()
+        page.locator('#cleanupPrepare').click()
         page.wait_for_function('document.querySelectorAll("[data-cleanup-entry]").length === 4')
         assert page.locator('#cleanupEntries > .cleanup-group').count() == 4
         assert page.locator('#cleanupEntries > .cleanup-group table').count() == 4
@@ -218,12 +147,6 @@ try:
         page.wait_for_function('!cleanupView.collapsed.has(1)')
         page.locator('#cleanupSearch').fill('')
         page.evaluate('cleanupView.entries = window.cleanupOriginalEntries; renderCleanup()')
-        page.wait_for_function('document.getElementById("cleanupAgentLog").textContent.includes("再验证路径")')
-        assert page.locator('#cleanupAgentLog details').first.evaluate('(element) => element.open')
-        assert page.evaluate('cleanupView.requests.get("extract-1").text.length <= cleanupTraceWindowChars')
-        assert '较早的模型输出已截断' in page.locator('.cleanup-agent-output .form-note').first.inner_text()
-        assert page.locator('.cleanup-agent-output pre').first.evaluate('(element) => element.scrollTop > 0')
-        assert page.locator('#cleanupAgentLog').inner_text().count('已从完整报告提取 4 个条目') == 1
         assert page.locator('[data-cleanup-entry]:checked').count() == 0
         assert page.locator('#cleanupDelete').is_disabled()
         assert page.locator('#cleanupEntries script').count() == 0
@@ -258,7 +181,7 @@ try:
         page.locator('#cleanupSudoPassword').fill('test-only-browser-sudo')
         page.locator('#cleanupSudoPassword').press('Enter')
         page.wait_for_function('!document.getElementById("cleanupDeleteDialog").open')
-        page.wait_for_function("cleanupView.session.status === 'completed' && cleanupView.entries[0].status === 'deleted'")
+        page.wait_for_function("cleanupView.cleanup.status === 'completed' && cleanupView.entries[0].status === 'deleted'")
         assert page.locator('[data-cleanup-entry]').is_disabled()
         assert '已清理' in page.locator('#cleanupEntries').inner_text()
         assert '已清理 1 项' in page.locator('#cleanupStatus').inner_text()
@@ -270,10 +193,8 @@ try:
         page.locator('.platform-nav [data-page="overview"]').click()
         page.locator('#storageNav [data-page="cleanup"]').click()
         page.wait_for_function('document.querySelectorAll("[data-cleanup-entry]").length === 4')
-        page.wait_for_function('document.getElementById("cleanupAgentLog").textContent.includes("再验证路径")')
-        assert page.evaluate('cleanupView.requests.get("extract-1").text.length <= cleanupTraceWindowChars')
         assert page.locator('[data-cleanup-entry]:disabled').count() == 1
-        assert page.locator('#cleanupExtract').is_disabled()
+        assert page.locator('#cleanupPrepare').is_disabled()
         page.screenshot(path='/tmp/project-alpha-cleanup.png', full_page=True, animations='disabled')
         page.set_viewport_size(dict(width=390, height=844))
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
@@ -284,59 +205,58 @@ try:
         assert page.evaluate("!JSON.stringify(localStorage).includes('test-only-browser-sudo') && !JSON.stringify(sessionStorage).includes('test-only-browser-sudo')")
         page.evaluate('showAuth(false)')
         assert page.locator('#cleanupSudoPassword').input_value() == ''
-        assert page.locator('#cleanupEntries').inner_text() == '选择完整报告后提取条目。'
+        assert page.locator('#cleanupEntries').inner_text() == '选择完整报告后读取条目。'
         page.reload()
         page.locator('.platform-nav [data-page="overview"]').click()
         page.locator('#storageNav [data-page="cleanup"]').click()
         page.wait_for_function('document.querySelectorAll("[data-cleanup-entry]").length === 4')
         page.locator('#cleanupRemoveHistory').click()
         assert page.locator('#cleanupHistoryDialog').is_visible()
-        assert '已经删除的磁盘内容不会恢复' in page.locator('#cleanupHistoryDialog').inner_text()
+        assert '已清理的磁盘内容无法恢复' in page.locator('#cleanupHistoryDialog').inner_text()
         page.locator('#cleanupHistoryClose').click()
         assert history_deletes == 0
         page.locator('#cleanupRemoveHistory').click()
         page.locator('#cleanupHistoryConfirm').click()
-        page.wait_for_function('cleanupView.session === null')
+        page.wait_for_function('cleanupView.cleanup === null')
         assert history_deletes == 1
-        assert page.locator('#cleanupAgentPanel').is_hidden()
         assert page.locator('#cleanupRemoveHistory').is_hidden()
-        assert page.locator('#cleanupExtract').is_enabled()
+        assert page.locator('#cleanupPrepare').is_enabled()
         assert page.locator('[data-cleanup-entry]').count() == 0
         page.reload()
         page.locator('.platform-nav [data-page="overview"]').click()
         page.locator('#storageNav [data-page="cleanup"]').click()
-        page.wait_for_function('!document.getElementById("cleanupExtract").disabled')
+        page.wait_for_function('!document.getElementById("cleanupPrepare").disabled')
         assert page.locator('#cleanupRemoveHistory').is_hidden()
         assert page.locator('#cleanupReport option').count() == 1
         assert page.locator('#cleanupHostReport option').count() == 1
-        page.locator('#cleanupHostExtract').click()
+        page.locator('#cleanupHostPrepare').click()
         page.wait_for_function('cleanupView.reportScope === "host"')
         assert 'Host' in page.locator('#cleanupWorkspaceTitle').inner_text()
         assert page.locator('[data-cleanup-entry]').count() == 0
-        page.locator('#cleanupHostExtract').click()
+        page.locator('#cleanupHostPrepare').click()
         page.wait_for_function('document.querySelector("[data-cleanup-entry]")?.getAttribute("data-cleanup-entry") === "' + '8' * 32 + '"')
         assert ('/api/agent/cleanups', dict(report_id=2)) in writes
-        assert page.locator('#cleanupHostExtract').is_disabled()
-        page.locator('#cleanupExtract').click()
+        assert page.locator('#cleanupHostPrepare').is_disabled()
+        page.locator('#cleanupPrepare').click()
         page.wait_for_function('cleanupView.reportScope === "container"')
         assert '容器 Agent' in page.locator('#cleanupWorkspaceTitle').inner_text()
         assert page.locator('[data-cleanup-entry]').count() == 0
-        page.locator('#cleanupHostExtract').click()
+        page.locator('#cleanupHostPrepare').click()
         page.wait_for_function('document.querySelector("[data-cleanup-entry]")?.getAttribute("data-cleanup-entry") === "' + '8' * 32 + '"')
-        # Both scopes now have one completed extraction: switch using real clicks.
-        page.locator('#cleanupExtract').click()
+        # Both scopes now have one prepared cleanup record: switch using real clicks.
+        page.locator('#cleanupPrepare').click()
         page.wait_for_function('cleanupView.reportScope === "container" && !cleanupView.loading')
-        page.locator('#cleanupExtract').click()
-        page.wait_for_function('cleanupView.session?.status === "completed" && !cleanupView.posting')
-        extraction_count = sum(url == '/api/agent/cleanups' for url, _ in writes)
-        page.locator('#cleanupHostExtract').click()
+        page.locator('#cleanupPrepare').click()
+        page.wait_for_function('cleanupView.cleanup?.status === "ready" && !cleanupView.posting')
+        prepare_count = sum(url == '/api/agent/cleanups' for url, _ in writes)
+        page.locator('#cleanupHostPrepare').click()
         page.wait_for_function('cleanupView.reportScope === "host" && !cleanupView.loading')
-        page.locator('#cleanupExtract').click()
+        page.locator('#cleanupPrepare').click()
         page.wait_for_function('cleanupView.reportScope === "container" && !cleanupView.loading')
-        assert sum(url == '/api/agent/cleanups' for url, _ in writes) == extraction_count
+        assert sum(url == '/api/agent/cleanups' for url, _ in writes) == prepare_count
         assert not errors, errors
         browser.close()
-        print('Cleanup browser checks passed: extraction, streaming, selection, filesystem deletion, history deletion, reload and mobile.')
+        print('Cleanup browser checks passed: report entries, selection, filesystem deletion, history deletion, reload and mobile.')
 finally:
     server.shutdown()
     server.server_close()

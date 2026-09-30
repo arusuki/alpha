@@ -54,7 +54,7 @@ func setup(t *testing.T) *fixture {
 	}
 	t.Cleanup(control.Close)
 	server := platform.NewServer(db, control, web.Assets, nil, false)
-	server.Control = true
+
 	return &fixture{db, control, server, session.User, token, session.CSRF}
 }
 func (f *fixture) request(t *testing.T, method, path string, body any) *httptest.ResponseRecorder {
@@ -104,7 +104,7 @@ func TestClusterNodeLifecycleAndAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = memberStore.Register(members.Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: invitation.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}); err != nil {
+	if _, err = memberStore.RegisterWith(members.Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: invitation.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	response := f.request(t, "GET", "/api/cluster/overview", nil)

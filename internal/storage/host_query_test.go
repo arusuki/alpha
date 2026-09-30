@@ -52,13 +52,13 @@ func TestHostCleanupRechecksOwnershipUnderStorageLock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
 			owned := filepath.Join(p.storage, tc.file)
 			if err := os.WriteFile(owned, tc.content, 0600); err != nil {
 				t.Fatal(err)
 			}
-			job := p.expect(202, "POST", "/api/jobs", nil, nil)
+			job := p.Expect(202, "POST", "/api/jobs", nil, nil)
 			id := job["id"].(string)
 			if done := waitJob(t, p.db, id); done["status"] != "completed" {
 				t.Fatalf("scan failed: %v", done)
@@ -158,9 +158,9 @@ func TestHostUsageProtectsCanonicalDockerRoot(t *testing.T) {
 
 func TestHostRecordQueriesExposePagedRootsAndSafeNodes(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
-	job := p.expect(202, "POST", "/api/jobs", nil, nil)
+	job := p.Expect(202, "POST", "/api/jobs", nil, nil)
 	id := job["id"].(string)
 	if done := waitJob(t, p.db, id); done["status"] != "completed" {
 		t.Fatalf("scan failed: %v", done)

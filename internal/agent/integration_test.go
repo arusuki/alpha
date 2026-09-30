@@ -1,13 +1,11 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +18,7 @@ import (
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/storage"
+	"project-alpha/internal/testutil"
 )
 
 type testModules struct{ storage, agent platform.Module }
@@ -90,6 +89,7 @@ func openDatabase(directory string) (*platform.Database, error) {
 }
 
 type testPlatform struct {
+	*testutil.Client
 	t       *testing.T
 	db      *platform.Database
 	m       *storage.Manager
@@ -97,8 +97,6 @@ type testPlatform struct {
 	records *testRecords
 	s       *platform.Server
 	api     *storage.Handler
-	cookie  string
-	csrf    string
 	storage string
 }
 
@@ -125,63 +123,16 @@ func newTestPlatform(t *testing.T) *testPlatform {
 	}
 	modules := testModules{handler, NewHandler(am.db, am)}
 	p := &testPlatform{t: t, db: db, m: m, agent: am, records: records, s: platform.NewServer(db, modules, web.Assets, nil, false), api: handler, storage: filepath.Join(root, "storage")}
+	p.Client = &testutil.Client{T: t, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { p.s.ServeHTTP(w, r) })}
 	os.Mkdir(p.storage, 0700)
 	mustWrite(t, filepath.Join(p.storage, "model.bin"), make([]byte, 8192))
 	t.Cleanup(func() { am.Close(); m.Close(); db.SQL.Close() })
 	return p
 }
-func (p *testPlatform) request(method, path string, value any, headers map[string]string) (int, object, *httptest.ResponseRecorder) {
-	p.t.Helper()
-	raw := []byte("{}")
-	if value != nil {
-		raw = []byte(httpapi.JSONText(value))
-	}
-	r := httptest.NewRequest(method, "http://127.0.0.1"+path, bytes.NewReader(raw))
-	r.RemoteAddr = "127.0.0.1:1234"
-	r.Header.Set("Content-Type", "application/json")
-	r.Header.Set("Origin", "http://127.0.0.1")
-	r.Header.Set("X-CSRF-Token", p.csrf)
-	if p.cookie != "" {
-		r.Header.Set("Cookie", p.cookie)
-	}
-	for k, v := range headers {
-		if k == "Host" {
-			r.Host = v
-		} else {
-			r.Header.Set(k, v)
-		}
-	}
-	w := httptest.NewRecorder()
-	p.s.ServeHTTP(w, r)
-	var out object
-	json.Unmarshal(w.Body.Bytes(), &out)
-	return w.Code, out, w
-}
-func (p *testPlatform) expect(status int, method, path string, value any, headers map[string]string) object {
-	p.t.Helper()
-	actual, out, _ := p.request(method, path, value, headers)
-	if actual != status {
-		p.t.Fatalf("%s %s: want %d got %d: %v", method, path, status, actual, out)
-	}
-	return out
-}
-func (p *testPlatform) login(setup bool, name, password string) {
-	p.t.Helper()
-	route := "/api/login"
-	if setup {
-		route = "/api/setup"
-	}
-	status, out, w := p.request("POST", route, object{"username": name, "password": password}, nil)
-	if status != 200 {
-		p.t.Fatalf("login: %d %v", status, out)
-	}
-	p.csrf = out["csrf"].(string)
-	p.cookie = w.Result().Cookies()[0].String()
-}
 func (p *testPlatform) configure() storage.Config {
 	p.t.Helper()
 	var c storage.Config
-	current := p.expect(200, "GET", "/api/settings", nil, nil)
+	current := p.Expect(200, "GET", "/api/settings", nil, nil)
 	if err := json.Unmarshal([]byte(httpapi.JSONText(current["value"])), &c); err != nil {
 		p.t.Fatal(err)
 	}
@@ -190,7 +141,7 @@ func (p *testPlatform) configure() storage.Config {
 	c.MaxDepth = 1
 	c.MaxNodes = 100
 	c.IncludeDockerRoot = false
-	p.expect(200, "PUT", "/api/settings", object{"revision": 1, "value": c}, nil)
+	p.Expect(200, "PUT", "/api/settings", object{"revision": 1, "value": c}, nil)
 	return c
 }
 func waitJob(t *testing.T, db *testRecords, id string) object {

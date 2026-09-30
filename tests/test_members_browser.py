@@ -249,7 +249,6 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 for action, button in [('release', '#bastionRelease'), ('adopt', '#bastionAdopt'),
                                        ('delete', '#bastionRemoveAccount')]:
                     page.locator(button).click()
-                    expect(page.locator('#bastionInstallDescription')).to_contain_text('data')
                     page.locator('#bastionSudoPassword').fill('account-action-password')
                     if action == 'delete':
                         page.locator('#bastionInstallSubmit').click()

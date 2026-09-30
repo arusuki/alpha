@@ -19,7 +19,7 @@ import (
 
 func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	target := filepath.Join(p.storage, "data")
 	for i, name := range []string{"MNIST-v2", "other"} {
 		dir := filepath.Join(target, name, "nested")
@@ -43,7 +43,7 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 	if err := atomicWrite(filepath.Join(p.db.Directory, "results", id, "snapshot.json"), base); err != nil {
 		t.Fatal(err)
 	}
-	before := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+	before := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
 	var observations []*Snapshot
 	var published *Snapshot
 	final, err := expandDirectory(context.Background(), base, c, target, nil, func(next *Snapshot) error {
@@ -66,8 +66,8 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 		if !n.Scanning || len(n.Children) == 0 || stored.Revision != next.Revision {
 			return fmt.Errorf("observation was not persisted during traversal")
 		}
-		changes := p.expect(200, "GET", fmt.Sprintf("/api/jobs/%s/changes?revision=%d", id, next.Revision-1), nil, nil)
-		current := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+		changes := p.Expect(200, "GET", fmt.Sprintf("/api/jobs/%s/changes?revision=%d", id, next.Revision-1), nil, nil)
+		current := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
 		assertChangesReconstruct(t, before, changes, current)
 		before = current
 		observations = append(observations, stored)
@@ -117,7 +117,7 @@ func TestDirectoryUpdatesPublishBeforeCompletionAndResume(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/jobs/"+id+"/events?revision=0", nil)
-	req.Header.Set("Cookie", p.cookie)
+	req.Header.Set("Cookie", p.Cookie)
 	req.Header.Set("Last-Event-ID", fmt.Sprint(observations[0].Revision))
 	response, err := http.DefaultClient.Do(req)
 	if err != nil {

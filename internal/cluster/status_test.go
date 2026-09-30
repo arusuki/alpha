@@ -69,9 +69,22 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	if n.Online || n.ConnectionError == "" || n.Name != "alice-offline" || n.State != "ready" {
 		t.Fatalf("lost offline allocation: %+v", n)
 	}
-	// The page and its assets are exposed only by control.
-	f.server.Control = false
-	requireStatus(t, f.request(t, "GET", "/status/"+alice, nil), 404)
+	// Workers expose APIs only.
+	request, err := http.NewRequest("GET", s.URL+"/status/"+alice, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+w.Token)
+	request.Header.Set("X-Alpha-Node", w.ID)
+	request.Header.Set("X-Alpha-User", httpapi.JSONText(platform.User{ID: alice, Username: "alice", Role: "viewer"}))
+	workerResponse, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerResponse.Body.Close()
+	if workerResponse.StatusCode != 404 {
+		t.Fatalf("worker served member HTML: %d", workerResponse.StatusCode)
+	}
 }
 
 func TestStatusApplicationReturnsPersistedResult(t *testing.T) {

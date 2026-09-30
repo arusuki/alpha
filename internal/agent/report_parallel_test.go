@@ -47,9 +47,9 @@ func TestParallelReportRefillsSlotsWithFreshAgents(t *testing.T) {
 	for _, outcome := range []string{"completed", "failed", "cancelled"} {
 		t.Run(outcome, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
-			job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			recordID := job["id"].(string)
 			waitJob(t, p.records, recordID)
 			fixture := &parallelReportFixture{reportFixture: &reportFixture{Records: p.records, containers: fixtureContainers(13)}}
@@ -139,7 +139,7 @@ func TestParallelReportRefillsSlotsWithFreshAgents(t *testing.T) {
 				}
 			}()
 			configureTestAgent(t, p, "completions", mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
+			created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": recordID, "revision": 0, "concurrency": 2}, nil)
 			sessionID := created["id"].(string)
 			receive := func() int {
 				t.Helper()
@@ -161,7 +161,7 @@ func TestParallelReportRefillsSlotsWithFreshAgents(t *testing.T) {
 			case <-time.After(50 * time.Millisecond):
 			}
 			if outcome == "cancelled" {
-				p.expect(200, "POST", "/api/agent/sessions/"+sessionID+"/cancel", object{}, nil)
+				p.Expect(200, "POST", "/api/agent/sessions/"+sessionID+"/cancel", object{}, nil)
 			} else {
 				// Agent 1 remains blocked while 2 completes (or fails), then 3 fills its
 				// slot, then 4 fills 3's slot. This rules out batch/barrier scheduling.

@@ -89,7 +89,7 @@ func assertChangesReconstruct(t *testing.T, previous, changes, current object) {
 
 func TestSnapshotChangesWorkerExpansionAndSkippedRevisions(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	c := p.configure()
 	target := filepath.Join(p.storage, "target")
 	deeper := filepath.Join(target, "deeper")
@@ -102,12 +102,12 @@ func TestSnapshotChangesWorkerExpansionAndSkippedRevisions(t *testing.T) {
 		mustWrite(t, filepath.Join(dir, "data.bin"), make([]byte, 8192))
 	}
 	c.MaxDepth = 1
-	p.expect(200, "PUT", "/api/settings", object{"revision": 2, "value": c}, nil)
-	id := p.expect(202, "POST", "/api/jobs", nil, nil)["id"].(string)
+	p.Expect(200, "PUT", "/api/settings", object{"revision": 2, "value": c}, nil)
+	id := p.Expect(202, "POST", "/api/jobs", nil, nil)["id"].(string)
 	waitChangesWorker(t, p, id)
 	endpoint := "/api/jobs/" + id
-	baseline := p.expect(200, "GET", endpoint+"/snapshot", nil, nil)
-	unchanged := p.expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
+	baseline := p.Expect(200, "GET", endpoint+"/snapshot", nil, nil)
+	unchanged := p.Expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
 	assertChangesReconstruct(t, baseline, unchanged, baseline)
 	if len(unchanged["replacements"].([]any)) != 0 || len(unchanged["ancestors"].([]any)) != 0 {
 		t.Fatal("unchanged revision returned tree data")
@@ -116,14 +116,14 @@ func TestSnapshotChangesWorkerExpansionAndSkippedRevisions(t *testing.T) {
 	var from, firstRevision int64
 	for revision, path := range []string{target, deeper, other} {
 		mustWrite(t, filepath.Join(path, "new.bin"), make([]byte, 16384*(revision+1)))
-		job := p.expect(202, "POST", endpoint+"/expand", object{"path": path, "revision": from, "depth": 1}, nil)
+		job := p.Expect(202, "POST", endpoint+"/expand", object{"path": path, "revision": from, "depth": 1}, nil)
 		waitChangesWorker(t, p, job["id"].(string))
-		updated := p.expect(200, "GET", endpoint+"/snapshot", nil, nil)
+		updated := p.Expect(200, "GET", endpoint+"/snapshot", nil, nil)
 		from = numberInt64(updated["revision"])
 		if revision == 0 {
 			firstRevision = from
-			first = p.expect(200, "GET", endpoint+"/snapshot", nil, nil)
-			changes := p.expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
+			first = p.Expect(200, "GET", endpoint+"/snapshot", nil, nil)
+			changes := p.Expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
 			if changes["job_id"] != id || changes["base_revision"] != float64(0) || numberInt64(changes["revision"]) != from {
 				t.Fatal("wrong change response identity or revision", changes)
 			}
@@ -137,10 +137,10 @@ func TestSnapshotChangesWorkerExpansionAndSkippedRevisions(t *testing.T) {
 			assertChangesReconstruct(t, baseline, changes, first)
 		}
 	}
-	current := p.expect(200, "GET", endpoint+"/snapshot", nil, nil)
+	current := p.Expect(200, "GET", endpoint+"/snapshot", nil, nil)
 	for index, previous := range []object{baseline, first} {
 		revision := []int64{0, firstRevision}[index]
-		changes := p.expect(200, "GET", endpoint+fmt.Sprintf("/changes?revision=%d", revision), nil, nil)
+		changes := p.Expect(200, "GET", endpoint+fmt.Sprintf("/changes?revision=%d", revision), nil, nil)
 		if len(changes["replacements"].([]any)) != 2 {
 			t.Fatal("overlapping changed paths were not coalesced", changes)
 		}
@@ -149,18 +149,18 @@ func TestSnapshotChangesWorkerExpansionAndSkippedRevisions(t *testing.T) {
 		}
 		assertChangesReconstruct(t, previous, changes, current)
 	}
-	unchanged = p.expect(200, "GET", endpoint+fmt.Sprintf("/changes?revision=%d", from), nil, nil)
+	unchanged = p.Expect(200, "GET", endpoint+fmt.Sprintf("/changes?revision=%d", from), nil, nil)
 	assertChangesReconstruct(t, current, unchanged, current)
-	p.expect(201, "POST", "/api/users", object{"username": "reader", "password": "A-reader-password-123", "role": "viewer"}, nil)
-	p.login(false, "reader", "A-reader-password-123")
-	p.expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
-	p.expect(403, "POST", endpoint+"/expand", object{"path": target, "revision": 3}, nil)
-	p.expect(401, "GET", endpoint+"/changes?revision=0", nil, map[string]string{"Cookie": ""})
+	p.Expect(201, "POST", "/api/users", object{"username": "reader", "password": "A-reader-password-123", "role": "viewer"}, nil)
+	p.Login(false, "reader", "A-reader-password-123")
+	p.Expect(200, "GET", endpoint+"/changes?revision=0", nil, nil)
+	p.Expect(403, "POST", endpoint+"/expand", object{"path": target, "revision": 3}, nil)
+	p.Expect(401, "GET", endpoint+"/changes?revision=0", nil, map[string]string{"Cookie": ""})
 }
 
 func TestSnapshotChangesPublicMetadataAndRevisionValidation(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	id := platform.RandomHex(16)
 	target := filepath.Join(p.storage, "target")
 	base := &Snapshot{
@@ -186,7 +186,7 @@ func TestSnapshotChangesPublicMetadataAndRevisionValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	endpoint := "/api/jobs/" + id + "/changes"
-	changes := p.expect(200, "GET", endpoint+"?revision=0", nil, nil)
+	changes := p.Expect(200, "GET", endpoint+"?revision=0", nil, nil)
 	metadata := changes["metadata"].(map[string]any)
 	container := metadata["containers"].([]any)[0].(map[string]any)
 	if container["owner"] != "platform-owner" || container["label_owner"] != "label-owner" {
@@ -199,8 +199,8 @@ func TestSnapshotChangesPublicMetadataAndRevisionValidation(t *testing.T) {
 		t.Fatal("private accounting leaked")
 	}
 	for _, suffix := range []string{"", "?revision=", "?revision=-1", "?revision=2", "?revision=1.0", "?revision=oops", "?revision=0&revision=1", "?revision=9223372036854775808"} {
-		p.expect(400, "GET", endpoint+suffix, nil, nil)
+		p.Expect(400, "GET", endpoint+suffix, nil, nil)
 	}
-	p.expect(404, "GET", "/api/jobs/"+platform.RandomHex(16)+"/changes?revision=0", nil, nil)
-	p.expect(200, "GET", endpoint+"?revision=1", nil, nil)
+	p.Expect(404, "GET", "/api/jobs/"+platform.RandomHex(16)+"/changes?revision=0", nil, nil)
+	p.Expect(200, "GET", endpoint+"?revision=1", nil, nil)
 }

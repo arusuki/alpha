@@ -14,7 +14,7 @@ import (
 type savedReportGroup struct {
 	ID          string            `json:"id"`
 	Number      int               `json:"number"`
-	Containers  []reportContainer `json:"containers,omitempty"`
+	Containers  []reportSubject   `json:"containers,omitempty"`
 	Directories []reportDirectory `json:"directories,omitempty"`
 }
 
@@ -190,7 +190,7 @@ func (a *Manager) retryGroups(id, userID, actor string, targets []reportRetry) (
 		return nil, err
 	}
 	if a.active != "" {
-		return nil, httpapi.NewError(409, "已有分析正在执行，请等待完成后重试")
+		return nil, httpapi.NewError(409, "当前节点已有任务正在执行，请等待完成后重试")
 	}
 	snapshotID := httpapi.String(session["snapshot_id"])
 	if snapshotID == "" {
@@ -260,7 +260,7 @@ func (a *Manager) retryGroups(id, userID, actor string, targets []reportRetry) (
 	if err != nil {
 		return nil, err
 	}
-	a.launchLocked(id, func(ctx context.Context) error {
+	a.launchLocked(id, false, func(ctx context.Context) error {
 		if err := a.runReportRetries(ctx, id, userID, actor, c, snapshotID, report, tasks); err != nil {
 			return err
 		}
@@ -293,16 +293,16 @@ func (a *Manager) finishReport(ctx context.Context, id, snapshotID string) error
 	if err != nil {
 		return err
 	}
-	containers := []reportContainer{}
+	subjects := []reportSubject{}
 	byGroup := map[string]savedReportGroup{}
 	for _, group := range report.Groups {
 		if report.States[group.ID] != "completed" {
 			return fmt.Errorf("Agent %d 尚未完成；已完成结果保留，可继续重试失败的 Agent", group.Number)
 		}
 		if report.Scope == "host" {
-			containers = append(containers, hostReportContainers(group.Directories)...)
+			subjects = append(subjects, hostReportSubjects(group.Directories)...)
 		} else {
-			containers = append(containers, group.Containers...)
+			subjects = append(subjects, group.Containers...)
 		}
 		byGroup[group.ID] = group
 	}
@@ -312,7 +312,7 @@ func (a *Manager) finishReport(ctx context.Context, id, snapshotID string) error
 	if err != nil {
 		return err
 	}
-	results := []reportContainerResult{}
+	results := []reportResult{}
 	for _, row := range rows {
 		var event struct {
 			GroupID string `json:"group_id"`
@@ -353,9 +353,9 @@ func (a *Manager) finishReport(ctx context.Context, id, snapshotID string) error
 	}
 	location := "容器 / 内部路径"
 	coverageText := ""
-	header := fmt.Sprintf("# 空间消耗总报告\n\n%d 个容器 · %d 组 · 同一物理路径已合并，条目不相加为可回收总量。\n\n", len(containers), len(report.Groups))
+	header := fmt.Sprintf("# 空间消耗总报告\n\n%d 个容器 · %d 组 · 同一物理路径已合并，条目不相加为可回收总量。\n\n", len(subjects), len(report.Groups))
 	if report.Scope == "host" {
-		header = fmt.Sprintf("# Host 空间分析报告\n\n%d 个 Host 目录 · %d 组 · 仅统计未被容器引用的路径，条目不相加为可回收总量。\n\n", len(containers), len(report.Groups))
+		header = fmt.Sprintf("# Host 空间分析报告\n\n%d 个 Host 目录 · %d 组 · 仅统计未被容器引用的路径，条目不相加为可回收总量。\n\n", len(subjects), len(report.Groups))
 		location = "Host 区域"
 		directories := []reportDirectory{}
 		for _, group := range report.Groups {
@@ -368,5 +368,5 @@ func (a *Manager) finishReport(ctx context.Context, id, snapshotID string) error
 		coverageText = renderHostCoverage(coverage)
 	}
 	footer := fmt.Sprintf("\n记录：%s · 版本 %v · 基线 %v · 更新 %v。\n", snapshotID, current["revision"], current["observed_at"], current["updated_at"])
-	return a.saveReport(id, header+renderReportFindingsWithLocation(containers, results, location)+coverageText+footer, containers, results)
+	return a.saveReport(id, header+renderReportFindings(subjects, results, location)+coverageText+footer, subjects, results)
 }

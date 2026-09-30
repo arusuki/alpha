@@ -15,8 +15,7 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
 KillMode=control-group
-# Web installation uses a one-shot password-authenticated sudo command.
-# Set true only when password-authenticated sudo operations are no longer needed.
+# Bastion account operations use password-authenticated sudo.
 NoNewPrivileges=false
 Nice=10
 IOSchedulingClass=best-effort

@@ -8,7 +8,7 @@
 
 公网用户可通过 [registry](../README.md#公网-registry) 注册同一类集群使用者：访问 `/registry/<8位 REG_PASS>/<邀请码>`，经 control 校验后填写表单并查看资源分配进度和 Tailscale 分享链接。registry 不创建平台管理员或只读账号；control 不需要对公网开放入站端口。
 
-数据库格式为 v23。按项目约定不迁移旧数据库；使用新数据目录，不删除或覆盖已有目录。
+数据格式与旧数据处理见 [README](../README.md#配置与数据)。
 
 ## 管理接口
 

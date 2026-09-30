@@ -228,7 +228,7 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 	}
 	var value nodeInput
 	var previous Node
-	if err := decode(w, r, &value); err != nil {
+	if err := httpapi.DecodeBody(w, r, &value); err != nil {
 		return 0, nil, err
 	}
 	if id != "" {

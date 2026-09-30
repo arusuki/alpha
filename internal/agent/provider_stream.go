@@ -48,12 +48,11 @@ func parseModelUsage(raw object, protocol string) *modelUsage {
 }
 
 type modelDelta struct {
-	Kind         string `json:"kind"`
-	Text         string `json:"text,omitempty"`
-	DroppedBytes int64  `json:"dropped_bytes,omitempty"`
-	Index        int    `json:"index,omitempty"`
-	Name         string `json:"name,omitempty"`
-	Arguments    string `json:"arguments,omitempty"`
+	Kind      string `json:"kind"`
+	Text      string `json:"text,omitempty"`
+	Index     int    `json:"index,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 func completionReasoning(message object) string {
@@ -85,9 +84,6 @@ func visibleContext(history []object) []object {
 
 func (p agentProvider) readStream(reader io.Reader) (modelReply, error) {
 	limit := int64(8 * 1024 * 1024)
-	if p.StreamLimitBytes > 0 {
-		limit = p.StreamLimitBytes
-	}
 	limited := &io.LimitedReader{R: reader, N: limit + 1}
 	scanner := bufio.NewScanner(limited)
 	scanner.Buffer(make([]byte, 4096), int(limit))

@@ -16,7 +16,7 @@ import (
 // Synthetic Docker data with real session persistence and provider/tool loops.
 type reportFixture struct {
 	Records
-	containers []reportContainer
+	containers []reportSubject
 	revision   atomic.Int64
 	scans      atomic.Int64
 	reads      atomic.Int64
@@ -86,19 +86,19 @@ func (r *reportFixture) Job(id string) (object, error) {
 	return r.Records.Job(id)
 }
 
-func fixtureContainers(count int) []reportContainer {
-	result := []reportContainer{}
+func fixtureContainers(count int) []reportSubject {
+	result := []reportSubject{}
 	for i := 0; i < count; i++ {
-		result = append(result, reportContainer{ID: fmt.Sprintf("container-%02d", i), Name: fmt.Sprintf("worker-%02d", i)})
+		result = append(result, reportSubject{ID: fmt.Sprintf("container-%02d", i), Name: fmt.Sprintf("worker-%02d", i)})
 	}
 	return result
 }
 
-func fixtureReport(group []reportContainer) reportGroupResult {
+func fixtureReport(group []reportSubject) reportGroupResult {
 	result := reportGroupResult{}
 	for _, c := range group {
 		bytes := int64(8192)
-		result.Containers = append(result.Containers, reportContainerResult{ContainerID: c.ID, Findings: []reportFinding{{Path: "/shared/models", ContainerPath: "/models", Category: 2, Kind: "模型权重", Bytes: &bytes, Summary: "共享的模型权重。", Reason: "尚未确定任务依赖，不能直接删除。"}}})
+		result.Containers = append(result.Containers, reportResult{SubjectID: c.ID, Findings: []reportFinding{{Path: "/shared/models", ContainerPath: "/models", Category: 2, Kind: "模型权重", Bytes: &bytes, Summary: "共享的模型权重。", Reason: "尚未确定任务依赖，不能直接删除。"}}})
 	}
 	return result
 }
@@ -130,12 +130,12 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 	for _, protocol := range []string{"completions", "responses"} {
 		t.Run(protocol, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
-			selected := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			selected := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			id := selected["id"].(string)
 			waitJob(t, p.records, id)
-			latest := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			latest := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			waitJob(t, p.records, latest["id"].(string))
 			p.records.failStart = true
 			fixture := &reportFixture{Records: p.records, containers: fixtureContainers(9)}
@@ -199,7 +199,7 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, protocol, mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+			created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 			sessionID := created["id"].(string)
 			result := waitAgentSession(t, p, sessionID)
 			if result["session"].(object)["status"] != "completed" || created["snapshot_id"] != id {
@@ -230,9 +230,9 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 				case "report_plan":
 					var plan struct {
 						Groups []struct {
-							ID         string            `json:"id"`
-							Number     int               `json:"number"`
-							Containers []reportContainer `json:"containers"`
+							ID         string          `json:"id"`
+							Number     int             `json:"number"`
+							Containers []reportSubject `json:"containers"`
 						} `json:"groups"`
 					}
 					if err := json.Unmarshal([]byte(content), &plan); err != nil || len(plan.Groups) != 3 {
@@ -285,7 +285,7 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			if completed != 3 {
 				t.Fatalf("missing group completion events: %d", completed)
 			}
-			p.expect(202, "POST", "/api/agent/sessions/"+sessionID+"/messages", object{"message": "继续查看缓存"}, nil)
+			p.Expect(202, "POST", "/api/agent/sessions/"+sessionID+"/messages", object{"message": "继续查看缓存"}, nil)
 			result = waitAgentSession(t, p, sessionID)
 			if result["session"].(object)["status"] != "completed" || calls.Load() != 10 {
 				t.Fatalf("followup failed: %v", result)
@@ -295,8 +295,8 @@ func TestDiskReportGroupsExploreIndependentlyAndSupportFollowup(t *testing.T) {
 			if jobs != 2 {
 				t.Fatalf("report unexpectedly started full scan: %d jobs", jobs)
 			}
-			p.expect(200, "DELETE", "/api/jobs/"+id, nil, nil)
-			p.expect(409, "POST", "/api/agent/sessions/"+sessionID+"/messages", object{"message": "继续"}, nil)
+			p.Expect(200, "DELETE", "/api/jobs/"+id, nil, nil)
+			p.Expect(409, "POST", "/api/agent/sessions/"+sessionID+"/messages", object{"message": "继续"}, nil)
 		})
 	}
 }
@@ -321,16 +321,16 @@ func TestReportPlanPaginationAndRevision(t *testing.T) {
 
 func TestDiskReportEmptyRecordSkipsModel(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
-	job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 	id := job["id"].(string)
 	waitJob(t, p.records, id)
 	var calls atomic.Int32
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 0 || !strings.Contains(httpapi.JSONText(result), "没有容器") {
 		t.Fatalf("empty record called model or lacked explanation: %v", result)
@@ -339,9 +339,9 @@ func TestDiskReportEmptyRecordSkipsModel(t *testing.T) {
 
 func TestDiskReportRepairsInvalidGroupWithoutRepeatingExploration(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
-	job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 	id := job["id"].(string)
 	waitJob(t, p.records, id)
 	fixture := &reportFixture{Records: p.records, containers: fixtureContainers(4)}
@@ -370,7 +370,7 @@ func TestDiskReportRepairsInvalidGroupWithoutRepeatingExploration(t *testing.T) 
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	sessionID := created["id"].(string)
 	result := waitAgentSession(t, p, sessionID)
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 3 || fixture.reads.Load() != 8 {
@@ -421,11 +421,11 @@ func TestReportKeepsDistinctCleanupFindings(t *testing.T) {
 	}
 }
 
-func TestReportExploresBeyondFormerRoundLimit(t *testing.T) {
+func TestReportContinuesUntilModelFinishes(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
-	job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 	id := job["id"].(string)
 	waitJob(t, p.records, id)
 	fixture := &reportFixture{Records: p.records, containers: fixtureContainers(1)}
@@ -448,7 +448,7 @@ func TestReportExploresBeyondFormerRoundLimit(t *testing.T) {
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
+	created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "container", "snapshot_id": id, "revision": 0, "concurrency": 1}, nil)
 	result := waitAgentSession(t, p, created["id"].(string))
 	if result["session"].(object)["status"] != "completed" || calls.Load() != 15 {
 		t.Fatalf("exploration ended prematurely: %v, requests=%d", result["session"], calls.Load())
@@ -468,7 +468,7 @@ func TestReportMergeGroupsPurposesConflictsAndUnknownSizes(t *testing.T) {
 	third := other
 	third.Path, third.Kind = "/shared/other-models", "模型权重"
 	result.Containers[0].Findings = append(result.Containers[0].Findings, third)
-	text := renderReportFindings(group, result.Containers)
+	text := renderReportFindings(group, result.Containers, "容器 / 内部路径")
 	if strings.Count(text, "| /shared/models |") != 1 || !strings.Contains(text, "判断不一致") || !strings.Contains(text, "| 未知 |") {
 		t.Fatalf("bad shared path merge: %s", text)
 	}
@@ -490,8 +490,8 @@ func TestReportCategoryTotals(t *testing.T) {
 	finding := func(p string, category int, size *int64) reportFinding {
 		return reportFinding{Path: p, Category: category, Kind: "其他", Bytes: size}
 	}
-	text := renderReportFindings(fixtureContainers(2), []reportContainerResult{
-		{ContainerID: "container-00", Findings: []reportFinding{
+	text := renderReportFindings(fixtureContainers(2), []reportResult{
+		{SubjectID: "container-00", Findings: []reportFinding{
 			finding("/cache", 1, bytes(1024)),
 			finding("/cache/child", 1, bytes(512)),
 			finding("/cache/unknown", 1, nil),
@@ -501,11 +501,11 @@ func TestReportCategoryTotals(t *testing.T) {
 			finding("/cache/cross-category", 3, bytes(256)),
 			finding("/conflict", 1, bytes(128)),
 		}},
-		{ContainerID: "container-01", Findings: []reportFinding{
+		{SubjectID: "container-01", Findings: []reportFinding{
 			finding("/cache", 1, bytes(2048)),   // latest observation, counted once
 			finding("/conflict", 3, bytes(128)), // moves into category 2
 		}},
-	})
+	}, "容器 / 内部路径")
 	for i, want := range []string{
 		"容量总计：3.0 KiB**（已知占用；",
 		"容量总计：640.0 B**（已知占用；另有 1 项容量未知，未计入；",

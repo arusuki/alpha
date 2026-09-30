@@ -45,11 +45,23 @@ func keyFixture(t *testing.T) (keyStore, installation) {
 	return s, c
 }
 
-func TestUnprivilegedKeyPublicationAndRevocation(t *testing.T) {
+// setPoolEntry seeds or removes a pool entry without any member-ID mapping.
+func setPoolEntry(s keyStore, control, entry, key string) error {
+	return s.update(control, func(v *keySnapshot) error {
+		if key == "" {
+			delete(v.Keys, entry)
+		} else {
+			v.Keys[entry] = key
+		}
+		return nil
+	})
+}
+
+func TestKeySnapshotPublicationAndRevocation(t *testing.T) {
 	s, c := keyFixture(t)
 	a, b := strings.Repeat("b", 32), strings.Repeat("c", 32)
-	for _, id := range []string{a, a, b} {
-		if err := s.edit(c.ControlID, id, testKey); err != nil {
+	for _, id := range []string{a, b} {
+		if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -60,7 +72,7 @@ func TestUnprivilegedKeyPublicationAndRevocation(t *testing.T) {
 	if strings.Count(out.String(), keyOptions) != 2 {
 		t.Fatal(out.String())
 	}
-	if err := s.edit(c.ControlID, a, ""); err != nil {
+	if err := setPoolEntry(s, c.ControlID, a, ""); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -68,9 +80,9 @@ func TestUnprivilegedKeyPublicationAndRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), a) || !strings.Contains(out.String(), b) {
-		t.Fatal("removed another member sharing the same key")
+		t.Fatal("removed another pool entry")
 	}
-	if err := s.edit(c.ControlID, b, ""); err != nil {
+	if err := setPoolEntry(s, c.ControlID, b, ""); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()
@@ -84,11 +96,11 @@ func TestUnprivilegedKeyPublicationAndRevocation(t *testing.T) {
 }
 
 func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
-	for _, kind := range []string{"control", "service", "jump", "version", "incomplete", "symlink", "hardlink", "fifo", "directory-mode", "file-mode", "invalid-key", "invalid-member", "wrong-account", "wrong-uid"} {
+	for _, kind := range []string{"control", "service", "jump", "version", "incomplete", "symlink", "hardlink", "fifo", "directory-mode", "file-mode", "invalid-key", "invalid-entry", "missing-version", "missing-control", "snapshot-version", "wrong-account", "wrong-uid"} {
 		t.Run(kind, func(t *testing.T) {
 			s, c := keyFixture(t)
 			id := strings.Repeat("b", 32)
-			if err := s.edit(c.ControlID, id, testKey); err != nil {
+			if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
 				t.Fatal(err)
 			}
 			path := filepath.Join(s.path, "keys", "keys.json")
@@ -97,7 +109,7 @@ func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
 			var err error
 			switch kind {
 			case "control":
-				err = s.edit(strings.Repeat("d", 32), id, "")
+				err = setPoolEntry(s, strings.Repeat("d", 32), id, "")
 			case "service", "jump":
 				lookup := s.lookup
 				s.lookup = func(name string) (*user.User, error) {
@@ -107,7 +119,7 @@ func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
 					}
 					return u, e
 				}
-				err = s.edit(c.ControlID, id, "")
+				err = setPoolEntry(s, c.ControlID, id, "")
 			case "version", "incomplete":
 				if kind == "version" {
 					c.Version++
@@ -116,7 +128,7 @@ func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
 				}
 				raw, _ := json.Marshal(c)
 				os.WriteFile(filepath.Join(s.path, "installation.json"), raw, 0644)
-				err = s.edit(c.ControlID, id, "")
+				err = setPoolEntry(s, c.ControlID, id, "")
 			case "symlink", "hardlink", "fifo":
 				if e := os.Remove(path); e != nil {
 					t.Fatal(e)
@@ -133,26 +145,33 @@ func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = s.edit(c.ControlID, id, "")
+				err = setPoolEntry(s, c.ControlID, id, "")
 				after, _ := os.ReadFile(outside)
 				if !bytes.Equal(before, after) {
 					t.Fatal("modified external file")
 				}
 			case "directory-mode":
 				os.Chmod(filepath.Dir(path), 0770)
-				err = s.edit(c.ControlID, id, "")
+				err = setPoolEntry(s, c.ControlID, id, "")
 			case "file-mode":
 				os.Chmod(path, 0660)
-				err = s.edit(c.ControlID, id, "")
-			case "invalid-key", "invalid-member":
-				var v keySnapshot
-				json.Unmarshal(before, &v)
-				if kind == "invalid-key" {
-					v.Keys[id] = "command=\"/bin/sh\" " + testKey
-				} else {
-					v.Keys["../root"] = testKey
+				err = setPoolEntry(s, c.ControlID, id, "")
+			case "invalid-key", "invalid-entry", "missing-version", "missing-control", "snapshot-version":
+				var fields map[string]any
+				json.Unmarshal(before, &fields)
+				switch kind {
+				case "invalid-key":
+					fields["keys"].(map[string]any)[id] = "command=\"/bin/sh\" " + testKey
+				case "invalid-entry":
+					fields["keys"].(map[string]any)["../root"] = testKey
+				case "snapshot-version":
+					fields["version"] = keyFormat + 1
+				case "missing-version":
+					delete(fields, "version")
+				case "missing-control":
+					delete(fields, "control_id")
 				}
-				raw, _ := json.Marshal(v)
+				raw, _ := json.Marshal(fields)
 				os.WriteFile(path, raw, 0640)
 				err = s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out)
 			case "wrong-account":
@@ -167,10 +186,10 @@ func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
 	}
 }
 
-func TestKeyStoreLockAndInvalidPublicationPreserveSnapshot(t *testing.T) {
+func TestKeyStoreLockAndFailedUpdatePreserveSnapshot(t *testing.T) {
 	s, c := keyFixture(t)
 	id := strings.Repeat("b", 32)
-	if err := s.edit(c.ControlID, id, testKey); err != nil {
+	if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.path, "keys", "keys.json")
@@ -183,12 +202,15 @@ func TestKeyStoreLockAndInvalidPublicationPreserveSnapshot(t *testing.T) {
 	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.edit(c.ControlID, id, ""); err == nil {
+	if err = setPoolEntry(s, c.ControlID, id, ""); err == nil {
 		t.Fatal("ignored concurrent writer")
 	}
 	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	if err = s.edit(c.ControlID, id, "not a key"); err == nil {
-		t.Fatal("invalid key accepted")
+	if err = s.update(c.ControlID, func(v *keySnapshot) error {
+		delete(v.Keys, id)
+		return fmt.Errorf("publication rejected")
+	}); err == nil {
+		t.Fatal("ignored rejected update")
 	}
 	after, _ := os.ReadFile(path)
 	if !bytes.Equal(before, after) {

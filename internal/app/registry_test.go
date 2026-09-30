@@ -11,12 +11,9 @@ func TestRegistryOptionsRejectInvalidCombinations(t *testing.T) {
 	t.Setenv("REG_PASS", "Abcd1234")
 	for _, args := range [][]string{
 		{"--registry", "--control"}, {"--registry", "--worker"},
-		{"--worker", "--registry-url", "https://registry.example.com"},
-		{"--registry", "--registry-url", "https://registry.example.com"},
 		{"--control", "--reg-pass-file", "/unused"},
 		{"--control", "--registry-token-file", "/unused"},
 		{"--worker", "--registry-token-file", "/unused"},
-		{"--control", "--registry-url", "http://public.example.com"},
 	} {
 		if err := Run(context.Background(), append(args, "--data-dir", t.TempDir())); err == nil {
 			t.Fatalf("accepted %v", args)

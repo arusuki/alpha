@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -37,6 +38,24 @@ func RequestBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMes
 		return nil, NewError(400, "请求体必须是有效的 JSON 对象")
 	}
 	return value, nil
+}
+
+// DecodeBody applies the shared JSON request checks and rejects unknown fields.
+func DecodeBody(w http.ResponseWriter, r *http.Request, target any) error {
+	value, err := RequestBody(w, r)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if err = d.Decode(target); err != nil {
+		return NewError(400, "请求字段无效："+err.Error())
+	}
+	return nil
 }
 func WriteJSON(w http.ResponseWriter, status int, value any) {
 	body, err := json.Marshal(value)

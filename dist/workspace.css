@@ -1,10 +1,5 @@
-/* Shared with the opening screen: warm paper, ink, vermilion and sage. */
-:root {
-  --bg:#f6f5f1; --paper:#fffefa; --ink:#282a26; --muted:#74776b;
-  --line:#ddded5; --blue:#b94f2e; --blue-soft:#f1e8df;
-  --green:#566e4f; --amber:#96632e; --radius:6px;
-  --mint:#edf0e7; --apricot:#f4eee2;
-}
+/* Workspace layout and component styles. */
+
 body { background:var(--bg); }
 input,select,textarea { border-color:var(--line); }
 input::placeholder,textarea::placeholder { color:#868a7c; }
@@ -351,12 +346,6 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 .cleanup-table input[type=checkbox]{width:17px;height:17px;accent-color:#b94f2e}
 .cleanup-table th button[data-cleanup-sort]{padding:0;border:0;background:none;color:inherit;font-size:inherit;font-weight:inherit;white-space:nowrap}
 .cleanup-table th button[data-cleanup-sort]:hover{color:var(--blue);text-decoration:underline}
-.cleanup-agent-panel{margin:20px 0;padding:18px;border:1px solid var(--line);border-radius:6px;background:var(--paper)}
-.cleanup-agent-panel .section-heading{margin:0 0 14px}.cleanup-agent-panel h3{margin:0 0 4px}.cleanup-agent-panel .section-heading p{margin:0;color:var(--muted)}
-.cleanup-agent-log{display:grid;gap:12px;max-height:520px;overflow:auto}.cleanup-agent-step{min-width:0;padding:12px;border:1px solid var(--line);border-radius:4px;background:var(--bg)}
-.cleanup-agent-step header{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}.cleanup-agent-step details{margin:10px 0}.cleanup-agent-step pre{margin:8px 0 0;padding:10px;max-height:300px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--paper);border-radius:6px}
-.cleanup-agent-output{margin-top:10px}.cleanup-agent-step .error-text{margin:8px 0 0}
-.cleanup-agent-output .form-note{margin:6px 0 0}
 #cleanupDeleteDialog{width:min(680px,calc(100vw - 32px))}.cleanup-delete-paths{max-height:50vh;overflow:auto}.cleanup-delete-paths p{padding:12px;background:#f4f3ec;border-radius:8px;line-height:1.6}
 #cleanupHistoryDialog{width:min(520px,calc(100vw - 32px))}
 @media(max-width:720px){.cleanup-source-section{padding:16px}.cleanup-source>*{width:100%}.cleanup-toolbar label{flex:1}.cleanup-toolbar #cleanupSelection{margin-left:0}.cleanup-toolbar input[type=search]{min-width:0;width:100%}}
@@ -366,7 +355,6 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 #managedContainerRows td { vertical-align:top; overflow-wrap:anywhere; }
 #managedContainerRows td:last-child { min-width:180px; }
 #managedContainerRows button { margin:0 4px 6px 0; }
-#adoptChecks li { margin:10px 0; overflow-wrap:anywhere; }
 #containerCredentials { white-space:pre-wrap; overflow-wrap:anywhere; }
 
 /* Shared access management */

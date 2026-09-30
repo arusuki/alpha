@@ -87,11 +87,7 @@ func indexPool(v keySnapshot, members []poolMember) []poolKey {
 	return result
 }
 
-func ensurePoolKey(v *keySnapshot, key string) {
-	ensurePoolKeys(v, []string{key})
-}
-
-func ensurePoolKeys(v *keySnapshot, keys []string) {
+func ensurePoolKeys(v *keySnapshot, keys ...string) {
 	present := map[string]bool{}
 	for _, existing := range v.Keys {
 		present[existing] = true
@@ -155,7 +151,7 @@ func (h *Handler) editMemberKey(member, key string) error {
 			if err != nil {
 				return err
 			}
-			return h.keys.update(id, func(v *keySnapshot) error { ensurePoolKey(v, key); return nil })
+			return h.keys.update(id, func(v *keySnapshot) error { ensurePoolKeys(v, key); return nil })
 		}
 		var revoked string
 		if err = tx.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", member).Scan(&revoked); err != nil {
@@ -206,7 +202,7 @@ func (h *Handler) SyncKeys() error {
 					keys = append(keys, m.PublicKey)
 				}
 			}
-			ensurePoolKeys(v, keys)
+			ensurePoolKeys(v, keys...)
 			return nil
 		}); err != nil {
 			return err

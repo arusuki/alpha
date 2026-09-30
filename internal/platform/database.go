@@ -18,8 +18,7 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-// Version 23 removes bastion account settings; keys always belong to alpha-jump.
-const DatabaseVersion = 23
+const DatabaseVersion = 24
 
 //go:embed schema.sql
 var schema string

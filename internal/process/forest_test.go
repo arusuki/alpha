@@ -159,9 +159,7 @@ func TestContainerProcessesStayWithTheirContainer(t *testing.T) {
 	}
 }
 
-// Each container must be reported exactly once no matter which process the
-// snapshot happens to visit first; a child visited before its root used to
-// create a second bucket for the same container.
+// Snapshot groups each container once regardless of process visitation order.
 func TestSnapshotEmitsEachContainerOnce(t *testing.T) {
 	builder := NewBuilder()
 	ids := []string{"aaa", "bbb", "ccc"}
@@ -400,9 +398,7 @@ func TestExecReplacesSupersededImageKeepingChildren(t *testing.T) {
 	}
 }
 
-// If the exec event itself was lost, the process cache still lists the current
-// image, so reconciliation re-labels the stale node instead of leaving the old
-// binary in the forest or putting two nodes on the PID.
+// Reconciliation updates the executable after a missing exec event.
 func TestReconcileRepairsMissingExecEvent(t *testing.T) {
 	builder := NewBuilder()
 	builder.Apply(execEvent(proc("old-image", "", "/usr/bin/sh", "", "abc123", 100, 0)))

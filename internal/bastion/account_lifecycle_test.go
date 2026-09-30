@@ -19,7 +19,7 @@ import (
 func TestReleasePreservesReaderButStopsPublication(t *testing.T) {
 	s, c := keyFixture(t)
 	id := strings.Repeat("b", 32)
-	if err := s.edit(c.ControlID, id, testKey); err != nil {
+	if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.path, "keys", "keys.json")
@@ -28,7 +28,7 @@ func TestReleasePreservesReaderButStopsPublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"", testKey} {
-		if err := s.edit(c.ControlID, id, key); err == nil || !strings.Contains(err.Error(), "取消接管") {
+		if err := setPoolEntry(s, c.ControlID, id, key); err == nil || !strings.Contains(err.Error(), "取消接管") {
 			t.Fatalf("released installation accepted publication: %v", err)
 		}
 	}
@@ -48,7 +48,7 @@ func TestReleasePreservesReaderButStopsPublication(t *testing.T) {
 		t.Fatal("release changed data")
 	}
 	os.Remove(filepath.Join(s.path, "released"))
-	if err := s.edit(c.ControlID, id, ""); err != nil {
+	if err := setPoolEntry(s, c.ControlID, id, ""); err != nil {
 		t.Fatal("could not revoke after adoption", err)
 	}
 }

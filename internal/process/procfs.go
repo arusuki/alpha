@@ -14,24 +14,12 @@ const (
 	// The kernel fixes it at 100 for procfs regardless of the scheduler's
 	// CONFIG_HZ, so it is a constant rather than something to read at runtime.
 	procClockTicks = 100
-	// startTolerance absorbs the gap between procfs' boot-time arithmetic and
-	// the agent's timestamps. Measured against a live agent, the two disagreed by
-	// 0 to 2 seconds across 1864 running processes, biased about a second, so
-	// this leaves headroom rather than sitting on the boundary. Padding it only
-	// guards against PID reuse, and a reused PID that lands this close to the
-	// original start time merely keeps a harmless extra node; the failure in the
-	// other direction would drop a running process, so err wide.
+	// Allow five seconds of skew between procfs and collector start timestamps.
 	startTolerance = 5 * time.Second
 )
 
-// Prober reports whether a PID still belongs to the process that started at the
-// given time. It exists because the agent's process cache is capacity-bounded:
-// it evicts live processes, and a cache miss therefore cannot mean "exited".
-//
-// A Prober can only keep a process in the forest. Reporting false is
-// indistinguishable from "cannot tell" and falls back to the miss counter, so a
-// probe that is wrong, unsupported or pointed at a missing procfs degrades to
-// the previous behaviour instead of dropping a process that is still running.
+// Prober checks PID and start time. A false result includes unreadable procfs;
+// after repeated cache misses, that process may be removed from the display.
 type Prober interface {
 	Alive(pid uint32, start time.Time) bool
 }

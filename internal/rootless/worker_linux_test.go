@@ -134,7 +134,7 @@ func TestWorkerPrivateExecutableHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer executable.Close()
-	// Reproduce the previous launch order, including the inherited executable FD.
+	// Changing UID before exec cannot access this private executable.
 	restricted := exec.Command("/proc/self/fd/3", "--help")
 	restricted.ExtraFiles = []*os.File{executable}
 	restricted.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: u.UID, Gid: u.GID, Groups: u.Groups}}

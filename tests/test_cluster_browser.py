@@ -318,6 +318,10 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             csrf = page.evaluate('platform.csrf')
             blocked = context.request.delete(url + '/api/cluster/nodes/' + second['id'], headers={'X-CSRF-Token': csrf}, data={})
             assert blocked.status == 409, blocked.text()
+            # This fixture creates no Tailscale shares or bastion keys.
+            with sqlite3.connect(root / 'control' / 'platform.sqlite3') as db:
+                db.execute("UPDATE member_access SET invite_state='deleted',key_state='deleted' WHERE member_id=?",
+                           (registered_member_id,))
             deleted = context.request.delete(url + '/api/members/' + registered_member_id, headers={'X-CSRF-Token': csrf}, data={})
             assert deleted.status == 202, deleted.text()
             for _ in range(100):

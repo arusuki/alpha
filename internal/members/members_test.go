@@ -69,40 +69,40 @@ func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	for _, profile := range bad {
 		req := validRegistration(i.Code)
 		req.Profile = rawProfile(profile)
-		_, err = s.Register(req)
+		_, err = s.RegisterWith(req, nil)
 		expectError(t, err, 400)
 	}
 	req := validRegistration(i.Code)
 	req.SchemaRevision = 1
-	_, err = s.Register(req)
+	_, err = s.RegisterWith(req, nil)
 	expectError(t, err, 409)
 	req = validRegistration(strings.Repeat("0", 48))
-	_, err = s.Register(req)
+	_, err = s.RegisterWith(req, nil)
 	expectError(t, err, 400)
 	list, _ := s.Invitations()
 	if list[0].Used != 0 {
 		t.Fatal("failed registrations consumed quota")
 	}
 	req = validRegistration(i.Code)
-	m, err := s.Register(req)
+	m, err := s.RegisterWith(req, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.Profile["full_name"] != "张三" || m.Schema.Revision != 2 || len(m.ID) != 32 {
 		t.Fatalf("invalid member: %+v", m)
 	}
-	_, err = s.Register(req)
+	_, err = s.RegisterWith(req, nil)
 	expectError(t, err, 409)
 	list, _ = s.Invitations()
 	if list[0].Used != 1 || list[0].Remaining != 1 {
 		t.Fatal("duplicate username consumed quota")
 	}
 	req.Username = "bob"
-	if _, err = s.Register(req); err != nil {
+	if _, err = s.RegisterWith(req, nil); err != nil {
 		t.Fatal(err)
 	}
 	req.Username = "charlie"
-	_, err = s.Register(req)
+	_, err = s.RegisterWith(req, nil)
 	expectError(t, err, 400)
 	list, _ = s.Invitations()
 	if list[0].Used != 2 || list[0].Remaining != 0 || list[0].Status != "exhausted" || list[0].Code != "" {
@@ -187,7 +187,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_, err := stores[n%2].Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+			_, err := stores[n%2].RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 			results <- err
 		}(n)
 	}
@@ -211,7 +211,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if _, err = s.SQL.Exec("CREATE TRIGGER fail_registration_audit BEFORE INSERT ON audit WHEN NEW.action='member.register' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+	_, err = s.RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 	if err == nil {
 		t.Fatal("expected audit failure")
 	}
@@ -228,7 +228,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+	_, err = s.RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 	expectError(t, err, 400)
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)

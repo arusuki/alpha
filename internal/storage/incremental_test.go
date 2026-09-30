@@ -245,14 +245,14 @@ func TestIncrementalFailureIsolated(t *testing.T) {
 }
 func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	c := p.configure()
 	dir := filepath.Join(p.storage, "nested")
 	os.MkdirAll(filepath.Join(dir, "deeper"), 0700)
 	mustWrite(t, filepath.Join(dir, "deeper", "data.bin"), make([]byte, 8192))
 	c.MaxDepth = 1
-	p.expect(200, "PUT", "/api/settings", object{"revision": 2, "value": c}, nil)
-	job := p.expect(202, "POST", "/api/jobs", nil, nil)
+	p.Expect(200, "PUT", "/api/settings", object{"revision": 2, "value": c}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", nil, nil)
 	id := job["id"].(string)
 	if result := waitJob(t, p.db, id); result["status"] != "completed" {
 		t.Fatal(result)
@@ -275,19 +275,19 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	public := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+	public := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
 	if _, ok := public["incremental_accounting"]; ok {
 		t.Fatal("private inode index leaked")
 	}
 	body := object{"path": dir, "revision": 0}
 	for _, depth := range []any{0, 33, nil, "2", 1.5, -1} {
-		p.expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": dir, "revision": 0, "depth": depth}, nil)
+		p.Expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": dir, "revision": 0, "depth": depth}, nil)
 	}
-	p.expect(403, "POST", "/api/jobs/"+id+"/expand", body, map[string]string{"X-CSRF-Token": "bad"})
-	p.expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": dir}, nil)
-	p.expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": "/etc", "revision": 0}, nil)
+	p.Expect(403, "POST", "/api/jobs/"+id+"/expand", body, map[string]string{"X-CSRF-Token": "bad"})
+	p.Expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": dir}, nil)
+	p.Expect(400, "POST", "/api/jobs/"+id+"/expand", object{"path": "/etc", "revision": 0}, nil)
 	mustWrite(t, filepath.Join(dir, "deeper", "data.bin"), make([]byte, 32768))
-	expansion := p.expect(202, "POST", "/api/jobs/"+id+"/expand", body, nil)
+	expansion := p.Expect(202, "POST", "/api/jobs/"+id+"/expand", body, nil)
 	planConfig := expansion["config"].(map[string]any)
 	roots := planConfig["root"].([]any)
 	if len(roots) != 1 || roots[0] != dir || planConfig["include_docker_root"] != false || planConfig["max_depth"] != float64(1) {
@@ -297,7 +297,7 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	if result := waitJob(t, p.db, eid); result["status"] != "completed" {
 		t.Fatal(result)
 	}
-	updated := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+	updated := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
 	if updated["job_id"] != id || numberInt64(updated["revision"]) < 2 {
 		t.Fatal("original record identity or revision changed incorrectly")
 	}
@@ -308,7 +308,7 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	if string(originalFile) != string(raw) {
 		t.Fatal("immutable baseline overwritten")
 	}
-	history := p.expect(200, "GET", "/api/jobs/"+id, nil, nil)
+	history := p.Expect(200, "GET", "/api/jobs/"+id, nil, nil)
 	if history["allocated"] != updated["tree"].(map[string]any)["allocated"] || history["snapshot_revision"] != updated["revision"] {
 		t.Fatal("history totals/version stale")
 	}
@@ -320,11 +320,11 @@ func TestIncrementalWorkerPublicationPermissionsAndRevision(t *testing.T) {
 	if err != nil || agent.Revision != numberInt64(updated["revision"]) || float64(agent.Tree.Allocated) != history["allocated"] {
 		t.Fatalf("agent saw stale head: %v", err)
 	}
-	p.expect(409, "POST", "/api/jobs/"+id+"/expand", body, nil)
-	p.expect(400, "POST", "/api/jobs/"+eid+"/expand", object{"path": dir, "revision": 0}, nil)
-	p.expect(201, "POST", "/api/users", object{"username": "reader", "password": "A-reader-password-123", "role": "viewer"}, nil)
-	p.login(false, "reader", "A-reader-password-123")
-	p.expect(403, "POST", "/api/jobs/"+id+"/expand", object{"path": dir, "revision": 1}, nil)
+	p.Expect(409, "POST", "/api/jobs/"+id+"/expand", body, nil)
+	p.Expect(400, "POST", "/api/jobs/"+eid+"/expand", object{"path": dir, "revision": 0}, nil)
+	p.Expect(201, "POST", "/api/users", object{"username": "reader", "password": "A-reader-password-123", "role": "viewer"}, nil)
+	p.Login(false, "reader", "A-reader-password-123")
+	p.Expect(403, "POST", "/api/jobs/"+id+"/expand", object{"path": dir, "revision": 1}, nil)
 }
 func TestIncrementalCancelledPublicationLeavesHeadUntouched(t *testing.T) {
 	p := newTestPlatform(t)

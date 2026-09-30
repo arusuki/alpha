@@ -40,6 +40,7 @@ type Manager struct {
 // failed writes even if no client is polling.
 type agentCompletion struct {
 	id, status, message string
+	cleanup             bool
 }
 
 func (a *Manager) flushCompletionLocked() error {
@@ -47,8 +48,12 @@ func (a *Manager) flushCompletionLocked() error {
 		return nil
 	}
 	p := a.pending
-	if _, err := a.db.SQL.Exec("UPDATE agent_sessions SET status=?,error=?,active_job_id=NULL,updated_at=? WHERE id=?", p.status, p.message, platform.Now(), p.id); err != nil {
-		return fmt.Errorf("保存分析会话 %s 的结束状态: %w", p.id, err)
+	query := "UPDATE agent_sessions SET status=?,error=?,active_job_id=NULL,updated_at=? WHERE id=?"
+	if p.cleanup {
+		query = "UPDATE agent_cleanups SET status=?,error=?,updated_at=? WHERE id=?"
+	}
+	if _, err := a.db.SQL.Exec(query, p.status, p.message, platform.Now(), p.id); err != nil {
+		return fmt.Errorf("保存任务 %s 的结束状态: %w", p.id, err)
 	}
 	a.pending = nil
 	a.active, a.cancel = "", nil
@@ -126,7 +131,7 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 		return nil, err
 	}
 	if a.active != "" {
-		return nil, httpapi.NewError(409, "已有分析正在执行，请等待完成或停止分析")
+		return nil, httpapi.NewError(409, "当前节点已有任务正在执行，请等待完成或停止任务")
 	}
 	config, _, err := a.db.agentConfig()
 	if err != nil {
@@ -153,13 +158,6 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 		session, sessionErr := a.session(id, userID)
 		if sessionErr != nil {
 			return nil, sessionErr
-		}
-		var extraction int
-		if err := a.db.SQL.QueryRow("SELECT count(*) FROM agent_cleanups WHERE session_id=?", id).Scan(&extraction); err != nil {
-			return nil, err
-		}
-		if extraction != 0 {
-			return nil, httpapi.NewError(409, "目录提取任务不支持追问，请在诊断清理页面操作")
 		}
 		if httpapi.String(session["snapshot_id"]) == "" {
 			return nil, httpapi.NewError(409, "分析所需的扫描记录不存在，请选择扫描记录重新生成报告")
@@ -197,13 +195,13 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 	if err != nil {
 		return nil, err
 	}
-	a.launchLocked(id, func(ctx context.Context) error {
+	a.launchLocked(id, false, func(ctx context.Context) error {
 		return a.run(ctx, id, userID, actor, config, source, newSession && source == nil)
 	})
 	return a.session(id, userID)
 }
 
-func (a *Manager) launchLocked(id string, run func(context.Context) error) {
+func (a *Manager) launchLocked(id string, cleanup bool, run func(context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
 	a.active, a.cancel = id, cancel
 	a.wg.Add(1)
@@ -217,10 +215,13 @@ func (a *Manager) launchLocked(id string, run func(context.Context) error) {
 		}
 		if ctx.Err() != nil {
 			status, message = "cancelled", "分析已停止或超时；已完成的扫描和消息保留"
+			if cleanup {
+				message = "删除已停止或超时，请核对条目结果"
+			}
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		a.pending = &agentCompletion{id: id, status: status, message: message}
+		a.pending = &agentCompletion{id: id, status: status, message: message, cleanup: cleanup}
 		if err := a.flushCompletionLocked(); err != nil {
 			log.Printf("Agent completion: %v; will retry", err)
 		}

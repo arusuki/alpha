@@ -19,10 +19,10 @@ const reportGroupSize = 4
 
 const reportGroupInstructions = `分析本组容器的空间占用，查清可写层和挂载中的具体内容，找出有实际清理价值的项目。自主决定查询、探索范围和深度，可查询其他容器核对共享关系。既看大资产，也检查缓存、临时数据和开发工具积累；混合目录拆开判断。
 每项归入一类：1 可立即删除（已识别的可丢弃缓存等）；2 存在争议（写明具体影响、待核实条件或取舍）；3 必须保留（有依据的必要环境或资产）；4 放错位置（说明迁移依据和落点）。结合目录结构和软件用途作判断，不因无法证明所有依赖就把可重建缓存全部列为争议，也不把模型缓存、运行中临时数据或编辑器历史一概当垃圾。说明清理效果和必要条件。
-最终只输出 JSON 对象，不加说明或 Markdown 围栏：{"containers":[{"container_id":"完整 ID","findings":[{"path":"宿主机物理绝对路径","container_path":"容器内绝对路径，未知填空字符串","category":2,"kind":"模型权重","bytes":123,"summary":"具体内容和用途","reason":"分类依据、清理影响或条件"}],"note":"其他发现或未查清的事项，无则留空"}]}。
+最终只输出 JSON 对象，不加说明或 Markdown 围栏：{"containers":[{"id":"完整 ID","findings":[{"path":"宿主机物理绝对路径","container_path":"容器内绝对路径，未知填空字符串","category":2,"kind":"模型权重","bytes":123,"summary":"具体内容和用途","reason":"分类依据、清理影响或条件"}],"note":"其他发现或未查清的事项，无则留空"}]}。
 包含本组每个容器且仅一次；bytes 用实际分配字节数，未知填 null；避免父子条目重复。kind 选：数据集、模型权重、训练与实验产物、软件环境、下载与包缓存、编译缓存、日志、临时文件、编辑器历史、其他。说明简洁但保留判断依据，无条目时在 note 说明原因。`
 
-type reportContainer struct {
+type reportSubject struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }
@@ -37,14 +37,14 @@ type reportFinding struct {
 	Reason        string `json:"reason"`
 }
 
-type reportContainerResult struct {
-	ContainerID string          `json:"container_id"`
-	Findings    []reportFinding `json:"findings"`
-	Note        string          `json:"note"`
+type reportResult struct {
+	SubjectID string          `json:"id"`
+	Findings  []reportFinding `json:"findings"`
+	Note      string          `json:"note"`
 }
 
 type reportGroupResult struct {
-	Containers []reportContainerResult `json:"containers"`
+	Containers []reportResult `json:"containers"`
 }
 
 // Only validation failures are repairable by the model. Storage failures must
@@ -55,8 +55,8 @@ var reportKinds = []string{"数据集", "模型权重", "训练与实验产物",
 var reportCategories = []string{"可立即删除（无争议）", "存在争议", "必须保留（无争议）", "放错位置"}
 
 // Freeze the complete plan before exploration changes the ranking/revision.
-func (a *Manager) reportContainers(ctx context.Context, snapshotID string, revision any) ([]reportContainer, error) {
-	containers := []reportContainer{}
+func (a *Manager) reportContainers(ctx context.Context, snapshotID string, revision any) ([]reportSubject, error) {
+	containers := []reportSubject{}
 	seen := map[string]bool{}
 	for offset := 0; ; offset += 50 {
 		if err := ctx.Err(); err != nil {
@@ -72,9 +72,9 @@ func (a *Manager) reportContainers(ctx context.Context, snapshotID string, revis
 			return nil, httpapi.NewError(409, "扫描记录已更新，请刷新空间用量后重新生成报告")
 		}
 		var result struct {
-			Items   []reportContainer `json:"items"`
-			Total   int               `json:"total"`
-			HasMore bool              `json:"has_more"`
+			Items   []reportSubject `json:"items"`
+			Total   int             `json:"total"`
+			HasMore bool            `json:"has_more"`
 		}
 		if err = json.Unmarshal([]byte(httpapi.JSONText(page)), &result); err != nil {
 			return nil, fmt.Errorf("容器列表格式无效: %w", err)
@@ -164,7 +164,7 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 	data := object{"containers": group.Containers}
 	if scope == "host" {
 		subject, instructions, location = "Host 目录", hostReportInstructions, "Host 区域"
-		items = hostReportContainers(group.Directories)
+		items = hostReportSubjects(group.Directories)
 		data = object{"directories": group.Directories}
 	}
 	label := fmt.Sprintf("第 %d/%d 组 · %d 个%s", group.Number, total, len(items), subject)
@@ -211,7 +211,7 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 			return err
 		}
 		defer a.unlockRecord()
-		var results []reportContainerResult
+		var results []reportResult
 		inspected := tools.inspectedContainers
 		if scope == "host" {
 			parsed, err := parseHostReportGroup(raw, group.Directories)
@@ -233,9 +233,9 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 			results = parsed.Containers
 		}
 		for _, item := range results {
-			success, attempted := inspected[item.ContainerID]
+			success, attempted := inspected[item.SubjectID]
 			if !attempted || (!success && len(item.Findings) > 0) {
-				return reportResultError{fmt.Errorf("%s %s 缺少存储来源证据，查询失败时只能注明原因", subject, item.ContainerID)}
+				return reportResultError{fmt.Errorf("%s %s 缺少存储来源证据，查询失败时只能注明原因", subject, item.SubjectID)}
 			}
 		}
 		coverageText := ""
@@ -243,12 +243,12 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 			// Failed root queries may publish notes, but cannot be turned into
 			// another exploration request by the coverage review.
 			directories := []reportDirectory{}
-			checked := []reportContainerResult{}
+			checked := []reportResult{}
 			for _, directory := range group.Directories {
 				if inspected[directory.Path] {
 					directories = append(directories, directory)
 					for _, result := range results {
-						if result.ContainerID == directory.Path {
+						if result.SubjectID == directory.Path {
 							checked = append(checked, result)
 						}
 					}
@@ -265,7 +265,7 @@ func (a *Manager) runReportGroup(ctx context.Context, id, userID, actor string, 
 				coverageText = renderHostCoverage(coverage)
 			}
 		}
-		text := "### " + label + "\n\n" + renderReportFindingsWithLocation(items, results, location)
+		text := "### " + label + "\n\n" + renderReportFindings(items, results, location)
 		text += coverageText
 		if err := a.message(id, "group_report", httpapi.JSONText(object{"group_id": groupID, "text": text}), ""); err != nil {
 			return err
@@ -323,7 +323,7 @@ func (a *Manager) validateReportEvidence(ctx context.Context, snapshotID string,
 		if len(item.Findings) == 0 {
 			continue
 		}
-		container, err := a.records.Query(snapshotID, "container", map[string]json.RawMessage{"container": json.RawMessage(httpapi.JSONText(item.ContainerID))})
+		container, err := a.records.Query(snapshotID, "container", map[string]json.RawMessage{"container": json.RawMessage(httpapi.JSONText(item.SubjectID))})
 		if err != nil {
 			return err
 		}
@@ -372,7 +372,7 @@ func (a *Manager) validateReportEvidence(ctx context.Context, snapshotID string,
 				}
 			}
 			if !allowed || !mapped {
-				problems = append(problems, fmt.Sprintf("容器 %s 的 %s 来源或映射错误，记录对应容器路径为 %q；核对 get_container，不要混用其他容器的前缀", item.ContainerID, f.Path, expected))
+				problems = append(problems, fmt.Sprintf("容器 %s 的 %s 来源或映射错误，记录对应容器路径为 %q；核对 get_container，不要混用其他容器的前缀", item.SubjectID, f.Path, expected))
 				continue
 			}
 			evidence := byPath[f.Path]
@@ -399,7 +399,7 @@ func (a *Manager) validateReportEvidence(ctx context.Context, snapshotID string,
 	return nil
 }
 
-func parseReportGroup(raw string, group []reportContainer) (reportGroupResult, error) {
+func parseReportGroup(raw string, group []reportSubject) (reportGroupResult, error) {
 	var result reportGroupResult
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -418,10 +418,10 @@ func parseReportGroup(raw string, group []reportContainer) (reportGroupResult, e
 		kinds[kind] = true
 	}
 	for _, c := range result.Containers {
-		if !remaining[c.ContainerID] {
-			return result, fmt.Errorf("分组结果包含组外或重复容器 %q", c.ContainerID)
+		if !remaining[c.SubjectID] {
+			return result, fmt.Errorf("分组结果包含组外或重复容器 %q", c.SubjectID)
 		}
-		delete(remaining, c.ContainerID)
+		delete(remaining, c.SubjectID)
 		if len(c.Findings) == 0 && strings.TrimSpace(c.Note) == "" {
 			return result, fmt.Errorf("无条目时必须简述原因")
 		}
@@ -512,9 +512,9 @@ func reportCategoryTotal(rows []*mergedReportFinding, category int) string {
 
 // Group by fixed purpose names so equivalent assets cannot drift into separate
 // model-written sections. Shared physical paths have one row and all locations.
-func mergeReportFindings(containers []reportContainer, results []reportContainerResult) ([]*mergedReportFinding, []string) {
+func mergeReportFindings(subjects []reportSubject, results []reportResult) ([]*mergedReportFinding, []string) {
 	names := map[string]string{}
-	for _, c := range containers {
+	for _, c := range subjects {
 		names[c.ID] = c.Name
 		if c.Name == "" {
 			names[c.ID] = c.ID
@@ -524,10 +524,10 @@ func mergeReportFindings(containers []reportContainer, results []reportContainer
 	var notes []string
 	for _, c := range results {
 		if c.Note != "" {
-			notes = append(notes, reportCell(names[c.ContainerID])+"："+reportCell(c.Note))
+			notes = append(notes, reportCell(names[c.SubjectID])+"："+reportCell(c.Note))
 		}
 		for _, f := range c.Findings {
-			location := names[c.ContainerID]
+			location := names[c.SubjectID]
 			if f.ContainerPath != "" {
 				location += "：" + f.ContainerPath
 			}
@@ -562,12 +562,8 @@ func mergeReportFindings(containers []reportContainer, results []reportContainer
 	return rows, notes
 }
 
-func renderReportFindings(containers []reportContainer, results []reportContainerResult) string {
-	return renderReportFindingsWithLocation(containers, results, "容器 / 内部路径")
-}
-
-func renderReportFindingsWithLocation(containers []reportContainer, results []reportContainerResult, locationTitle string) string {
-	rows, notes := mergeReportFindings(containers, results)
+func renderReportFindings(subjects []reportSubject, results []reportResult, locationTitle string) string {
+	rows, notes := mergeReportFindings(subjects, results)
 	var out strings.Builder
 	out.WriteString("容量总计按各类已列条目的已知实际占用计算，不代表可回收空间；不同类别可能包含相互重叠的目录，不应将四类总计相加。\n\n")
 	for category, title := range reportCategories {

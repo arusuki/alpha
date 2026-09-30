@@ -76,7 +76,7 @@ func TestProviderStreamsBeforeCompletion(t *testing.T) {
 			done := make(chan modelReply, 1)
 			failures := make(chan error, 1)
 			go func() {
-				reply, err := (agentProvider{Config: config, OnDelta: func(d modelDelta) error { deltas <- d; return nil }}).complete(context.Background(), nil, true)
+				reply, err := (agentProvider{Config: config, OnDelta: func(d modelDelta) error { deltas <- d; return nil }}).complete(context.Background(), nil)
 				done <- reply
 				failures <- err
 			}()
@@ -120,19 +120,6 @@ func TestProviderStreamsBeforeCompletion(t *testing.T) {
 				t.Fatalf("lost Completions reasoning or replay: %+v", reply)
 			}
 		})
-	}
-}
-
-func TestCleanupStreamAcceptsDuplicatedResponsesCompletion(t *testing.T) {
-	output := strings.Repeat("x", 5*1024*1024)
-	stream := "data: " + httpapi.JSONText(object{"type": "response.output_text.delta", "delta": output}) + "\n\n" +
-		"data: " + httpapi.JSONText(object{"type": "response.completed", "response": object{"status": "completed", "output": []object{{"type": "message", "content": []object{{"type": "output_text", "text": output}}}}}}) + "\n\n"
-	if _, err := (agentProvider{Config: Config{Protocol: "responses"}}).readStream(strings.NewReader(stream)); err == nil {
-		t.Fatal("ordinary model stream should retain its 8 MB limit")
-	}
-	reply, err := (agentProvider{Config: Config{Protocol: "responses"}, StreamLimitBytes: cleanupStreamLimitBytes}).readStream(strings.NewReader(stream))
-	if err != nil || reply.Text != output {
-		t.Fatalf("cleanup stream lost complete output: length=%d err=%v", len(reply.Text), err)
 	}
 }
 

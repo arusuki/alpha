@@ -16,7 +16,7 @@ import (
 
 func TestAnalysisStreamCancellationReplayAndAuthorization(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -27,14 +27,14 @@ func TestAnalysisStreamCancellationReplayAndAuthorization(t *testing.T) {
 	}))
 	defer func() { p.agent.Close(); mock.Close() }()
 	configureTestAgent(t, p, "responses", mock.URL)
-	start := p.expect(202, "POST", "/api/agent/sessions", object{"message": "分析整个磁盘"}, nil)
+	start := p.Expect(202, "POST", "/api/agent/sessions", object{"message": "分析整个磁盘"}, nil)
 	id := httpapi.String(start["id"])
 	server := httptest.NewServer(p.s)
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", server.URL+"/api/agent/sessions/"+id+"/events?after=0", nil)
-	req.Header.Set("Cookie", p.cookie)
+	req.Header.Set("Cookie", p.Cookie)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -90,7 +90,7 @@ func TestAnalysisStreamCancellationReplayAndAuthorization(t *testing.T) {
 		t.Fatalf("request or paused stream missing: %v %q %v", requestSeen, text, scanner.Err())
 	}
 	resp.Body.Close()
-	p.expect(200, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
+	p.Expect(200, "POST", "/api/agent/sessions/"+id+"/cancel", object{}, nil)
 	finished := waitAgentSession(t, p, id)
 	if finished["session"].(object)["status"] != "cancelled" {
 		t.Fatal(finished)
@@ -110,14 +110,14 @@ func TestAnalysisStreamCancellationReplayAndAuthorization(t *testing.T) {
 	if roles["assistant"] != 0 || roles["model_response"] != 1 {
 		t.Fatalf("partial output treated as final: %v", roles)
 	}
-	code, _, replay := p.request("GET", "/api/agent/sessions/"+id+"/events?after=0", nil, map[string]string{"Last-Event-ID": fmt.Sprint(cursor)})
+	code, _, replay := p.Request("GET", "/api/agent/sessions/"+id+"/events?after=0", nil, map[string]string{"Last-Event-ID": fmt.Sprint(cursor)})
 	if code != 200 || !strings.Contains(replay.Body.String(), "model_response") || strings.Contains(replay.Body.String(), "model_request") {
 		t.Fatalf("bad resume: %s", replay.Body.String())
 	}
-	p.expect(400, "GET", "/api/agent/sessions/"+id+"/events?after=-1", nil, nil)
-	p.expect(201, "POST", "/api/users", object{"username": "anotheradmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
-	p.login(false, "anotheradmin", "Second-admin-pass-123")
-	p.expect(404, "GET", "/api/agent/sessions/"+id+"/events", nil, nil)
+	p.Expect(400, "GET", "/api/agent/sessions/"+id+"/events?after=-1", nil, nil)
+	p.Expect(201, "POST", "/api/users", object{"username": "anotheradmin", "password": "Second-admin-pass-123", "role": "admin"}, nil)
+	p.Login(false, "anotheradmin", "Second-admin-pass-123")
+	p.Expect(404, "GET", "/api/agent/sessions/"+id+"/events", nil, nil)
 }
 
 func TestResponsesToolFragmentsAndIncompleteUsage(t *testing.T) {

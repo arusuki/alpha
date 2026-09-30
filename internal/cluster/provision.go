@@ -265,7 +265,7 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 	var req struct {
 		NodeID string `json:"node_id"`
 	}
-	if e := decode(w, r, &req); e != nil {
+	if e := httpapi.DecodeBody(w, r, &req); e != nil {
 		return 0, nil, e
 	}
 	gate := h.memberGate(id)

@@ -7,9 +7,13 @@ import (
 	"net/url"
 	"strings"
 
+	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 )
+
+const apiKeyFile = "agent-api-key.key"
+const apiKeyAAD = "project-alpha/agent-settings/api-key/v1"
 
 type Config struct {
 	Protocol         string `json:"protocol"`
@@ -82,7 +86,7 @@ func (d *Store) agentConfig() (Config, int64, error) {
 		return c, 0, fmt.Errorf("invalid agent settings: %w", err)
 	}
 	if encryptedKey != "" {
-		c.APIKey, err = decryptAPIKey(d.Directory, encryptedKey)
+		c.APIKey, err = credentials.Decrypt(d.Directory, apiKeyFile, apiKeyAAD, encryptedKey)
 	}
 	return c, revision, err
 }
@@ -154,7 +158,7 @@ func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (obj
 	}
 	encryptedKey := ""
 	if c.APIKey != "" {
-		encryptedKey, err = encryptAPIKey(d.Directory, c.APIKey)
+		encryptedKey, err = credentials.Encrypt(d.Directory, apiKeyFile, apiKeyAAD, c.APIKey)
 		if err != nil {
 			return nil, err
 		}

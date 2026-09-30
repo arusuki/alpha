@@ -185,10 +185,10 @@ func openKeys(r *os.Root, c installation) (*os.Root, error) {
 }
 
 func loadSnapshot(r *os.Root, c installation) (keySnapshot, error) {
-	v := keySnapshot{Version: keyFormat, ControlID: c.ControlID, Keys: map[string]string{}}
+	var v keySnapshot
 	raw, err := readPrivateFile(r, "keys.json", c.ServiceUID, c.JumpGID, 0037, maxKeyFile)
 	if os.IsNotExist(err) {
-		return v, nil
+		return keySnapshot{Version: keyFormat, ControlID: c.ControlID, Keys: map[string]string{}}, nil
 	}
 	if err != nil {
 		return v, err
@@ -246,27 +246,6 @@ func (s keyStore) checkWriter(id string) error {
 	defer k.Close()
 	_, err = loadSnapshot(k, c)
 	return err
-}
-
-func (s keyStore) edit(control, member, key string) error {
-	if !sshkeys.ID.MatchString(member) {
-		return fmt.Errorf("invalid member ID")
-	}
-	if key != "" {
-		var err error
-		key, err = sshkeys.Normalize(key)
-		if err != nil {
-			return err
-		}
-	}
-	return s.update(control, func(v *keySnapshot) error {
-		if key == "" {
-			delete(v.Keys, member)
-		} else {
-			v.Keys[member] = key
-		}
-		return nil
-	})
 }
 
 func (s keyStore) update(control string, change func(*keySnapshot) error) error {

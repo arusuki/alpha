@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	web "project-alpha/dist"
@@ -18,7 +19,7 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 	}
 	t.Cleanup(func() { db.SQL.Close() })
 	server := NewServer(db, nil, web.Assets, nil, false)
-	server.Control = true
+
 	entries, err := web.Assets.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -37,6 +38,9 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 			server.ServeHTTP(response, request)
 			if response.Code != http.StatusOK {
 				t.Fatalf("GET %s: status %d, body %s", path, response.Code, response.Body.String())
+			}
+			if !strings.Contains(response.Header().Get("Content-Security-Policy"), "worker-src 'self'") {
+				t.Fatal("browser worker blocked by CSP")
 			}
 			if got, want := response.Header().Get("Content-Type"), mime.TypeByExtension(filepath.Ext(entry.Name())); got != want {
 				t.Fatalf("GET %s: Content-Type %q, want %q", path, got, want)

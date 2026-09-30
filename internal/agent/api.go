@@ -20,7 +20,7 @@ func NewHandler(db *Store, manager *Manager) *Handler { return &Handler{db, mana
 
 var agentSessionRoute = regexp.MustCompile(`^/api/agent/sessions/([a-f0-9]{32})(/messages|/cancel|/events|/retry)?$`)
 var recordIDPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
-var cleanupRoute = regexp.MustCompile(`^/api/agent/cleanups/([a-f0-9]{32})(/delete)?$`)
+var cleanupRoute = regexp.MustCompile(`^/api/agent/cleanups/([a-f0-9]{32})(/delete|/cancel)?$`)
 
 func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
 	if user.Role != "admin" {
@@ -42,8 +42,8 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if len(body) != 1 || json.Unmarshal(body["report_id"], &reportID) != nil || reportID < 1 {
 			return fail(httpapi.NewError(400, "需要有效的 report_id"))
 		}
-		value, err := a.startCleanup(reportID, userID, actor)
-		return 202, value, err
+		value, err := a.prepareCleanup(reportID, userID, actor)
+		return 201, value, err
 	}
 	if match := cleanupRoute.FindStringSubmatch(r.URL.Path); match != nil {
 		if r.Method == "GET" && match[2] == "" {
@@ -52,6 +52,13 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		}
 		if r.Method == "DELETE" && match[2] == "" {
 			value, err := a.removeCleanup(match[1], userID, actor)
+			return 200, value, err
+		}
+		if r.Method == "POST" && match[2] == "/cancel" {
+			if _, err := httpapi.RequestBody(w, r); err != nil {
+				return fail(err)
+			}
+			value, err := a.stopCleanup(match[1], userID)
 			return 200, value, err
 		}
 		if r.Method == "POST" && match[2] == "/delete" {
@@ -109,7 +116,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			sessions, err := platform.Rows(s.DB.SQL, `SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope FROM (
  SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope,
  ROW_NUMBER() OVER (PARTITION BY report_scope ORDER BY updated_at DESC,id DESC) AS scope_rank
- FROM agent_sessions WHERE user_id=? AND node_id=? AND id NOT IN (SELECT session_id FROM agent_cleanups)
+ FROM agent_sessions WHERE user_id=? AND node_id=?
 ) WHERE scope_rank<=50 ORDER BY updated_at DESC,id DESC`, userID, s.DB.NodeID)
 			return 200, object{"sessions": sessions}, err
 		}

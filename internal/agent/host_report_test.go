@@ -89,11 +89,11 @@ func TestHostReportValidatesGroupPathsAndOwnershipEvidence(t *testing.T) {
 	}
 }
 
-func TestHostReportRetryPublishesExtractableManifestWithoutContainers(t *testing.T) {
+func TestHostReportRetryPublishesCleanupFindings(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
-	job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 	snapshotID := job["id"].(string)
 	waitJob(t, p.records, snapshotID)
 	file := p.storage + "/model.bin"
@@ -121,10 +121,6 @@ func TestHostReportRetryPublishesExtractableManifestWithoutContainers(t *testing
 			t.Error(err)
 			return
 		}
-		if body["tools"] == nil {
-			writeReportReply(w, "completions", httpapi.JSONText(object{"entries": []object{{"path": file, "category": 1, "summary": "测试缓存，可重建"}}}), nil)
-			return
-		}
 		switch calls.Add(1) {
 		case 1:
 			writeReportReply(w, "completions", "查询 Host 目录", []agentToolCall{{ID: "host-source", Name: "get_host_directory", Arguments: httpapi.JSONText(object{"path": p.storage, "offset": 0, "limit": 30})}})
@@ -139,7 +135,7 @@ func TestHostReportRetryPublishesExtractableManifestWithoutContainers(t *testing
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
+	created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
 	id := created["id"].(string)
 	if created["report_scope"] != "host" {
 		t.Fatal("Host session scope missing", created)
@@ -152,33 +148,33 @@ func TestHostReportRetryPublishesExtractableManifestWithoutContainers(t *testing
 	if err := p.db.SQL.QueryRow(`SELECT json_extract(content,'$.request_id') FROM agent_messages WHERE session_id=? AND role='model_request' AND json_extract(content,'$.group_id')='group-1' ORDER BY id DESC LIMIT 1`, id).Scan(&requestID); err != nil {
 		t.Fatal(err)
 	}
-	p.expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
+	p.Expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
 	finished := waitAgentSession(t, p, id)
 	if finished["session"].(object)["status"] != "completed" || calls.Load() != 3 {
 		t.Fatalf("Host retry failed: %+v calls=%d", finished, calls.Load())
 	}
-	reports := p.expect(200, "GET", "/api/agent/cleanup-reports", nil, nil)["reports"].([]any)
+	reports := p.Expect(200, "GET", "/api/agent/cleanup-reports", nil, nil)["reports"].([]any)
 	if len(reports) != 1 || reports[0].(object)["report_scope"] != "host" {
 		t.Fatal("Host report not separated for cleanup", reports)
 	}
 	reportID := reports[0].(object)["report_id"]
-	extract := p.expect(202, "POST", "/api/agent/cleanups", object{"report_id": reportID}, nil)
-	cleanupID := extract["id"].(string)
-	if extract["report_scope"] != "host" {
-		t.Fatal("Host extraction scope missing", extract)
+	prepared := p.Expect(201, "POST", "/api/agent/cleanups", object{"report_id": reportID}, nil)
+	cleanupID := prepared["cleanup"].(object)["id"].(string)
+	if prepared["cleanup"].(object)["report_scope"] != "host" {
+		t.Fatal("Host cleanup scope missing", prepared)
 	}
-	waitAgentSession(t, p, cleanupID)
-	entries := p.expect(200, "GET", "/api/agent/cleanups/"+cleanupID, nil, nil)["entries"].([]any)
+	waitCleanup(t, p, cleanupID)
+	entries := p.Expect(200, "GET", "/api/agent/cleanups/"+cleanupID, nil, nil)["entries"].([]any)
 	if len(entries) != 1 || entries[0].(object)["path"] != file {
-		t.Fatal("Host manifest did not reach extraction", entries)
+		t.Fatal("Host findings did not reach cleanup", entries)
 	}
 	// Storage's final check runs under its scan lock. Its rejection must be
 	// written to the entry and the transient sudo password must be wiped.
 	rejecting := &rejectingHostCleanupRecords{testRecords: p.records}
 	p.agent.records = rejecting
-	p.expect(202, "POST", "/api/agent/cleanups/"+cleanupID+"/delete", object{"entry_ids": []any{entries[0].(object)["id"]}, "sudo_password": testDeletePassword}, nil)
-	waitAgentSession(t, p, cleanupID)
-	state := p.expect(200, "GET", "/api/agent/cleanups/"+cleanupID, nil, nil)
+	p.Expect(202, "POST", "/api/agent/cleanups/"+cleanupID+"/delete", object{"entry_ids": []any{entries[0].(object)["id"]}, "sudo_password": testDeletePassword}, nil)
+	waitCleanup(t, p, cleanupID)
+	state := p.Expect(200, "GET", "/api/agent/cleanups/"+cleanupID, nil, nil)
 	entry := state["entries"].([]any)[0].(object)
 	if !rejecting.called.Load() || entry["status"] != "failed" || !strings.Contains(entry["error"].(string), "Host 路径归属") {
 		t.Fatal("Host deletion did not dispatch to guarded storage or persist rejection", state)
@@ -203,9 +199,9 @@ func TestHostReportQueryFailureCanFinishWithNote(t *testing.T) {
 	for _, scenario := range []string{"note", "unqueried note", "unverified findings", "retry"} {
 		t.Run(scenario, func(t *testing.T) {
 			p := newTestPlatform(t)
-			p.login(true, "administrator", "A-test-password-123")
+			p.Login(true, "administrator", "A-test-password-123")
 			p.configure()
-			job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+			job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 			snapshotID := job["id"].(string)
 			waitJob(t, p.records, snapshotID)
 			p.agent.records = &unavailableHostRecords{Records: p.records}
@@ -258,7 +254,7 @@ func TestHostReportQueryFailureCanFinishWithNote(t *testing.T) {
 			}))
 			defer mock.Close()
 			configureTestAgent(t, p, "completions", mock.URL)
-			created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
+			created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
 			id := created["id"].(string)
 			finished := waitAgentSession(t, p, id)
 			if scenario == "retry" {
@@ -269,7 +265,7 @@ func TestHostReportQueryFailureCanFinishWithNote(t *testing.T) {
 				if err := p.db.SQL.QueryRow(`SELECT json_extract(content,'$.request_id') FROM agent_messages WHERE session_id=? AND role='model_request' ORDER BY id DESC LIMIT 1`, id).Scan(&requestID); err != nil {
 					t.Fatal(err)
 				}
-				p.expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
+				p.Expect(202, "POST", "/api/agent/sessions/"+id+"/retry", object{"requests": []object{{"group_id": "group-1", "request_id": requestID}}}, nil)
 				finished = waitAgentSession(t, p, id)
 			}
 			wantCalls := int32(3)
@@ -292,7 +288,7 @@ func TestHostReportQueryFailureCanFinishWithNote(t *testing.T) {
 
 func TestHostReportPublishesDirectoryWithFoldedHostHardLinks(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	p.configure()
 	other := filepath.Join(p.storage, "folded")
 	if err := os.Mkdir(other, 0700); err != nil {
@@ -302,7 +298,7 @@ func TestHostReportPublishesDirectoryWithFoldedHostHardLinks(t *testing.T) {
 	if err := os.Link(filepath.Join(other, "original"), filepath.Join(other, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	job := p.expect(202, "POST", "/api/jobs", object{}, nil)
+	job := p.Expect(202, "POST", "/api/jobs", object{}, nil)
 	snapshotID := job["id"].(string)
 	waitJob(t, p.records, snapshotID)
 	overview, err := p.records.Query(snapshotID, "overview", nil)
@@ -344,7 +340,7 @@ func TestHostReportPublishesDirectoryWithFoldedHostHardLinks(t *testing.T) {
 	}))
 	defer mock.Close()
 	configureTestAgent(t, p, "completions", mock.URL)
-	created := p.expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
+	created := p.Expect(202, "POST", "/api/agent/reports", object{"scope": "host", "snapshot_id": snapshotID, "revision": 0, "concurrency": 1}, nil)
 	id := created["id"].(string)
 	finished := waitAgentSession(t, p, id)
 	if finished["session"].(object)["status"] != "completed" || calls.Load() != 2 {

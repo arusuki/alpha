@@ -1,12 +1,10 @@
 """Browser regression for reports using a local, deterministic API fixture."""
 import json
-import mimetypes
-import os
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -73,19 +71,10 @@ def request_data(request_id, round):
                          dict(role='user', content='生成空间消耗总报告')], tools=[dict(type='function', name='get_directory')])
 
 
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):
-        pass
-
-    def respond(self, value, status=200):
-        raw = json.dumps(value).encode()
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
-
+class Handler(NodeHandler):
     def do_GET(self):
+        if self.control_request():
+            return
         parsed = urlparse(self.path)
         path = parsed.path
         if path == '/api/agent/sessions/' + session_id + '/events':
@@ -112,16 +101,7 @@ class Handler(BaseHTTPRequestHandler):
                 after = int(parse_qs(parsed.query).get('after', ['0'])[0])
                 batch = [m for m in messages if m['id'] > after]
                 return self.respond(dict(session=session, messages=batch, next_after=messages[-1]['id'] if messages else after, has_more=False, active_job=None))
-        file = repo / 'dist' / ('index.html' if path == '/' else path.lstrip('/'))
-        if not file.is_file():
-            self.send_error(404)
-            return
-        raw = file.read_bytes()
-        self.send_response(200)
-        self.send_header('Content-Type', mimetypes.guess_type(str(file))[0] or 'text/plain')
-        self.send_header('Content-Length', str(len(raw)))
-        self.end_headers()
-        self.wfile.write(raw)
+        self.serve_asset()
 
     def stream_events(self, parsed):
         global stream_stage
@@ -212,18 +192,14 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
 
-server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-threading.Thread(target=server.serve_forever, daemon=True).start()
+server = start_server(Handler)
 try:
     with sync_playwright() as p:
-        launch = dict(headless=True, args=['--no-sandbox'])
-        if os.environ.get('PROJECT_ALPHA_BROWSER_EXECUTABLE'):
-            launch['executable_path'] = os.environ['PROJECT_ALPHA_BROWSER_EXECUTABLE']
-        browser = p.chromium.launch(**launch)
+        browser = p.chromium.launch(**launch_options())
         page = browser.new_page(viewport=dict(width=1440, height=1080))
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
-        page.goto('http://127.0.0.1:' + str(server.server_port))
+        page.goto('http://127.0.0.1:' + str(server.server_port) + NODE_PATH)
         page.locator('.platform-nav [data-page=overview]').click()
         page.wait_for_function('platform.loaded !== null')
         page.locator('#reportConcurrency').fill('2')

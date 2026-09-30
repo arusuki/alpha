@@ -16,7 +16,7 @@ import (
 
 func TestDirectoryStorageReusesWorkerAndUpdatesOnlyChangedNodes(t *testing.T) {
 	p := newTestPlatform(t)
-	p.login(true, "administrator", "A-test-password-123")
+	p.Login(true, "administrator", "A-test-password-123")
 	_, c, target, unrelated := incrementalFixture(t)
 	// One snapshot contains both a container path and an independent host path.
 	host := filepath.Join(c.Root[0], "host-data")
@@ -47,16 +47,16 @@ func TestDirectoryStorageReusesWorkerAndUpdatesOnlyChangedNodes(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		previous := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
-		job := p.expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": path, "revision": revision}, nil)
+		previous := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+		job := p.Expect(202, "POST", "/api/jobs/"+id+"/expand", object{"path": path, "revision": revision}, nil)
 		if i == 0 {
 			worker = job["id"].(string)
 		} else if job["id"] != worker {
 			t.Fatal("each click created a new worker record")
 		}
 		waitChangesWorker(t, p, worker)
-		current := p.expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
-		patch := p.expect(200, "GET", fmt.Sprintf("/api/jobs/%s/changes?revision=%d", id, revision), nil, nil)
+		current := p.Expect(200, "GET", "/api/jobs/"+id+"/snapshot", nil, nil)
+		patch := p.Expect(200, "GET", fmt.Sprintf("/api/jobs/%s/changes?revision=%d", id, revision), nil, nil)
 		assertChangesReconstruct(t, previous, patch, current)
 		revision = numberInt64(current["revision"])
 		if i == 0 {
@@ -66,7 +66,7 @@ func TestDirectoryStorageReusesWorkerAndUpdatesOnlyChangedNodes(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		state := p.expect(200, "GET", "/api/state", nil, nil)
+		state := p.Expect(200, "GET", "/api/state", nil, nil)
 		if len(state["jobs"].([]any)) != 1 || len(state["directory_jobs"].([]any)) != 1 {
 			t.Fatal("directory clicks accumulated scan history", state)
 		}
