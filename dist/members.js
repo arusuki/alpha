@@ -5,7 +5,7 @@ const admin=()=>platform.user?.role==='admin';
 function controls(){
   $('memberSchemaEditor').disabled=state.busy||!state.schema;
   for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm'])$(id).disabled=state.busy;
-  document.querySelectorAll('[data-delete-member],[data-revoke-invitation] button,[data-update-invitation] button,[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
+  document.querySelectorAll('[data-delete-member],[data-revoke-invitation] button,[data-edit-invitation],[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
 }
 function fields(){
   return [...$('memberSchemaFields').querySelectorAll('[data-member-field]')].map(row=>{
@@ -119,7 +119,13 @@ async function invitationPage(form=null,path='/admin/member-invitations'){
 function submitInvitation(event){
   const form=event.target;event.preventDefault();
   task(async epoch=>{
-    const html=await invitationPage(form);if(epoch!==state.epoch)return;
+    let html;
+    try{html=await invitationPage(form);}
+    catch(error){
+      if(epoch===state.epoch&&form.matches('[data-update-invitation]')&&form.isConnected)editInvitationLabel(form);
+      throw error;
+    }
+    if(epoch!==state.epoch)return;
     $('memberInvitationsPanel').innerHTML=html;
     const issued=$('memberInvitationsPanel').querySelector('[data-issued-invitation]');
     if(issued){
@@ -130,6 +136,31 @@ function submitInvitation(event){
     else $('membersStatus').textContent='邀请码已作废，已登记的使用者不受影响。';
   });
 }
+function editInvitationLabel(form){
+  form.parentElement.querySelector('[data-edit-invitation]').hidden=true;form.hidden=false;
+  form.elements.label.focus();form.elements.label.select();
+}
+function finishInvitationLabel(form,save=true,refocus=false){
+  if(form.hidden)return;
+  const input=form.elements.label,button=form.parentElement.querySelector('[data-edit-invitation]');
+  form.hidden=true;button.hidden=false;
+  if(refocus)button.focus();
+  if(save&&input.value.trim()!==input.defaultValue)form.requestSubmit();
+  else input.value=input.defaultValue;
+}
+$('memberInvitationsPanel').addEventListener('click',event=>{
+  const button=event.target.closest('[data-edit-invitation]');
+  if(button&&!state.busy&&admin())editInvitationLabel(button.parentElement.querySelector('[data-update-invitation]'));
+});
+$('memberInvitationsPanel').addEventListener('focusout',event=>{
+  if(event.target.matches('[data-update-invitation] input[name=label]'))finishInvitationLabel(event.target.form);
+});
+$('memberInvitationsPanel').addEventListener('keydown',event=>{
+  if(!event.target.matches('[data-update-invitation] input[name=label]')||event.isComposing)return;
+  if(event.key==='Enter'||event.key==='Escape'){
+    event.preventDefault();finishInvitationLabel(event.target.form,event.key==='Enter',true);
+  }
+});
 $('memberInvitationForm').addEventListener('submit',submitInvitation);
 $('memberInvitationsPanel').addEventListener('submit',submitInvitation);
 $('memberInvitationCopy').addEventListener('click',async()=>{
