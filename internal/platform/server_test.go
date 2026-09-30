@@ -18,6 +18,7 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 	}
 	t.Cleanup(func() { db.SQL.Close() })
 	server := NewServer(db, nil, web.Assets, nil, false)
+	server.Control = true
 	entries, err := web.Assets.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,9 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 			path := "/" + entry.Name()
 			if entry.Name() == "index.html" {
 				path = "/"
+			}
+			if entry.Name() == "status.html" {
+				path = "/status/0123456789abcdef0123456789abcdef"
 			}
 			request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 			response := httptest.NewRecorder()

@@ -1,5 +1,6 @@
 """Member registration UI and public API against an isolated, real Go service."""
 import os
+import json
 import re
 import subprocess
 import tempfile
@@ -68,10 +69,15 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert len(code) == 48
                 page.locator('#memberInvitationClose').click()
                 assert page.locator('#memberInvitationCode').input_value() == ''
-                payload = dict(username='alice', invitation_code=code, schema_revision=schema['revision'],
+                payload = dict(username='alice', invitation_code=code, ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f', schema_revision=schema['revision'],
                                profile=dict(full_name='<img src=x onerror=alert(1)>', degree='博士', group='A组'))
                 registered = public.post('/api/members/register', data=payload)
                 assert registered.status == 201, registered.text()
+                member_token = registered.json()['resource_token']
+                member_id = registered.json()['id']
+                mine = public.get('/api/members/me/resources', headers={'Authorization': 'Bearer ' + member_token})
+                assert mine.status == 200 and mine.json()['member_id'] == member_id
+                assert public.get('/api/members/me/resources').status == 401
                 assert 'set-cookie' not in registered.headers
                 assert public.get('/api/members').status == 401
                 assert public.post('/api/login', data=dict(username='alice', password='A-test-password-123')).status == 401
@@ -120,6 +126,48 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'mobile horizontal overflow'
                 page.screenshot(path='/tmp/project-alpha-members-mobile.png', full_page=True)
                 page.set_viewport_size(dict(width=1440, height=1080))
+                # Control-only access management, using the real local API without
+                # provisioning any real host account or contacting Tailscale.
+                page.locator('.platform-nav [data-page="bastion"]').click()
+                expect(page.locator('#page-bastion')).to_be_visible()
+                expect(page.locator('#bastionSettingsFields')).to_be_enabled()
+                expect(page.locator('#bastionAssignments')).to_contain_text('alice')
+                page.locator('#bastionToken').fill('tskey-api-browser-test')
+                page.locator('#bastionSettingsForm .primary').click()
+                expect(page.locator('#bastionStatus')).to_contain_text('凭据已保存')
+                assert page.locator('#bastionToken').input_value() == ''
+                assert 'api_token' not in context.request.get(url + '/api/tailscale/settings').json()
+                page.route('**/api/tailscale/devices', lambda route: route.fulfill(status=200,
+                    content_type='application/json', body=json.dumps(dict(devices=[dict(nodeId='node-test',
+                    hostname='<img src=x onerror=alert(1)>', addresses=['100.64.0.1'], authorized=True,
+                    isExternal=False)]))))
+                page.locator('#bastionDevicesRefresh').click()
+                expect(page.locator('#bastionDevices')).to_contain_text('<img')
+                assert page.locator('#bastionDevices img').count() == 0
+                page.locator('#bastionUsername').fill('root')
+                page.locator('#bastionHost').fill('jump.test')
+                page.locator('#bastionAccountForm .primary').click()
+                expect(page.locator('#bastionError')).to_contain_text('非 root')
+                page.locator(f'[data-member="{member_id}"]').click()
+                expect(page.locator('#bastionMemberDialog')).to_be_visible()
+                expect(page.locator('#bastionMemberContent')).to_contain_text('暂无可分配')
+                page.locator('#bastionMemberClose').click()
+                page.screenshot(path='/tmp/project-alpha-bastion-desktop.png', full_page=True)
+                page.set_viewport_size(dict(width=390, height=844))
+                assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'bastion mobile overflow'
+                page.screenshot(path='/tmp/project-alpha-bastion-mobile.png', full_page=True)
+                page.set_viewport_size(dict(width=1440, height=1080))
+                page.locator(f'[data-member="{member_id}"]').click()
+                page.locator('#bastionDeleteConfirm').fill('alice')
+                page.locator('#bastionDeleteForm button').click()
+                expect(page.locator('#bastionMemberDialog')).not_to_be_visible()
+                for _ in range(100):
+                    response = public.get('/api/members/me/resources', headers={'Authorization': 'Bearer ' + member_token})
+                    if response.status == 401:
+                        break
+                    page.wait_for_timeout(50)
+                assert response.status == 401
+                page.locator('.platform-nav [data-page="members"]').click()
                 # An invitation response arriving after logout must not expose its code.
                 pending = []
                 page.route('**/admin/member-invitations/create', lambda route: pending.append(route)

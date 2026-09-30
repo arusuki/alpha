@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>我的节点 · Project Alpha</title>
+  <link rel="stylesheet" href="/status.css">
+  <script src="/status.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><span class="brand"><b>α</b> Project Alpha</span><span>使用者资源</span></header>
+  <main>
+    <div class="heading"><p class="eyebrow">MY NODES / 我的节点</p><h1>你的计算空间</h1><p id="memberIdentity" class="muted"></p></div>
+    <section id="tokenPanel" class="token-panel" aria-labelledby="tokenTitle">
+      <h2 id="tokenTitle">查看我的资源</h2>
+      <p class="muted">输入注册时获得的本人资源令牌。令牌仅保留在当前标签页，丢失时请联系管理员重置。</p>
+      <form id="tokenForm">
+        <label for="resourceToken">资源令牌</label>
+        <div class="token-row"><input id="resourceToken" type="password" autocomplete="off" spellcheck="false" required maxlength="64" placeholder="注册时返回的 resource_token"><button id="tokenSubmit" class="primary">查看节点</button></div>
+      </form>
+    </section>
+    <p id="statusError" class="error" role="alert"></p>
+    <section id="statusContent" hidden aria-label="我的节点资源">
+      <div class="summary" aria-label="资源汇总">
+        <div><span>全部节点</span><strong id="totalNodes">0</strong></div>
+        <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
+        <div><span>已分配容器的节点</span><strong id="allocatedNodes">0</strong></div>
+      </div>
+      <div class="directory-heading"><div><h2>节点目录</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="forgetToken">退出查看</button></div></div>
+      <p id="statusMessage" class="message" role="status" aria-live="polite"></p>
+      <div id="statusNodes" class="nodes"></div>
+      <p class="footnote">未分配容器的在线节点可点击「＋」申请。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
+    </section>
+    <noscript><p class="error">请启用 JavaScript 以查看节点和申请容器。</p></noscript>
+  </main>
+</body>
+</html>

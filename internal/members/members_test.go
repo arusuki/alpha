@@ -49,7 +49,7 @@ func exampleSchema() Schema {
 	}}
 }
 func validRegistration(code string) Registration {
-	return Registration{Username: "alice", InvitationCode: code, SchemaRevision: 2, Profile: rawProfile(object{"full_name": " 张三 ", "degree": "博士"})}
+	return Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: code, SchemaRevision: 2, Profile: rawProfile(object{"full_name": " 张三 ", "degree": "博士"})}
 }
 func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	s := testStore(t)
@@ -187,7 +187,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_, err := stores[n%2].Register(Registration{Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+			_, err := stores[n%2].Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
 			results <- err
 		}(n)
 	}
@@ -211,7 +211,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if _, err = s.SQL.Exec("CREATE TRIGGER fail_registration_audit BEFORE INSERT ON audit WHEN NEW.action='member.register' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Register(Registration{Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+	_, err = s.Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
 	if err == nil {
 		t.Fatal("expected audit failure")
 	}
@@ -228,7 +228,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.Register(Registration{Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
+	_, err = s.Register(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})})
 	expectError(t, err, 400)
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)

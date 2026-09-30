@@ -2,6 +2,7 @@ package members
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -18,9 +19,11 @@ type attempt struct {
 	since time.Time
 }
 type Handler struct {
-	store    *Store
-	mu       sync.Mutex
-	attempts map[string]attempt
+	Reserve    func(*sql.Tx, Member) error
+	Registered func(Member)
+	store      *Store
+	mu         sync.Mutex
+	attempts   map[string]attempt
 }
 
 func NewHandler(db *platform.Database) *Handler {
@@ -85,11 +88,14 @@ func (h *Handler) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 		if err := decode(w, r, &req); err != nil {
 			return 0, nil, err
 		}
-		v, err := h.store.Register(req)
+		v, err := h.store.RegisterWith(req, h.Reserve)
 		if err != nil {
 			return 0, nil, err
 		}
-		return 201, map[string]any{"id": v.ID, "username": v.Username, "profile": v.Profile, "schema_revision": v.Schema.Revision, "created_at": v.CreatedAt}, nil
+		if h.Registered != nil {
+			h.Registered(v)
+		}
+		return 201, map[string]any{"resource_token": v.ResourceToken, "resource_status": "pending", "id": v.ID, "username": v.Username, "profile": v.Profile, "schema_revision": v.Schema.Revision, "created_at": v.CreatedAt}, nil
 	}
 	return 0, nil, nil
 }

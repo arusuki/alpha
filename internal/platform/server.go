@@ -75,11 +75,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
 		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
 		"/style.css": "style.css", "/workspace.css": "workspace.css",
-		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js",
+		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js", "/bastion.js": "bastion.js",
 	}
 	assetPath := r.URL.Path
 	if s.Control && nodePageRoute.MatchString(assetPath) {
 		assetPath = "/"
+	}
+	if s.Control {
+		assets["/status.js"] = "status.js"
+		assets["/status.css"] = "status.css"
+		if statusPageRoute.MatchString(assetPath) {
+			assets[assetPath] = "status.html"
+		}
 	}
 	if filename, ok := assets[assetPath]; r.Method == "GET" && ok {
 		body, err := s.Assets.ReadFile(filename)
@@ -160,6 +167,7 @@ func (s *Server) cookie(w http.ResponseWriter, token string) {
 }
 
 var nodePageRoute = regexp.MustCompile(`^/nodes/[a-f0-9]{32}/$`)
+var statusPageRoute = regexp.MustCompile(`^/status/[a-f0-9]{32}/?$`)
 
 var userRoute = regexp.MustCompile(`^/api/users/([a-f0-9]{32})$`)
 

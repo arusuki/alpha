@@ -17,21 +17,27 @@ import (
 	"time"
 
 	"project-alpha/internal/agent"
+	"project-alpha/internal/bastion"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 )
 
 type Control struct {
-	lockfile  *os.File
-	DB        *platform.Database
-	Members   *members.Handler
-	client    *http.Client
-	transport *http.Transport
-	agentMu   sync.Mutex
-	agents    map[string]*agent.Handler
-	gates     map[string]*sync.Mutex
-	closed    bool
+	Bastion         *bastion.Handler
+	memberGates     sync.Map
+	provisionWake   chan struct{}
+	provisionCancel context.CancelFunc
+	provisionDone   chan struct{}
+	lockfile        *os.File
+	DB              *platform.Database
+	Members         *members.Handler
+	client          *http.Client
+	transport       *http.Transport
+	agentMu         sync.Mutex
+	agents          map[string]*agent.Handler
+	gates           map[string]*sync.Mutex
+	closed          bool
 }
 
 func NewControl(db *platform.Database) (*Control, error) {
@@ -45,8 +51,14 @@ func NewControl(db *platform.Database) (*Control, error) {
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: 50 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 128, MaxIdleConnsPerHost: 8}
-	return &Control{DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	h := &Control{DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	if err := h.initProvision(); err != nil {
+		transport.CloseIdleConnections()
+		lock.Close()
+		return nil, err
+	}
+	return h, nil
 }
 func (h *Control) Close() {
 	h.agentMu.Lock()
@@ -62,6 +74,10 @@ func (h *Control) Close() {
 	h.agentMu.Unlock()
 	for _, handler := range handlers {
 		handler.Manager.Close()
+	}
+	if h.provisionCancel != nil {
+		h.provisionCancel()
+		<-h.provisionDone
 	}
 	h.transport.CloseIdleConnections()
 	h.lockfile.Close()
@@ -84,12 +100,27 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 	return info, err
 }
 func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, any, error) {
+	if status, v, e := h.statusPublic(w, r); status != 0 || e != nil {
+		return status, v, e
+	}
+	if status, v, e := h.memberPublic(w, r); status != 0 || e != nil {
+		return status, v, e
+	}
 	return h.Members.DispatchPublic(w, r)
 }
 
 func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
 	if r.URL.Path == "/api/agent/settings" {
 		return agent.NewHandler(agent.NewStore(h.DB), nil).Dispatch(w, r, user)
+	}
+	if bastion.IsRoute(r.URL.Path) {
+		return h.Bastion.Dispatch(w, r, user)
+	}
+	if id, action, ok := memberAdminRoute(r.URL.Path); ok {
+		if user.Role != "admin" {
+			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
+		}
+		return h.dispatchMemberResource(w, r, id, action, true, user.Username)
 	}
 	if members.IsRoute(r.URL.Path) {
 		return h.Members.Dispatch(w, r, user)
@@ -124,6 +155,13 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				return h.saveNode(w, r, user, n.ID)
 			case "DELETE":
 				err = h.DB.Transaction(func(tx *sql.Tx) error {
+					var count int
+					if err := tx.QueryRow("SELECT count(*) FROM member_node_resources WHERE node_id=?", n.ID).Scan(&count); err != nil {
+						return err
+					}
+					if count > 0 {
+						return httpapi.NewError(409, "节点仍有使用者资源记录，请先回收关联使用者资源")
+					}
 					if _, err := tx.Exec("DELETE FROM cluster_nodes WHERE id=?", n.ID); err != nil {
 						return err
 					}
@@ -139,6 +177,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			}
 			if r.Method == "DELETE" && strings.HasPrefix(path, "/api/jobs/") && identifier.MatchString(strings.TrimPrefix(path, "/api/jobs/")) {
 				return h.deleteRecord(r, user, n, strings.TrimPrefix(path, "/api/jobs/"))
+			}
+			if strings.HasPrefix(path, "/api/containers/members/") {
+				return fail(httpapi.NewError(403, "请使用使用者资源 API"))
 			}
 			if !operational(path) {
 				return fail(httpapi.NewError(404, "此接口不属于节点操作 API"))
@@ -234,7 +275,7 @@ func (h *Control) validateOwner(w http.ResponseWriter, r *http.Request, path str
 	owner := httpapi.FieldString(value, "owner")
 	if owner != "" {
 		var count int
-		if err = h.DB.SQL.QueryRow("SELECT count(*) FROM members WHERE username=?", owner).Scan(&count); err != nil {
+		if err = h.DB.SQL.QueryRow("SELECT count(*) FROM members WHERE username=? AND status='active'", owner).Scan(&count); err != nil {
 			return err
 		}
 		if count != 1 {

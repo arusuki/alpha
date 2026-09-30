@@ -368,3 +368,12 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 #managedContainerRows button { margin:0 4px 6px 0; }
 #adoptChecks li { margin:10px 0; overflow-wrap:anywhere; }
 #containerCredentials { white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* Shared access management */
+#page-bastion .management-panel{margin-bottom:24px}
+#page-bastion fieldset{border:0;padding:0;margin:0 0 20px;min-width:0}
+.bastion-list{display:grid;gap:12px;margin:16px 0}
+.bastion-row{display:flex;justify-content:space-between;align-items:center;gap:20px;padding:16px 0;border-bottom:1px solid var(--line,#e6e8eb);min-width:0}
+.bastion-row>div{min-width:0}.bastion-row p{margin:6px 0 0;overflow-wrap:anywhere;font-size:13px;color:var(--muted,#667085)}
+.bastion-row .actions{flex-shrink:0}.bastion-dialog{width:min(780px,calc(100vw - 32px));max-height:85vh;overflow:auto;padding:28px}.bastion-dialog form{margin-top:24px}.bastion-dialog label{display:grid;gap:8px;margin-bottom:12px}.bastion-dialog input{width:100%;min-width:0}
+@media(max-width:700px){.bastion-row{align-items:flex-start;flex-direction:column;gap:10px}.bastion-dialog{padding:18px}.bastion-row .actions{flex-wrap:wrap}}

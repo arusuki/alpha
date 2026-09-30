@@ -74,3 +74,7 @@ owner 必须填写总控已登记的集群使用者 `username`，image 默认使
 删除使用 `docker rm <完整ID>`，无 `--force`、无 `--volumes`。Docker 命令参数参见 [Docker create 文档](https://docs.docker.com/reference/cli/docker/container/create/) 与 [inspect 文档](https://docs.docker.com/reference/cli/docker/container/inspect/)。
 
 CLI 导入保留原有文本归属，未登记标识在总控统计中明确单列。
+
+## 使用者自动分配
+
+注册与本人补申请复用节点的默认镜像、端口和数据目录设置，以成员 ID 固定创建一份容器，注入带成员注释的 SSH 公钥。分配失败后可核对并继续原容器；删除使用者会回收其分配容器及专属数据，共享 `/data` 保留。详见 [跳板机与使用者资源](bastion.md)。

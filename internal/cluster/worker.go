@@ -14,7 +14,7 @@ import (
 	"project-alpha/internal/platform"
 )
 
-const Protocol = 2
+const Protocol = 3
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
 

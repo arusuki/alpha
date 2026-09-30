@@ -17,6 +17,8 @@ import (
 var legacyPort = regexp.MustCompile(`Port ([0-9]+)/`)
 
 type CreateRequest struct {
+	MemberID   string `json:"-"`
+	SSHKey     string `json:"-"`
 	Name       string `json:"name"`
 	Owner      string `json:"owner"`
 	Image      string `json:"image"`
@@ -91,6 +93,9 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 	used := map[int]bool{}
 	for _, r := range records {
 		if r.Endpoint == cfg.Endpoint && r.Daemon == daemon {
+			if r.Owner == req.Owner {
+				return nil, fmt.Errorf("该使用者在此 node 已有容器 %s", r.Name)
+			}
 			if r.Name == req.Name {
 				return nil, fmt.Errorf("名称 %s 已有管理记录，请处理原记录", req.Name)
 			}
@@ -153,32 +158,62 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 	if _, err = h.run(ctx, cfg.Endpoint, []string{"image", "inspect", req.Image}, ""); err != nil {
 		return nil, fmt.Errorf("镜像不可用，请先在本机准备镜像: %w", err)
 	}
+	gate := "/run/project-alpha-" + platform.RandomHex(16) + ".ready"
 	userDir := filepath.Join(cfg.BaseDir, req.Name)
-	if _, err = os.Lstat(userDir); err == nil {
-		return nil, fmt.Errorf("数据目录 %s 已存在；不会覆盖或自动复用，请接管对应容器或选择新名称", userDir)
-	} else if !os.IsNotExist(err) {
+	reuse := false
+	if req.MemberID != "" {
+		plan, e := h.memberPlan(req.MemberID)
+		if e != nil {
+			return nil, e
+		}
+		if plan.Endpoint != "" {
+			gate = plan.Gate
+		} else {
+			req.Port = port
+			if e = h.saveMemberPlan(req.MemberID, memberPlan{Request: req, Endpoint: cfg.Endpoint, Daemon: daemon, Gate: gate, BaseDir: cfg.BaseDir}); e != nil {
+				return nil, e
+			}
+		}
+		raw, e := os.ReadFile(filepath.Join(userDir, ".project-alpha-member"))
+		reuse = e == nil && string(raw) == req.MemberID
+	}
+	if _, err = os.Lstat(userDir); err == nil && !reuse {
+		return nil, fmt.Errorf("数据目录 %s 已存在且不属于本次分配，不覆盖", userDir)
+	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	if err = os.MkdirAll(cfg.BaseDir, 0755); err != nil {
-		return nil, fmt.Errorf("创建数据根目录失败: %w", err)
+		return nil, err
 	}
 	if err = directory(cfg.BaseDir); err != nil {
 		return nil, err
 	}
-	if err = os.Mkdir(userDir, 0755); err != nil {
+	if !reuse {
+		if err = os.Mkdir(userDir, 0755); err != nil {
+			return nil, err
+		}
+		if req.MemberID != "" {
+			if err = os.WriteFile(filepath.Join(userDir, ".project-alpha-member"), []byte(req.MemberID), 0600); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err = directory(userDir); err != nil {
 		return nil, err
 	}
 	for _, path := range []string{filepath.Join(userDir, "workspace"), filepath.Join(userDir, "home"), filepath.Join(cfg.BaseDir, "data")} {
 		if err = os.MkdirAll(path, 0755); err != nil {
-			return nil, fmt.Errorf("准备目录失败（已有数据保留）: %w", err)
+			return nil, err
 		}
 		if err = directory(path); err != nil {
 			return nil, err
 		}
 	}
-	gate := "/run/project-alpha-" + platform.RandomHex(16) + ".ready"
 	script := fmt.Sprintf("while [ ! -f %s ]; do sleep 1; done; /usr/sbin/sshd && touch %s.started && exec /bin/bash", gate, gate)
 	args := []string{"create", "--pull", "never", "--name", req.Name, "--hostname", "docker-" + req.Name, "--network", req.Network, "--ipc", "host", "--restart", "unless-stopped", "--tty", "--interactive", "--ulimit", "memlock=-1:-1", "--gpus", "driver=nvidia,count=" + req.GPUs, "--user", "root", "--label", "project-alpha.owner=" + req.Owner, "--entrypoint", "/bin/bash"}
+	if req.MemberID != "" {
+		args = append(args, "--label", "project-alpha.member="+req.MemberID)
+	}
 	for _, dest := range []string{"workspace", "home", "data"} {
 		source := filepath.Join(userDir, dest)
 		if dest == "data" {
@@ -211,6 +246,11 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 	}
 	if _, err = h.run(ctx, cfg.Endpoint, []string{"start", id}, ""); err != nil {
 		return nil, fmt.Errorf("容器 %s 已登记但启动失败；可重试初始化: %w", req.Name, err)
+	}
+	if req.MemberID != "" {
+		if err = h.installMemberKey(ctx, r, req.MemberID, req.SSHKey); err != nil {
+			return nil, err
+		}
 	}
 	if err = h.initialize(ctx, r, pass, actor); err != nil {
 		return nil, fmt.Errorf("容器 %s 已登记，SSH 尚未启用；请重试初始化: %w", req.Name, err)

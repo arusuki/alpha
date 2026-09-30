@@ -61,6 +61,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return fail(err)
 	}
 	path := r.URL.Path
+	if strings.HasPrefix(path, "/api/containers/members/") {
+		return h.memberOperation(w, r.WithContext(ctx), user, cfg, strings.TrimPrefix(path, "/api/containers/members/"))
+	}
 	if path == "/api/containers/settings" {
 		if user.Role != "admin" {
 			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")

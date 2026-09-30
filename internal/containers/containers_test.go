@@ -56,6 +56,13 @@ func (f *fakeDocker) run(_ context.Context, _ string, args []string, input strin
 		f.c.HostConfig.PortBindings = nil
 		f.c.Config.Cmd = args[len(args)-2:]
 		for i, a := range args {
+			if a == "--label" {
+				if f.c.Config.Labels == nil {
+					f.c.Config.Labels = map[string]string{}
+				}
+				key, value, _ := strings.Cut(args[i+1], "=")
+				f.c.Config.Labels[key] = value
+			}
 			if a == "--network" {
 				f.c.HostConfig.NetworkMode = args[i+1]
 			}

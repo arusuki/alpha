@@ -4,9 +4,9 @@
 
 使用者、注册 schema 和邀请码仅存放在总控。`id` 是稳定主键，`username` 是唯一且不可修改的使用者标识，用来关联各 node 的容器归属。总控创建容器或设置非空归属时，要求选择已登记的 `username`。CLI 导入或 Docker 标签中尚未登记的归属会在“使用者容器”中单列为“未登记使用者”；同名使用者登记成功后自动归入其统计，node 原始数据保持不变。
 
-“使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册本身仍不创建容器、密码或系统账号；管理员在节点容器管理中完成创建。
+“使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册后自动分配分享节点、跳板账号，并在各 node 创建一个公钥登录容器；失败项可由使用者后续通过 API 补申请。详见 [跳板机与使用者资源](bastion.md)。
 
-数据库格式为 v18。按项目约定不迁移旧数据库；使用新数据目录，不删除或覆盖已有目录。
+数据库格式为 v19。按项目约定不迁移旧数据库；使用新数据目录，不删除或覆盖已有目录。
 
 ## 管理接口
 
@@ -27,7 +27,7 @@
 
 ## 注册 schema
 
-`GET /api/members/registration-schema` 无需登录，供外部注册页面取得表单定义。初始值为 `{"revision":1,"fields":[]}`，表示只要求固定的使用者标识和邀请码，没有附加信息字段。保存示例：
+`GET /api/members/registration-schema` 无需登录，供外部注册页面取得表单定义。初始值为 `{"revision":1,"fields":[]}`，表示只要求固定的使用者标识、邀请码和 SSH 公钥，没有附加信息字段。保存示例：
 
 ```json
 {
@@ -58,6 +58,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
   -d '{
     "username": "alice",
     "invitation_code": "替换为管理员发放的邀请码",
+    "ssh_public_key": "ssh-ed25519 AAAA…",
     "schema_revision": 2,
     "profile": {"full_name":"张三","degree":"博士","group":"A组"}
   }'
@@ -65,7 +66,9 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 `username` 必须以小写字母开头，为 3–32 位小写字母、数字、下划线或短横线，不能是 `data`。`schema_revision` 使用刚读取的版本，`profile` 必须是对象，没有附加字段时传 `{}`。
 
-成功返回 `201`：
+`ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥写入所分配的跳板账号及各 node 容器。
+
+成功返回 `201`（资源后台创建）：
 
 ```json
 {
@@ -73,11 +76,15 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
   "username": "alice",
   "profile": {"full_name":"张三","degree":"博士","group":"A组"},
   "schema_revision": 2,
-  "created_at": 1790730000
+  "created_at": 1790730000,
+  "resource_status": "pending",
+  "resource_token": "一次性返回的本人资源令牌"
 }
 ```
 
-邀请码扣减、登记记录和审计在一个 SQLite 写事务中提交，并发注册不能超过 quota。重复用户名、字段错误、schema 版本冲突及数据库写入失败都会回滚，名额不变。注册成功后该使用者仍不能登录 Alpha 平台。请求超时且结果未知时，可由管理员在列表中核实是否登记成功；重试同一用户名不会再次消耗名额。
+邀请码扣减、登记记录、资源分配记录、任务和审计在一个 SQLite 写事务中提交，并发注册不能超过 quota。重复用户名、字段错误、schema 版本冲突及数据库写入失败都会回滚，名额不变。注册成功后该使用者仍不能登录 Alpha 平台；请保存返回的本人资源令牌，使用 `/api/members/me/resources` 查询资源、`POST /api/members/me/containers` 补申请在线 node。详见 [资源 API 与回收](bastion.md)。请求超时且结果未知时，可由管理员在列表中核实是否登记成功；重试同一用户名不会再次消耗名额。
+
+使用者网页入口为总控 `/status/<id>`，其中 `id` 是注册响应的使用者 ID。输入注册返回的 `resource_token` 后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。申请返回创建结果，失败显示具体错误；不需要运维平台登录。
 
 | 状态码 | 含义 |
 | --- | --- |

@@ -27,6 +27,7 @@ function showAuth(setup,error='') {
   window.ProcessUI?.reset();
   window.ContainersUI?.reset();
   window.MembersUI?.reset();
+  window.BastionUI?.reset();
   window.ClusterUI?.reset();
   window.CleanupUI?.reset();
   clearTimeout(platform.poll);platform.generation++;platform.user=null;platform.csrf='';platform.setup=setup;
@@ -53,6 +54,7 @@ async function enter(session,restorePage=false) {
   window.ProcessUI?.reset();
   window.ContainersUI?.reset();
   window.MembersUI?.reset();
+  window.BastionUI?.reset();
   window.ClusterUI?.reset();
   window.CleanupUI?.reset();
   platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
@@ -327,16 +329,16 @@ function loadSnapshotChanges() {
 $('cancelResultLoading').addEventListener('click',cancelResultLoading);
 $('resultLoadingDialog').addEventListener('cancel',e=>{e.preventDefault();cancelResultLoading();});
 function showPage(page,navigate=true) {
-  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','members','agent-settings','settings','cluster','allocations'].includes(page))return;
-  if(['scan-settings','agent-settings','cleanup','members'].includes(page) && platform.user.role!=='admin')return;
-  const central=['cluster','allocations','members','agent-settings','settings'].includes(page);
+  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','bastion','members','agent-settings','settings','cluster','allocations'].includes(page))return;
+  if(['scan-settings','agent-settings','cleanup','bastion','members'].includes(page) && platform.user.role!=='admin')return;
+  const central=['cluster','allocations','bastion','members','agent-settings','settings'].includes(page);
   if(platform.control&&platform.nodeID&&central){window.location.href='/#'+page;return;}
   if(platform.control&&!platform.nodeID&&!central)return;
   const changed=platform.page!==page;
   platform.page=page;
   $('console').dataset.page=page;
   const storage=['overview','history','cleanup','scan-settings'].includes(page);
-  const headings={cluster:['CLUSTER OVERVIEW','集群总控','查看节点状态，进入每台主机的工作台。'],allocations:['CLUSTER / USER CONTAINERS','使用者容器','按使用者查看各节点的容器归属与数量。'],members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
+  const headings={bastion:['CLUSTER / ACCESS','跳板机管理','配置分享节点与本机账号，查看使用者的访问资源。'],cluster:['CLUSTER OVERVIEW','集群总控','查看节点状态，进入每台主机的工作台。'],allocations:['CLUSTER / USER CONTAINERS','使用者容器','按使用者查看各节点的容器归属与数量。'],members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
   $('pageEyebrow').textContent=headings[page][0];$('pageTitle').textContent=headings[page][1];
   $('pageDescription').textContent=headings[page][2];$('moduleCrumb').textContent=storage?'存储':headings[page][1];
   document.title=`project alpha · ${headings[page][1]}`;
@@ -354,6 +356,7 @@ function showPage(page,navigate=true) {
   if(page==='dashboard')window.DashboardUI?.render();
   if(page==='containers')window.ContainersUI?.open();
   if(page==='members')window.MembersUI?.open();
+  if(page==='bastion')window.BastionUI?.open();else window.BastionUI?.leave();
   if(['cluster','allocations'].includes(page))window.ClusterUI?.refresh();
   if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
   if(page==='cleanup')window.CleanupUI?.open();else window.CleanupUI?.close();

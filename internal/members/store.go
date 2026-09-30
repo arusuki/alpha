@@ -15,6 +15,7 @@ import (
 
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/sshkeys"
 )
 
 //go:embed schema.sql
@@ -38,12 +39,15 @@ type Schema struct {
 	Fields   []Field `json:"fields"`
 }
 type Member struct {
-	ID           string            `json:"id"`
-	Username     string            `json:"username"`
-	Profile      map[string]string `json:"profile"`
-	Schema       Schema            `json:"schema"`
-	InvitationID string            `json:"invitation_id"`
-	CreatedAt    float64           `json:"created_at"`
+	SSHKey        string            `json:"ssh_public_key"`
+	ResourceToken string            `json:"-"`
+	Status        string            `json:"status"`
+	ID            string            `json:"id"`
+	Username      string            `json:"username"`
+	Profile       map[string]string `json:"profile"`
+	Schema        Schema            `json:"schema"`
+	InvitationID  string            `json:"invitation_id"`
+	CreatedAt     float64           `json:"created_at"`
 }
 type Invitation struct {
 	ID        string  `json:"id"`
@@ -180,6 +184,7 @@ func (s *Store) RevokeInvitation(id, actor string) error {
 }
 
 type Registration struct {
+	SSHKey         string                     `json:"ssh_public_key"`
 	Username       string                     `json:"username"`
 	InvitationCode string                     `json:"invitation_code"`
 	SchemaRevision int                        `json:"schema_revision"`
@@ -228,7 +233,9 @@ func validateProfile(fields []Field, values map[string]json.RawMessage) (map[str
 	}
 	return out, nil
 }
-func (s *Store) Register(req Registration) (Member, error) {
+func (s *Store) Register(req Registration) (Member, error) { return s.RegisterWith(req, nil) }
+
+func (s *Store) RegisterWith(req Registration, reserve func(*sql.Tx, Member) error) (Member, error) {
 	m := Member{ID: platform.RandomHex(16), Username: req.Username, CreatedAt: platform.Now()}
 	if !username.MatchString(req.Username) || req.Username == "data" {
 		return m, httpapi.NewError(400, "使用者标识需为小写字母开头的 3–32 位字母、数字、下划线或短横线，且不能为 data")
@@ -239,6 +246,13 @@ func (s *Store) Register(req Registration) (Member, error) {
 	if req.SchemaRevision < 1 || req.Profile == nil {
 		return m, httpapi.NewError(400, "请提供 schema_revision 和 profile 对象")
 	}
+	key, keyErr := sshkeys.Normalize(req.SSHKey)
+	if keyErr != nil {
+		return m, httpapi.NewError(400, keyErr.Error())
+	}
+	m.SSHKey = key
+	m.ResourceToken = platform.RandomHex(32)
+	m.Status = "active"
 	err := s.Transaction(func(tx *sql.Tx) error {
 		var err error
 		m.Schema, err = readSchema(tx)
@@ -269,18 +283,23 @@ func (s *Store) Register(req Registration) (Member, error) {
 		if n != 1 {
 			return httpapi.NewError(400, "邀请码无效或已失效")
 		}
-		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,created_at) VALUES(?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, m.CreatedAt); err != nil {
+		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,created_at,ssh_public_key,resource_token_hash,status) VALUES(?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status); err != nil {
 			if platform.IsConstraint(err) {
 				return httpapi.NewError(409, "该使用者标识已注册")
 			}
 			return err
+		}
+		if reserve != nil {
+			if err = reserve(tx, m); err != nil {
+				return err
+			}
 		}
 		return platform.Audit(tx, "registration", "member.register", m.Username+" / invitation="+m.InvitationID)
 	})
 	return m, err
 }
 func (s *Store) Members() ([]Member, error) {
-	rows, err := s.SQL.Query("SELECT id,username,profile,registration_schema,invitation_id,created_at FROM members ORDER BY created_at DESC,id")
+	rows, err := s.SQL.Query("SELECT id,username,profile,registration_schema,invitation_id,created_at,ssh_public_key,status FROM members ORDER BY created_at DESC,id")
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +308,7 @@ func (s *Store) Members() ([]Member, error) {
 	for rows.Next() {
 		var m Member
 		var profile, schema string
-		if err = rows.Scan(&m.ID, &m.Username, &profile, &schema, &m.InvitationID, &m.CreatedAt); err != nil {
+		if err = rows.Scan(&m.ID, &m.Username, &profile, &schema, &m.InvitationID, &m.CreatedAt, &m.SSHKey, &m.Status); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(profile), &m.Profile); err != nil {

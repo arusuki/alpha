@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/auth.css">
   <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
-  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/members.js" defer></script><script src="/cluster.js" defer></script>
+  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/members.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script>
   <link rel="stylesheet" href="/cluster.css">
 </head>
 <body>
@@ -65,6 +65,7 @@
       <button class="active" data-page="dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-dashboard"/></svg>总面板</button>
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
       <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
+      <button data-page="bastion" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>跳板机管理</button>
       <button data-page="members" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
@@ -94,6 +95,18 @@
       <section class="management-panel"><div class="section-heading"><div><h2>使用者与容器</h2><p>汇总在线节点的管理记录与最近扫描发现的容器，同一节点按容器 ID 去重。扫描状态为当时的观察值。</p></div><button id="allocationsRefresh">刷新统计</button></div>
       <label>查找使用者或容器<input id="allocationSearch" type="search" placeholder="使用者、节点、容器名或 ID"></label>
       <p id="allocationStatus" role="status"></p><div id="allocationRows" class="allocation-rows"></div></section>
+    </section>
+    <section id="page-bastion" class="platform-page" hidden>
+      <div class="section-heading"><p>注册时各分配一个分享节点和跳板账号。停用只停止新分配，已有分享保留。</p><button id="bastionRefresh">刷新资源</button></div>
+      <p id="bastionError" class="error-text" role="alert"></p><p id="bastionStatus" role="status"></p>
+      <section class="management-panel"><div class="section-heading"><div><h2>Tailscale 分享节点</h2><p>保存个人 API Key，选择允许分享的节点。邀请链接由使用者在自己的 Tailscale 账号中接受。</p></div><button id="bastionDevicesRefresh">查询节点</button></div>
+        <form id="bastionSettingsForm"><fieldset id="bastionSettingsFields"><div class="form-grid three"><label>Tailnet<input id="bastionTailnet" value="-" required maxlength="253"></label><label>API Key<input id="bastionToken" type="password" autocomplete="off" placeholder="留空保留已保存凭据"></label><div class="actions"><button class="primary">保存凭据</button><button id="bastionTest" type="button">测试连接</button></div></div><p id="bastionTokenStatus" class="form-note"></p></fieldset></form>
+        <div id="bastionDevices" class="bastion-list"></div><h3>已配置的分享池</h3><div id="bastionTailscalePool" class="bastion-list"></div>
+      </section>
+      <section class="management-panel"><h2>本机跳板账号</h2><p>选择总控主机上已有的非 root 用户。服务需要写入其 ~/.ssh/authorized_keys 的权限。</p>
+        <form id="bastionAccountForm"><fieldset><div class="form-grid three"><label>本机用户名<input id="bastionUsername" required autocomplete="off"></label><label>SSH 访问地址<input id="bastionHost" required placeholder="jump.example.com 或 Tailscale IP"></label><label>SSH 端口<input id="bastionPort" type="number" value="22" min="1" max="65535" required></label></div><button class="primary">添加跳板账号</button></fieldset></form><div id="bastionAccounts" class="bastion-list"></div>
+      </section>
+      <section class="management-panel"><h2>使用者资源</h2><p>查看邀请、跳板授权和各 node 容器。回收失败时保留记录，可修复后再次删除。</p><div id="bastionAssignments" class="bastion-list"></div></section>
     </section>
     <section id="page-dashboard" class="platform-page">
       <div class="welcome-panel"><div class="welcome-copy"><span class="welcome-label"><span class="status-dot"></span> PROJECT ALPHA WORKSPACE</span><h2>你好，<span id="welcomeUser">管理员</span>。<br>让主机管理，更有条理。</h2><p>看清空间去向，追踪运行进程，<br>把复杂的分析交给 Agent。</p><button class="primary" data-page="overview">进入存储工作台 <span aria-hidden="true">↗</span></button></div><div class="workspace-art" aria-hidden="true"><span>FIG. 03 / YOUR WORKSPACE</span><svg viewBox="0 0 620 500" class="signature"><circle cx="310" cy="250" r="195"/><path d="M70 250h480M310 20v460"/><use href="#alphaSignature"/></svg><span>SIMPLICITY, BY DESIGN.</span></div></div>
@@ -190,7 +203,7 @@
 <div class="form-grid three"><label>明细深度<input id="cfgDepth" type="number" min="0" max="32" required></label><label>明细节点预算<input id="cfgNodes" type="number" min="100" max="100000" required></label><label>Docker 操作超时（秒）<input id="cfgTimeout" type="number" min="5" max="3600" required></label><label>容器所属用户标签<input id="cfgOwnerLabel" maxlength="128" required></label><label>定时扫描间隔（分钟）<input id="cfgInterval" type="number" min="0" max="10080" required><small>0 为关闭，启用时至少 5 分钟</small></label></div>
 <p class="form-note">限制明细深度不会减少统计总量。平台数据目录自动排除。首次启用定时扫描会启动一次扫描，此后在上次任务结束后按间隔执行。</p><div class="form-actions"><button id="saveSettings" class="primary" type="submit">保存扫描配置</button><span id="settingsStatus" role="status"></span></div></form></section>
 <section id="page-members" class="platform-page settings-stack" hidden>
-  <section class="management-panel"><div class="section-heading"><div><h2>机器使用者</h2><p>登记机器的使用者信息，供后续分配容器。注册仅登记使用者，不创建容器或平台登录账号。</p></div><button id="membersRefresh">刷新列表</button></div>
+  <section class="management-panel"><div class="section-heading"><div><h2>机器使用者</h2><p>登记使用者并自动分配跳板访问和各节点容器；失败项可通过本人资源 API 补申请。</p></div><button id="membersRefresh">刷新列表</button></div>
     <p id="membersError" class="error-text" role="alert"></p><p id="membersStatus" class="form-note" role="status"></p>
     <div class="table-scroll"><table><thead><tr><th>使用者标识</th><th>登记信息</th><th>注册时间</th></tr></thead><tbody id="membersBody"></tbody></table></div>
   </section>
@@ -334,5 +347,6 @@
 <datalist id="clusterMemberOptions"></datalist>
 <dialog id="nodeDialog" aria-labelledby="nodeDialogTitle"><form id="nodeForm"><h2 id="nodeDialogTitle">添加节点</h2><p>填写节点 API 地址和启动时配置的令牌。</p><label>节点名称<input id="nodeName" required maxlength="80" placeholder="例如 GPU 服务器 01"></label><label>API 地址<input id="nodeURL" type="url" required placeholder="http://10.0.0.11:8765"></label><label>节点令牌<input id="nodeToken" type="password" minlength="32" maxlength="256" autocomplete="new-password"></label><p id="nodeTokenHint" class="form-note"></p><p id="nodeFormError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="nodeCancel">取消</button><button type="submit" id="nodeSave" class="primary">验证并保存</button></div></form></dialog>
 <dialog id="nodeRemoveDialog"><form id="nodeRemoveForm"><h2>移除节点连接</h2><p id="nodeRemoveDescription"></p><p>节点上的数据库、容器和任务会保留。该节点将从集群统计中移除。</p><p id="nodeRemoveError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="nodeRemoveCancel">取消</button><button type="submit" id="nodeRemoveConfirm">移除连接</button></div></form></dialog>
+<dialog id="bastionMemberDialog" class="bastion-dialog"><div class="section-heading"><h2 id="bastionMemberTitle">使用者资源</h2><button id="bastionMemberClose" type="button">关闭</button></div><div id="bastionMemberContent"></div><p id="bastionMemberError" class="error-text" role="alert"></p><div class="actions"><button id="bastionMemberRefresh">刷新</button><button id="bastionShareRefresh">更新分享状态</button><button id="bastionMemberRetry">重试失败分配</button></div><form id="bastionResolveForm" hidden><label>关联待核对的 Tailscale 邀请 ID<input id="bastionResolveID" required></label><button>确认关联邀请</button><p class="form-note">仅填写本次分配创建的单次邀请 ID。可在 Tailscale 控制台或节点邀请列表中核对。</p><button id="bastionListInvites" type="button">查看节点邀请列表</button><button id="bastionConfirmAbsent" type="button">确认未生成邀请或已在 Tailscale 撤销</button><div id="bastionInviteCandidates"></div></form><form id="bastionDeleteForm"><label>输入使用者标识，回收其全部资源<input id="bastionDeleteConfirm" required autocomplete="off"></label><button class="danger">删除使用者及分配资源</button><p class="form-note">撤销 Tailscale 分享、移除跳板公钥，停止并删除各节点容器及其专属 workspace/home 数据。共享 /data 保留。</p></form></dialog>
 </body>
 </html>

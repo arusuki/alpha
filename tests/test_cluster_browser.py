@@ -158,8 +158,9 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             code = page.locator('#memberInvitationCode').input_value()
             page.locator('#memberInvitationClose').click()
             response = public.post(url + '/api/members/register', data=dict(username='alice', invitation_code=code,
-                                  schema_revision=1, profile={}))
+                                  ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f', schema_revision=1, profile={}))
             assert response.status == 201, response.text()
+            registered_member_id = response.json()['id']
             page.locator('.platform-nav [data-page="allocations"]').click()
             expect(page.locator('#allocationRows')).to_contain_text('alice')
             expect(page.locator('#allocationRows summary')).to_contain_text('2 个容器 · 2 个节点')
@@ -314,6 +315,17 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             page.reload()
             expect(page.locator('#clusterOnline')).to_have_text('2 / 2')
             page.locator('[data-node-filter="all"]').click()
+            csrf = page.evaluate('platform.csrf')
+            blocked = context.request.delete(url + '/api/cluster/nodes/' + second['id'], headers={'X-CSRF-Token': csrf}, data={})
+            assert blocked.status == 409, blocked.text()
+            deleted = context.request.delete(url + '/api/members/' + registered_member_id, headers={'X-CSRF-Token': csrf}, data={})
+            assert deleted.status == 202, deleted.text()
+            for _ in range(100):
+                remaining = context.request.get(url + '/api/members/' + registered_member_id + '/resources')
+                if remaining.status == 404:
+                    break
+                page.wait_for_timeout(50)
+            assert remaining.status == 404, remaining.text()
             page.locator(f'[data-remove-node="{second["id"]}"]').click()
             page.locator('#nodeRemoveConfirm').click()
             expect(page.locator('#nodeRemoveDialog')).not_to_be_visible()

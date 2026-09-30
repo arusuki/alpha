@@ -16,10 +16,10 @@ function fields(){
   });
 }
 function preview(value){
-  $('memberSchemaPreview').innerHTML='<label>使用者标识 *<input disabled placeholder="例如 alice"></label>'+value.map(f=>`<label>${esc(f.label||'未命名字段')}${f.required?' *':''}${f.type==='select'?`<select disabled><option>请选择</option>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select>`:'<input disabled placeholder="自行填写">'}</label>`).join('');
+  $('memberSchemaPreview').innerHTML='<label>使用者标识 *<input disabled placeholder="例如 alice"></label><label>SSH 公钥 *<input disabled placeholder="ssh-ed25519 …"></label>'+value.map(f=>`<label>${esc(f.label||'未命名字段')}${f.required?' *':''}${f.type==='select'?`<select disabled><option>请选择</option>${(f.options||[]).map(o=>`<option>${esc(o)}</option>`).join('')}</select>`:'<input disabled placeholder="自行填写">'}</label>`).join('');
 }
 function renderFields(value){
-  $('memberSchemaFields').innerHTML=value.map((f,i)=>`<div class="member-schema-field" data-member-field="${i}"><div class="member-field-heading"><strong>字段 ${i+1}</strong><button type="button" data-remove-field="${i}">移除</button></div><div class="form-grid three"><label>字段标识<input data-field-key value="${esc(f.key)}" required maxlength="48" pattern="[a-z][a-z0-9_]*" placeholder="例如 full_name"></label><label>显示名称<input data-field-label value="${esc(f.label)}" required maxlength="80" placeholder="例如 姓名"></label><label>填写方式<select data-field-type><option value="text" ${f.type==='text'?'selected':''}>文本填写</option><option value="select" ${f.type==='select'?'selected':''}>单选</option></select></label></div><label class="checkbox-label"><input data-field-required type="checkbox" ${f.required?'checked':''}>必填</label><label class="member-field-options" ${f.type==='select'?'':'hidden'}>可选项（每行一项）<textarea data-field-options rows="3" ${f.type==='select'?'required':'disabled'}>${esc((f.options||[]).join('\n'))}</textarea></label></div>`).join('')||'<p class="form-note">尚未设置附加字段。注册时只需使用者标识和邀请码。</p>';
+  $('memberSchemaFields').innerHTML=value.map((f,i)=>`<div class="member-schema-field" data-member-field="${i}"><div class="member-field-heading"><strong>字段 ${i+1}</strong><button type="button" data-remove-field="${i}">移除</button></div><div class="form-grid three"><label>字段标识<input data-field-key value="${esc(f.key)}" required maxlength="48" pattern="[a-z][a-z0-9_]*" placeholder="例如 full_name"></label><label>显示名称<input data-field-label value="${esc(f.label)}" required maxlength="80" placeholder="例如 姓名"></label><label>填写方式<select data-field-type><option value="text" ${f.type==='text'?'selected':''}>文本填写</option><option value="select" ${f.type==='select'?'selected':''}>单选</option></select></label></div><label class="checkbox-label"><input data-field-required type="checkbox" ${f.required?'checked':''}>必填</label><label class="member-field-options" ${f.type==='select'?'':'hidden'}>可选项（每行一项）<textarea data-field-options rows="3" ${f.type==='select'?'required':'disabled'}>${esc((f.options||[]).join('\n'))}</textarea></label></div>`).join('')||'<p class="form-note">尚未设置附加字段。注册时需使用者标识、邀请码和 SSH 公钥。</p>';
   $('memberAddField').disabled=value.length>=32;
   preview(value);
 }
@@ -29,7 +29,7 @@ function renderSchema(schema){
 }
 function changed(){ $('memberSchemaStatus').textContent='有未保存的修改';preview(fields()); }
 function renderMembers(members){
-  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
+  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.id)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
 
 }
 async function load(epoch,reloadSchema=false){

@@ -29,6 +29,9 @@ func Initialize(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	if err = initializeProvision(tx); err != nil {
+		return err
+	}
 	_, err = tx.Exec("INSERT INTO service_identity VALUES(1,'control',?)", platform.RandomHex(16))
 	return err
 }
