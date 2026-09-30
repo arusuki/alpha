@@ -45,14 +45,14 @@ function render(){
 function renderNodes(){
   const data=state.data;if(!data)return;
   const query=$('clusterSearch').value.trim().toLowerCase();
-  const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
+  const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.internal_ip,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter===state.filter)));
   const html=nodes.map(n=>{
     if(n.kind==='registry')return renderRegistryNode(n,data.nodes.indexOf(n)+1);
     const inventory=n.inventory;
     const owners=n.online?new Set(inventory.containers.map(c=>c.owner).filter(Boolean)).size:0;
     const scanned=inventory?.observed_at?new Date(inventory.observed_at).toLocaleString('zh-CN'):'';
-    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
+    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${n.online?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${n.online?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>暂时无法连接此节点</strong><p>${esc(n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
   }).join('')||(!data.nodes.length?`<div class="cluster-empty"><span class="empty-node-symbol" aria-hidden="true">＋</span><h3>${admin()?'连接你的第一个节点':'等待节点接入'}</h3><p>${admin()?'添加主机后，在这里统一查看状态并进入管理。':'管理员添加节点后，这里会显示你的主机。'}</p>${admin()?'<button class="primary" data-add-node>添加节点 ↗</button>':''}</div>`:'<div class="cluster-empty"><h3>没有匹配的节点</h3><p>试试其他名称、主机地址或连接状态。</p><button data-clear-nodes>清除筛选</button></div>');
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
@@ -69,6 +69,7 @@ function renderRegistryNode(n,index){
 }
 function nodeKindControls(){
   const registry=$('nodeKind').value==='registry';
+  $('nodeInternalIPLabel').hidden=registry;$('nodeInternalIP').required=!registry;
   $('nodeURL').placeholder=registry?'https://register.example.com':'http://10.0.0.11:8765';
   $('nodeKindHint').textContent=registry?'公网注册入口：总控主动连接，支持多个入口各自设置令牌。公网地址需使用 HTTPS。':'计算节点：提供容器、存储扫描与进程管理。';
 }
@@ -135,7 +136,7 @@ async function refresh(){
 function edit(id=null){
   if(!admin()||state.busy)return;
   const n=state.data?.nodes.find(n=>n.id===id);state.editing=id;
-  $('nodeForm').reset();$('nodeName').value=n?.name||'';$('nodeURL').value=n?.url||'';
+  $('nodeForm').reset();$('nodeName').value=n?.name||'';$('nodeURL').value=n?.url||'';$('nodeInternalIP').value=n?.internal_ip||'';
   $('nodeKind').value=n?.kind||'worker';$('nodeKind').disabled=!!id;nodeKindControls();
   $('nodeToken').required=!id;$('nodeDialogTitle').textContent=id?'编辑节点':'添加节点';
   $('nodeTokenHint').textContent=id?'未输入新令牌时保留原值；更换地址时会核对节点身份。':'输入此节点的连接令牌；令牌只保存在总控服务端。';
@@ -233,7 +234,7 @@ $('registryShareCopy').addEventListener('click',async()=>{
 $('nodeForm').addEventListener('submit',async e=>{
   e.preventDefault();if(state.busy||!admin())return;
   const epoch=state.epoch,id=state.editing;busy(true);$('nodeFormError').textContent='';
-  const body=JSON.stringify({kind:$('nodeKind').value,name:$('nodeName').value,url:$('nodeURL').value,token:$('nodeToken').value});$('nodeToken').value='';
+  const body=JSON.stringify({kind:$('nodeKind').value,name:$('nodeName').value,url:$('nodeURL').value,internal_ip:$('nodeKind').value==='worker'?$('nodeInternalIP').value.trim():'',token:$('nodeToken').value});$('nodeToken').value='';
   try{await api('/api/cluster/nodes'+(id?'/'+id:''),{method:id?'PUT':'POST',body});if(epoch!==state.epoch)return;$('nodeDialog').close();if(state.pending)await state.pending;await refresh();}
   catch(error){if(epoch===state.epoch)$('nodeFormError').textContent=error.message;}
   finally{if(epoch===state.epoch)busy(false);}

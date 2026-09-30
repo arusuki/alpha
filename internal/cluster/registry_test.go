@@ -135,6 +135,9 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if err = json.Unmarshal(raw, &initial); err != nil || initial.CSRF == "" {
 		t.Fatalf("session %s %v", raw, err)
 	}
+	if strings.Contains(string(raw), "resource_token") {
+		t.Fatal("resource token was returned before registration")
+	}
 	body := map[string]any{"username": "alice", "ssh_public_key": resourceTestKey, "schema_revision": 1, "profile": map[string]string{}}
 	for _, origin := range []string{"https://evil.test", ""} {
 		b, _ := json.Marshal(body)
@@ -148,8 +151,22 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 			t.Fatal("cross-site registration accepted")
 		}
 	}
-	if status, raw := registryHTTP(t, client, "POST", s.URL+base+"/api/register", s.URL, initial.CSRF, body); status != 200 {
-		t.Fatalf("register %d %s", status, raw)
+	status, registered := registryHTTP(t, client, "POST", s.URL+base+"/api/register", s.URL, initial.CSRF, body)
+	if status != 200 {
+		t.Fatalf("register %d %s", status, registered)
+	}
+	var registrationResult struct {
+		Token string `json:"resource_token"`
+	}
+	if err = json.Unmarshal(registered, &registrationResult); err != nil || len(registrationResult.Token) != 64 {
+		t.Fatalf("registration did not return the member token: %s %v", registered, err)
+	}
+	_, restored := registryHTTP(t, client, "GET", s.URL+base+"/api/session", "", "", nil)
+	var restoredResult struct {
+		Token string `json:"resource_token"`
+	}
+	if err = json.Unmarshal(restored, &restoredResult); err != nil || restoredResult.Token != registrationResult.Token {
+		t.Fatalf("registry refresh lost member token: %s %v", restored, err)
 	}
 	// Emulate a committed registration whose acknowledgment was lost on the gateway.
 	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0"); err != nil {
@@ -229,6 +246,9 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 			close(release)
 		}
 		if view.Access.InviteState == "invited" && view.Access.KeyState == "ready" && len(view.Nodes) == 1 && view.Nodes[0].State == "ready" {
+			if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://10.0.0.1:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
+				t.Fatalf("registration guidance lost configured IPs: %+v", view)
+			}
 			if view.Access.InviteURL != "https://login.tailscale.com/admin/invite/test-share" {
 				t.Fatal(view.Access)
 			}

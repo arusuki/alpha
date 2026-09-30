@@ -6,8 +6,9 @@
 
 1. 保存 Tailscale API Key（`tskey-api-…`）和 Tailnet（`-` 为凭据所属网络），从已授权的自有节点中选择分享节点。总控无需 Tailscale 客户端；按关联人数最少优先分配，停用只影响新分配。
 2. 安装 OpenSSH，以普通系统用户运行 control，在网页添加或接管 `alpha-jump`。安装时使用页面所示服务用户的 sudo 密码，用户和数据目录由服务端确定。
-3. 在每个 worker 的容器管理中配置镜像、数据目录、Docker endpoint、起始端口及 SSH 地址。注册容器使用默认镜像、bridge 网络、全部 GPU 和自动端口。
-4. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。
+3. 创建管理员时填写总控内网 IP，后续可在“设置”修改网页协议与端口；在总控为每台 worker 配置内网 IP。成员教程使用这些地址。
+4. 在每个 worker 的容器管理中配置镜像、数据目录、Docker endpoint、起始端口及 SSH 地址。注册容器使用默认镜像、bridge 网络、全部 GPU 和自动端口。
+5. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。
 
 ## 跳板账号
 
@@ -58,12 +59,14 @@ sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib
 | GET | `/api/members/me/resources` | 本人 `access` 和全部当前 node；包括尚未申请的 node |
 | POST | `/api/members/me/containers` | `{"node_id":"…"}`；探测在线后立即创建，成功返回 200 和已就绪资源，失败返回具体错误；支持新添加的 node |
 | POST | `/api/members/me/retry` | `{}`；重试失败的跳板公钥写入和 node，返回 202 |
-| GET | `/api/status/<使用者id>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
-| POST | `/api/status/<使用者id>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 使用者必须与令牌一致 |
+| GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
+| POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与令牌所属使用者一致 |
 
-`access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及 SSH 主机，不返回服务凭据或 root 密码。
+`control` 返回当前总控内网 IP 和本人 `status_url`，`nodes[].internal_ip` 取自当前节点配置；编辑地址后所有成员引导即时使用新值。
 
-总控 `/status/<id>` 页面凭本人令牌查看节点及容器，并申请尚未分配的在线节点；令牌仅存当前标签页的 `sessionStorage`，退出清除。离线节点保留中央分配记录，运行状态来自最近采集。
+`access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
+
+总控 `/status/<username>` 页面（如 `/status/alice`）凭本人令牌查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：总控 IP 用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。令牌仅存当前标签页的 `sessionStorage`，退出清除。离线节点保留中央分配记录，运行状态来自最近采集。
 
 每个 `(member_id,node_id)` 只有一个分配槽；worker 保存创建计划，断线或重启后核对同一容器继续。重复申请返回现有分配，外部容器或未标记的数据目录冲突时拒绝。状态为 `unallocated/pending/running/ready/failed/deleting/deleted`；失败须显式重试，同一成员正在处理时返回 409，后台最多并发 8 个 worker。
 

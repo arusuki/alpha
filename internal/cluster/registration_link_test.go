@@ -31,7 +31,7 @@ func TestRegistrationLinkRejectsChangedRegistryIdentityAndInvalidEntry(t *testin
 		json.NewEncoder(w).Encode(response.Load())
 	}))
 	defer s.Close()
-	if _, err = f.db.SQL.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?)", id, "Gateway", s.URL, strings.Repeat("s", 64), platform.Now(), "registry"); err != nil {
+	if _, err = f.db.SQL.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?,?)", id, "Gateway", s.URL, strings.Repeat("s", 64), platform.Now(), "registry", ""); err != nil {
 		t.Fatal(err)
 	}
 	path := "/api/cluster/nodes/" + id + "/registration-link"

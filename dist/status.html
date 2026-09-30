@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>我的节点 · Project Alpha</title>
+  <title>我的工作空间 · Project Alpha</title>
   <link rel="stylesheet" href="/status.css">
   <script src="/status.js" defer></script>
 </head>
@@ -21,15 +21,32 @@
     </section>
     <p id="statusError" class="error" role="alert"></p>
     <section id="statusContent" hidden aria-label="我的节点资源">
+      <div class="workspace-intro"><p>保持 Tailscale VPN 已连接，之后通过此总控状态页查看和申请容器。</p><p id="controlStatusAddress" class="muted"></p><a href="#accessGuideTitle">查看 SSH 连接教程 ↓</a></div>
       <div class="summary" aria-label="资源汇总">
         <div><span>全部节点</span><strong id="totalNodes">0</strong></div>
         <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
         <div><span>已分配容器的节点</span><strong id="allocatedNodes">0</strong></div>
       </div>
-      <div class="directory-heading"><div><h2>节点目录</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="forgetToken">退出查看</button></div></div>
+      <div class="directory-heading"><div><h2>我的容器</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="forgetToken">退出查看</button></div></div>
       <p id="statusMessage" class="message" role="status" aria-live="polite"></p>
       <div id="statusNodes" class="nodes"></div>
       <p class="footnote">未分配容器的在线节点可点击「＋」申请。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
+      <section class="guide" aria-labelledby="accessGuideTitle">
+        <p class="eyebrow">GET STARTED / 使用教程</p><h2 id="accessGuideTitle">通过总控管理你的工作空间</h2>
+        <p>保持 Tailscale VPN 已连接，收藏此状态页。之后在总控查看本人容器状态、申请容器和获取 SSH 连接配置。</p>
+        <ol>
+          <li>本页「我的容器」显示各节点的本人容器。尚无容器时，点击在线节点的「＋ 申请」。</li>
+          <li>将 SSH config 示例保存到本机 <code>~/.ssh/config</code>，把 <code>IdentityFile</code> 改为注册公钥对应的私钥路径。</li>
+          <li>运行下方对应的 <code>ssh</code> 命令，经总控的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>。</li>
+        </ol>
+        <p id="sshAccessState" class="muted"></p>
+        <div class="guide-heading"><h3>SSH config 示例</h3><button id="copySSHConfig" type="button">复制配置</button></div>
+        <pre class="ssh-config"><code id="sshConfig"></code></pre>
+        <p id="sshCopyStatus" class="message" role="status" aria-live="polite"></p>
+        <div id="sshCommands" class="ssh-commands"></div>
+        <p id="sshGuideNote" class="muted"></p>
+        <p class="muted">跳板账号用于转发连接，无需单独登录跳板 shell。总控跳板示例使用 SSH 默认端口 22。</p>
+      </section>
     </section>
     <noscript><p class="error">请启用 JavaScript 以查看节点和申请容器。</p></noscript>
   </main>

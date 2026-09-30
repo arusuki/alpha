@@ -24,7 +24,7 @@ func initializeProvision(tx *sql.Tx) error {
 	_, err := tx.Exec(`CREATE TABLE member_node_resources (
  member_id TEXT NOT NULL REFERENCES members(id), node_id TEXT NOT NULL REFERENCES cluster_nodes(id),
  state TEXT NOT NULL, container_id TEXT NOT NULL DEFAULT '',name TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,
- ssh_host TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL,
+ error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL,
  PRIMARY KEY(member_id,node_id));
  CREATE TABLE member_work (member_id TEXT PRIMARY KEY REFERENCES members(id),pending INTEGER NOT NULL);
  `)
@@ -171,11 +171,10 @@ func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key str
 	}
 	node, e := h.node(nodeID)
 	var out struct {
-		ID      string `json:"id"`
-		Name    string `json:"name"`
-		Port    int    `json:"port"`
-		SSHHost string `json:"ssh_host"`
-		OK      bool   `json:"ok"`
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Port int    `json:"port"`
+		OK   bool   `json:"ok"`
 	}
 	if e == nil {
 		callCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
@@ -205,7 +204,7 @@ func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key str
 	}
 	callErr := e
 	if e == nil && !removing {
-		_, e = h.DB.SQL.Exec("UPDATE member_node_resources SET state=?,container_id=?,name=?,port=?,ssh_host=?,error='',updated_at=? WHERE member_id=? AND node_id=?", state, out.ID, out.Name, out.Port, out.SSHHost, platform.Now(), id, nodeID)
+		_, e = h.DB.SQL.Exec("UPDATE member_node_resources SET state=?,container_id=?,name=?,port=?,error='',updated_at=? WHERE member_id=? AND node_id=?", state, out.ID, out.Name, out.Port, platform.Now(), id, nodeID)
 	} else {
 		_, e = h.DB.SQL.Exec("UPDATE member_node_resources SET state=?,error=?,updated_at=? WHERE member_id=? AND node_id=?", state, errorText, platform.Now(), id, nodeID)
 	}
@@ -239,15 +238,19 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),COALESCE(a.ssh_host,''),COALESCE(a.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
+	settings, err := h.DB.ControlSettings()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),n.internal_ip,COALESCE(a.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	v := &memberResourceView{MemberID: id, Status: status, Access: a, Nodes: []memberNodeResource{}}
+	v := &memberResourceView{MemberID: id, Status: status, Access: a, Control: memberControlAccess{InternalIP: settings.InternalIP, StatusURL: settings.StatusURL(a.Username)}, Nodes: []memberNodeResource{}}
 	for rows.Next() {
 		var n memberNodeResource
-		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.SSHHost, &n.Error); err != nil {
+		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error); err != nil {
 			return nil, err
 		}
 		v.Nodes = append(v.Nodes, n)

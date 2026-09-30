@@ -27,22 +27,29 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	add(t, f, w, s, "Node one")
 	offline, offlineServer := worker(t, strings.Repeat("2", 32), Inventory{}, nil)
 	add(t, f, offline, offlineServer, "Offline node")
-	if _, err := f.db.SQL.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,container_id,name,port,ssh_host,updated_at) VALUES(?,?,'ready',?,'alice-offline',2222,'ssh.test',0)`, alice, offline.ID, strings.Repeat("a", 64)); err != nil {
+	if _, err := f.db.SQL.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,container_id,name,port,updated_at) VALUES(?,?,'ready',?,'alice-offline',2222,0)`, alice, offline.ID, strings.Repeat("a", 64)); err != nil {
 		t.Fatal(err)
 	}
 	offlineServer.Close()
-	for _, path := range []string{"/status/" + alice, "/status/" + alice + "/", "/status.js", "/status.css"} {
+	for _, path := range []string{"/status/alice", "/status/alice/", "/status.js", "/status.css"} {
 		page := selfCall(f, "GET", path, "", nil)
 		requireStatus(t, page, 200)
 		if strings.HasPrefix(path, "/status/") && (!strings.Contains(page.Body.String(), "tokenForm") || strings.Contains(page.Body.String(), "authUsername")) {
 			t.Fatal("status page must have its own member access form")
 		}
 	}
-	path := "/api/status/" + alice
+	path := "/api/status/alice"
 	requireStatus(t, selfCall(f, "GET", path, "", nil), 401)
 	requireStatus(t, f.request(t, "GET", path, nil), 401)
 	requireStatus(t, selfCall(f, "GET", path, bobToken, nil), 403)
 	requireStatus(t, selfCall(f, "POST", path+"/containers", bobToken, map[string]string{"node_id": w.ID}), 403)
+	requireStatus(t, selfCall(f, "GET", "/api/status/bob", token, nil), 403)
+	requireStatus(t, selfCall(f, "GET", "/api/status/bob", bobToken, nil), 200)
+	requireStatus(t, selfCall(f, "GET", "/api/status/missing", token, nil), 403)
+	for _, name := range []string{"Alice", "al", "alice.", strings.Repeat("a", 33), "0123456789abcdef0123456789abcdef"} {
+		requireStatus(t, selfCall(f, "GET", "/api/status/"+name, token, nil), 404)
+		requireStatus(t, selfCall(f, "POST", "/api/status/"+name+"/containers", token, map[string]string{"node_id": w.ID}), 404)
+	}
 	response := selfCall(f, "GET", path, token, nil)
 	requireStatus(t, response, 200)
 	for _, secret := range []string{token, w.Token, "bob-private", "bob-container", "private-scan-detail", bob} {
@@ -51,15 +58,19 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 		}
 	}
 	var view struct {
-		MemberID string             `json:"member_id"`
-		Username string             `json:"username"`
-		Nodes    []memberNodeStatus `json:"nodes"`
+		MemberID string              `json:"member_id"`
+		Username string              `json:"username"`
+		Control  memberControlAccess `json:"control"`
+		Nodes    []memberNodeStatus  `json:"nodes"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
 		t.Fatal(err)
 	}
 	if view.MemberID != alice || view.Username != "alice" || len(view.Nodes) != 2 {
 		t.Fatalf("bad member status: %+v", view)
+	}
+	if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://10.0.0.1:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
+		t.Fatalf("status did not use configured addresses: %+v", view)
 	}
 	n := view.Nodes[0]
 	if !n.Online || n.Host != "compute-one" || n.ContainerCount != 2 || !n.Scanning || len(n.Containers) != 1 || n.Containers[0].Name != "alice-existing" || n.State != "unallocated" {
@@ -70,7 +81,7 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 		t.Fatalf("lost offline allocation: %+v", n)
 	}
 	// Workers expose APIs only.
-	request, err := http.NewRequest("GET", s.URL+"/status/"+alice, nil)
+	request, err := http.NewRequest("GET", s.URL+"/status/alice", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,6 +95,52 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	defer workerResponse.Body.Close()
 	if workerResponse.StatusCode != 404 {
 		t.Fatalf("worker served member HTML: %d", workerResponse.StatusCode)
+	}
+}
+
+func TestStatusUsernameCharactersAndLength(t *testing.T) {
+	f := setup(t)
+	for _, name := range []string{"a_b-c", strings.Repeat("a", 32)} {
+		id, token := registerResource(t, f, name)
+		awaitIdle(t, f, id)
+		requireStatus(t, selfCall(f, "GET", "/status/"+name, "", nil), 200)
+		response := selfCall(f, "GET", "/api/status/"+name, token, nil)
+		requireStatus(t, response, 200)
+		var view struct {
+			MemberID string `json:"member_id"`
+			Username string `json:"username"`
+		}
+		if err := json.Unmarshal(response.Body.Bytes(), &view); err != nil {
+			t.Fatal(err)
+		}
+		if view.MemberID != id || view.Username != name {
+			t.Fatalf("wrong member for username %q: %+v", name, view)
+		}
+	}
+}
+
+func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
+	f := setup(t)
+	id, token := registerResource(t, f, "alice")
+	awaitIdle(t, f, id)
+	w, s := worker(t, strings.Repeat("7", 32), Inventory{}, nil)
+	body := map[string]string{"kind": "worker", "name": "Compute", "url": s.URL, "token": w.Token}
+	for _, ip := range []string{"", "127.0.0.1", "http://10.0.0.11", "10.0.0.11:22"} {
+		body["internal_ip"] = ip
+		requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", body), 400)
+	}
+	body["internal_ip"] = "10.0.0.11"
+	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", body), 201)
+	body["token"] = ""
+	body["internal_ip"] = ""
+	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 400)
+	body["internal_ip"] = "fd00::11"
+	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 200)
+	requireStatus(t, f.request(t, "PUT", "/api/control/settings", platform.ControlSettings{Revision: 1, InternalIP: "100.100.0.2", WebScheme: "https", WebPort: 443}), 200)
+	response := selfCall(f, "GET", "/api/status/alice", token, nil)
+	requireStatus(t, response, 200)
+	if !strings.Contains(response.Body.String(), "https://100.100.0.2/status/alice") || !strings.Contains(response.Body.String(), "fd00::11") || strings.Contains(response.Body.String(), "10.0.0.11") || strings.Contains(response.Body.String(), s.URL) {
+		t.Fatalf("guidance retained an old or management address: %s", response.Body.String())
 	}
 }
 
@@ -106,7 +163,7 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	})
 	w, s := worker(t, strings.Repeat("3", 32), Inventory{}, module)
 	add(t, f, w, s, "New node")
-	path := "/api/status/" + id + "/containers"
+	path := "/api/status/alice/containers"
 	body := map[string]string{"node_id": w.ID}
 	response := selfCall(f, "POST", path, token, body)
 	requireStatus(t, response, 409)

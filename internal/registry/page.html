@@ -33,6 +33,19 @@
     <a id="shareLink" target="_blank" rel="noopener noreferrer">打开 Tailscale 分享链接 ↗</a>
     <button type="button" id="copy">复制链接</button>
   </section>
+  <section id="controlGuide" hidden aria-labelledby="controlGuideTitle">
+    <h2 id="controlGuideTitle">下一步：通过 VPN 进入总控</h2>
+    <ol>
+      <li>打开上方分享链接，用你的 Tailscale 账号接受邀请；安装并登录 Tailscale 客户端，保持 VPN 已连接。</li>
+      <li>复制并妥善保存下方本人资源令牌，在总控状态页输入令牌。</li>
+      <li>收藏总控状态页。之后查看容器、申请计算节点和阅读 SSH 教程，都通过总控进行操作。</li>
+    </ol>
+    <label>本人资源令牌<input id="memberResourceToken" type="password" readonly autocomplete="off" spellcheck="false"></label>
+    <button type="button" id="copyResourceToken">复制资源令牌</button>
+    <p class="hint">总控无需管理员账号。资源令牌丢失后请联系管理员重置；本注册页可在当前浏览器会话中恢复。</p>
+    <a id="controlStatusLink" target="_blank" rel="noopener noreferrer">打开我的总控状态页 ↗</a>
+    <p id="controlAddress" class="hint"></p>
+  </section>
   <button type="button" id="resume" hidden>继续查询注册结果</button>
   <footer>本页可刷新恢复进度，请保留当前浏览器中的注册会话。</footer>
 </main>

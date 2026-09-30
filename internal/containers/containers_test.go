@@ -415,7 +415,7 @@ func TestPlatformAuthenticationAndCSRF(t *testing.T) {
 	if w := request("GET", "/api/containers", "", "", nil); w.Code != 401 {
 		t.Fatalf("unauthenticated: %d", w.Code)
 	}
-	w := request("POST", "/api/setup", `{"username":"administrator","password":"test-password-1234"}`, "", nil)
+	w := request("POST", "/api/setup", `{"username":"administrator","password":"test-password-1234","internal_ip":"10.0.0.1"}`, "", nil)
 	if w.Code != 200 {
 		t.Fatalf("setup: %s", w.Body.String())
 	}

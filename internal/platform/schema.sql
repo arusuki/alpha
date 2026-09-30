@@ -8,6 +8,12 @@ CREATE TABLE sessions (
  csrf TEXT NOT NULL, expires_at REAL NOT NULL
 );
 CREATE INDEX idx_sessions_expiry ON sessions(expires_at);
+CREATE TABLE control_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL,
+ internal_ip TEXT NOT NULL CHECK(length(internal_ip)>0),
+ web_scheme TEXT NOT NULL CHECK(web_scheme IN ('http','https')),
+ web_port INTEGER NOT NULL CHECK(web_port BETWEEN 1 AND 65535)
+);
 CREATE TABLE service_identity (
  id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL CHECK(mode IN ('control','worker','registry')),
  instance_id TEXT NOT NULL

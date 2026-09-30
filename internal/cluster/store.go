@@ -22,7 +22,8 @@ func Initialize(tx *sql.Tx) error {
 	}
 	_, err := tx.Exec(`CREATE TABLE cluster_nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL UNIQUE,
- token TEXT NOT NULL, created_at REAL NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('worker','registry'))
+ token TEXT NOT NULL, created_at REAL NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('worker','registry')),
+ internal_ip TEXT NOT NULL, CHECK((kind='worker' AND length(internal_ip)>0) OR (kind='registry' AND internal_ip=''))
  )`)
 	if err != nil {
 		return err
@@ -35,23 +36,33 @@ func Initialize(tx *sql.Tx) error {
 }
 
 type Node struct {
-	Kind      string  `json:"kind"`
-	ID        string  `json:"id"`
-	Name      string  `json:"name"`
-	URL       string  `json:"url"`
-	Token     string  `json:"-"`
-	CreatedAt float64 `json:"created_at"`
+	Kind       string  `json:"kind"`
+	ID         string  `json:"id"`
+	Name       string  `json:"name"`
+	URL        string  `json:"url"`
+	InternalIP string  `json:"internal_ip"`
+	Token      string  `json:"-"`
+	CreatedAt  float64 `json:"created_at"`
 }
 type nodeInput struct {
-	Kind  string `json:"kind"`
-	Name  string `json:"name"`
-	URL   string `json:"url"`
-	Token string `json:"token"`
+	Kind       string `json:"kind"`
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	Token      string `json:"token"`
+	InternalIP string `json:"internal_ip"`
 }
 
 func (v *nodeInput) validate() error {
 	if v.Kind != "worker" && v.Kind != "registry" {
 		return httpapi.NewError(400, "请选择 worker 或 registry 节点类型")
+	}
+	if v.Kind == "worker" {
+		var err error
+		if v.InternalIP, err = platform.InternalIP(v.InternalIP); err != nil {
+			return err
+		}
+	} else if v.InternalIP != "" {
+		return httpapi.NewError(400, "registry 不配置计算节点内网 IP")
 	}
 	v.Name = strings.TrimSpace(v.Name)
 	if v.Name == "" || utf8.RuneCountInString(v.Name) > 80 || strings.ContainsAny(v.Name, "\x00\r\n") {
@@ -74,7 +85,7 @@ func (v *nodeInput) validate() error {
 	return nil
 }
 func (h *Control) nodes(kind string) ([]Node, error) {
-	rows, err := h.DB.SQL.Query("SELECT id,name,url,token,created_at,kind FROM cluster_nodes WHERE (?='' OR kind=?) ORDER BY created_at,id", kind, kind)
+	rows, err := h.DB.SQL.Query("SELECT id,name,url,token,created_at,kind,internal_ip FROM cluster_nodes WHERE (?='' OR kind=?) ORDER BY created_at,id", kind, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +93,7 @@ func (h *Control) nodes(kind string) ([]Node, error) {
 	out := []Node{}
 	for rows.Next() {
 		var n Node
-		if err = rows.Scan(&n.ID, &n.Name, &n.URL, &n.Token, &n.CreatedAt, &n.Kind); err != nil {
+		if err = rows.Scan(&n.ID, &n.Name, &n.URL, &n.Token, &n.CreatedAt, &n.Kind, &n.InternalIP); err != nil {
 			return nil, err
 		}
 		out = append(out, n)
@@ -91,7 +102,7 @@ func (h *Control) nodes(kind string) ([]Node, error) {
 }
 func (h *Control) node(id string) (Node, error) {
 	var n Node
-	err := h.DB.SQL.QueryRow("SELECT id,name,url,token,created_at,kind FROM cluster_nodes WHERE id=?", id).Scan(&n.ID, &n.Name, &n.URL, &n.Token, &n.CreatedAt, &n.Kind)
+	err := h.DB.SQL.QueryRow("SELECT id,name,url,token,created_at,kind,internal_ip FROM cluster_nodes WHERE id=?", id).Scan(&n.ID, &n.Name, &n.URL, &n.Token, &n.CreatedAt, &n.Kind, &n.InternalIP)
 	if err == sql.ErrNoRows {
 		return n, httpapi.NewError(404, "节点不存在")
 	}

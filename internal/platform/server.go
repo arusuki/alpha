@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path/filepath"
 	"regexp"
@@ -122,7 +123,11 @@ func (s *Server) guard(r *http.Request) error {
 		return httpapi.NewError(400, "无效的 Host")
 	}
 	if !s.AllowedHosts[strings.ToLower(host.Hostname())] {
-		return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+		var internalIP string
+		address, err := netip.ParseAddr(host.Hostname())
+		if err != nil || s.DB.SQL.QueryRow("SELECT internal_ip FROM control_settings WHERE id=1").Scan(&internalIP) != nil || address.Unmap().String() != internalIP {
+			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+		}
 	}
 	if r.Method != "GET" {
 		origin := r.Header.Get("Origin")
@@ -164,7 +169,7 @@ func (s *Server) cookie(w http.ResponseWriter, token string) {
 }
 
 var nodePageRoute = regexp.MustCompile(`^/nodes/[a-f0-9]{32}/$`)
-var statusPageRoute = regexp.MustCompile(`^/status/[a-f0-9]{32}/?$`)
+var statusPageRoute = regexp.MustCompile(`^/status/[a-z][a-z0-9_-]{2,31}/?$`)
 
 var userRoute = regexp.MustCompile(`^/api/users/([a-f0-9]{32})$`)
 
@@ -199,6 +204,26 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 			return failure(err)
 		}
 		if route == "/api/setup" {
+			// Use the address seen by the administrator to seed the web protocol
+			// and port; settings can adjust these for a reverse proxy later.
+			if _, ok := value["web_scheme"]; !ok {
+				scheme := "http"
+				if r.TLS != nil || s.SecureCookie {
+					scheme = "https"
+				}
+				value["web_scheme"], _ = json.Marshal(scheme)
+			}
+			if _, ok := value["web_port"]; !ok {
+				port := 80
+				if httpapi.FieldString(value, "web_scheme") == "https" {
+					port = 443
+				}
+				address, _ := url.Parse("//" + r.Host)
+				if address.Port() != "" {
+					port, _ = strconv.Atoi(address.Port())
+				}
+				value["web_port"], _ = json.Marshal(port)
+			}
 			if _, err = db.CreateUser(value, "setup", true); err != nil {
 				return failure(err)
 			}
@@ -240,6 +265,23 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 	}
 	if (route == "/api/users" || route == "/api/audit") && !admin {
 		return failure(httpapi.NewError(403, "此操作需要管理员权限"))
+	}
+	if route == "/api/control/settings" {
+		if !admin {
+			return failure(httpapi.NewError(403, "此操作需要管理员权限"))
+		}
+		if method == "GET" {
+			value, err := db.ControlSettings()
+			return 200, value, err
+		}
+		if method == "PUT" {
+			var value ControlSettings
+			if err := httpapi.DecodeBody(w, r, &value); err != nil {
+				return failure(err)
+			}
+			value, err := db.UpdateControlSettings(value, user.Username)
+			return 200, value, err
+		}
 	}
 	if method == "POST" && (route == "/api/logout" || route == "/api/password") {
 		value, err := httpapi.RequestBody(w, r)

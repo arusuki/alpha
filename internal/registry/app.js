@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const base = document.body.dataset.base;
-  let csrf = '', schema, stream;
+  let csrf = '', schema, stream, resourceToken = '';
   const message = text => { $('message').textContent = text; };
   async function api(action, body) {
     const response = await fetch(`${base}/api/${action}`, {
@@ -60,6 +60,16 @@
     try { link = new URL(access.invite_url); } catch (_) { /* No link yet. */ }
     $('share').hidden = !(link && link.protocol === 'https:' && link.host === 'login.tailscale.com' && !link.username && !link.password && ['invited','accepted'].includes(access.invite_state));
     if (!$('share').hidden) { $('shareLink').href = link.href; $('shareLink').textContent = link.href; }
+    let statusURL;
+    try { statusURL = new URL(value.control.status_url); } catch (_) { /* Not available. */ }
+    const guideReady = resourceToken && access.key_state === 'ready' && ['invited','accepted'].includes(access.invite_state)
+      && statusURL && ['http:','https:'].includes(statusURL.protocol) && !statusURL.username && !statusURL.password;
+    $('controlGuide').hidden = !guideReady;
+    if (guideReady) {
+      $('memberResourceToken').value = resourceToken;
+      $('controlStatusLink').href = statusURL.href;
+      $('controlAddress').textContent = statusURL.href;
+    }
   }
   function watch() {
     $('registration').hidden = true; $('resume').hidden = true; $('progress').hidden = false;
@@ -72,7 +82,7 @@
   async function register(body) {
     $('submit').disabled = true; $('resume').hidden = true;
     message('正在提交注册…');
-    try { await api('register', body); watch(); }
+    try { const result = await api('register', body); resourceToken = result.resource_token; watch(); }
     catch (error) {
       message(error.message);
       if (error.status >= 400 && error.status < 500) {
@@ -97,10 +107,14 @@
     try { await navigator.clipboard.writeText($('shareLink').href); message('分享链接已复制。'); }
     catch (_) { message('请长按或右键上方分享链接复制。'); }
   };
+  $('copyResourceToken').onclick = async () => {
+    try { await navigator.clipboard.writeText(resourceToken); message('资源令牌已复制，请保存后在总控状态页使用。'); }
+    catch (_) { $('memberResourceToken').type = 'text'; $('memberResourceToken').select(); message('请手动复制所选资源令牌。'); }
+  };
   addEventListener('pagehide', () => stream?.close());
   async function load() {
     try {
-      const value = await api('session'); csrf = value.csrf; schema = value.schema;
+      const value = await api('session'); csrf = value.csrf; schema = value.schema; resourceToken = value.resource_token || '';
       showFields();
       if (value.registered) watch();
       else if (value.submitted) await register({});

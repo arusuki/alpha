@@ -250,7 +250,7 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 	if err := value.validate(); err != nil {
 		return 0, nil, err
 	}
-	n := Node{Kind: value.Kind, ID: id, Name: value.Name, URL: value.URL, Token: value.Token, CreatedAt: platform.Now()}
+	n := Node{Kind: value.Kind, ID: id, Name: value.Name, URL: value.URL, InternalIP: value.InternalIP, Token: value.Token, CreatedAt: platform.Now()}
 	info, err := h.probe(r.Context(), n)
 	if err != nil {
 		return 0, nil, err
@@ -270,10 +270,10 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 			if count >= 128 {
 				return httpapi.NewError(409, "最多可添加 128 个节点")
 			}
-			_, err = tx.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?)", n.ID, n.Name, n.URL, n.Token, n.CreatedAt, n.Kind)
+			_, err = tx.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?,?)", n.ID, n.Name, n.URL, n.Token, n.CreatedAt, n.Kind, n.InternalIP)
 			action = "cluster.node.add"
 		} else {
-			result, e := tx.Exec("UPDATE cluster_nodes SET name=?,url=?,token=? WHERE id=?", n.Name, n.URL, n.Token, id)
+			result, e := tx.Exec("UPDATE cluster_nodes SET name=?,url=?,token=?,internal_ip=? WHERE id=?", n.Name, n.URL, n.Token, n.InternalIP, id)
 			err = e
 			if err == nil {
 				count, e := result.RowsAffected()

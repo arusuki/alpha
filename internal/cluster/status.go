@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ type memberNodeResource struct {
 	ContainerID string `json:"container_id"`
 	Name        string `json:"name"`
 	Port        int    `json:"port"`
-	SSHHost     string `json:"ssh_host"`
+	InternalIP  string `json:"internal_ip"`
 	Error       string `json:"error"`
 }
 
@@ -27,12 +28,17 @@ type memberResourceView struct {
 	MemberID string               `json:"member_id"`
 	Status   string               `json:"status"`
 	Access   bastion.Access       `json:"access"`
+	Control  memberControlAccess  `json:"control"`
 	Nodes    []memberNodeResource `json:"nodes"`
+}
+
+type memberControlAccess struct {
+	InternalIP string `json:"internal_ip"`
+	StatusURL  string `json:"status_url"`
 }
 
 type memberNodeStatus struct {
 	memberNodeResource
-	URL             string      `json:"url"`
 	Online          bool        `json:"online"`
 	ConnectionError string      `json:"connection_error,omitempty"`
 	Host            string      `json:"host"`
@@ -42,23 +48,32 @@ type memberNodeStatus struct {
 	Containers      []Container `json:"containers"`
 }
 
-// statusPublic binds both reads and applications to the bearer token's member.
-// The HTML shell is public; a member ID alone never grants access to resources.
+var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers)?$`)
+
+// statusPublic binds the username in both reads and applications to the bearer token's member.
+// The HTML shell is public; a username alone never grants access to resources.
 func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any, error) {
 	if !strings.HasPrefix(r.URL.Path, "/api/status/") {
 		return 0, nil, nil
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/status/"), "/")
-	read := len(parts) == 1 && r.Method == "GET"
-	create := len(parts) == 2 && parts[1] == "containers" && r.Method == "POST"
-	if !identifier.MatchString(parts[0]) || !read && !create {
+	parts := statusAPIRoute.FindStringSubmatch(r.URL.Path)
+	if parts == nil {
+		return 0, nil, httpapi.NewError(404, "接口不存在")
+	}
+	read := parts[2] == "" && r.Method == "GET"
+	create := parts[2] == "/containers" && r.Method == "POST"
+	if !read && !create {
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
 	id, err := h.memberID(r)
 	if err != nil {
 		return 0, nil, err
 	}
-	if id != parts[0] {
+	var username string
+	if err := h.DB.SQL.QueryRow("SELECT username FROM members WHERE id=?", id).Scan(&username); err != nil {
+		return 0, nil, err
+	}
+	if username != parts[1] {
 		return 0, nil, httpapi.NewError(403, "资源令牌与页面使用者不匹配，请打开本人的状态页")
 	}
 	if create {
@@ -92,7 +107,7 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 				allocation = memberNodeResource{NodeID: node.ID, State: "unallocated"}
 			}
 			allocation.NodeName = node.Name
-			n := memberNodeStatus{memberNodeResource: allocation, URL: node.URL, Containers: []Container{}}
+			n := memberNodeStatus{memberNodeResource: allocation, Containers: []Container{}}
 			defer func() { out[i] = n }()
 			select {
 			case slots <- struct{}{}:
@@ -122,5 +137,5 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 		})
 	}
 	wg.Wait()
-	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "nodes": out, "checked_at": platform.Now()}, nil
+	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "control": resources.Control, "access": resources.Access, "nodes": out, "checked_at": platform.Now()}, nil
 }

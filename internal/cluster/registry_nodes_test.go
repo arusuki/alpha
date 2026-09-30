@@ -57,8 +57,10 @@ func TestRegistryNodeLifecycleCredentialsAndRestart(t *testing.T) {
 	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", body), 502)
 	body["token"] = token
 	body["kind"] = "worker"
+	body["internal_ip"] = "10.0.0.11"
 	requireStatus(t, f.request(t, "POST", "/api/cluster/nodes", body), 502)
 	body["kind"] = "registry"
+	delete(body, "internal_ip")
 	r := f.request(t, "POST", "/api/cluster/nodes", body)
 	requireStatus(t, r, 201)
 	var saved Node

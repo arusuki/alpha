@@ -44,6 +44,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.goto(url)
                 page.locator('#authUsername').fill('operator')
                 page.locator('#authPassword').fill('A-test-password-123')
+                page.locator('#authInternalIP').fill('10.0.0.1')
                 page.locator('#authSubmit').click()
                 page.locator('.platform-nav [data-page="members"]').click()
                 expect(page.locator('#memberSchemaEditor')).to_be_enabled()
@@ -95,6 +96,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert public.post('/api/members/register', data=payload).status == 409
                 page.locator('#membersRefresh').click()
                 expect(page.locator('#membersBody')).to_contain_text('alice')
+                expect(page.locator('#membersBody a', has_text='使用者状态页')).to_have_attribute('href', '/status/alice')
                 assert page.locator('#membersBody img').count() == 0
                 assert '<img' in page.locator('#membersBody').inner_text()
                 assert '1 / 2' in page.locator('#memberInvitationsBody').inner_text()

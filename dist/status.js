@@ -2,9 +2,9 @@
 (()=>{
   const $=id=>document.getElementById(id);
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const memberID=location.pathname.split('/')[2];
-  const endpoint='/api/status/'+encodeURIComponent(memberID);
-  const storageKey='alpha.member-token.'+memberID;
+  const username=decodeURIComponent(location.pathname.split('/')[2]);
+  const endpoint='/api/status/'+encodeURIComponent(username);
+  const storageKey='alpha.member-token.'+username;
   const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null};
   const labels={unallocated:'尚无容器',pending:'等待创建',running:'正在创建',ready:'已分配容器',failed:'创建失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
@@ -17,8 +17,8 @@
     state.epoch++;state.request?.abort();state.request=null;
     clearTimeout(state.timer);state.token='';state.data=null;state.busy=false;state.applying=null;stored('');
     $('resourceToken').value='';$('tokenPanel').hidden=false;$('statusContent').hidden=true;
-    $('statusNodes').replaceChildren();$('memberIdentity').textContent='使用者 ID · '+memberID;
-    $('statusError').textContent=message;$('statusMessage').textContent='';controls();
+    $('statusNodes').replaceChildren();$('sshConfig').textContent='';$('sshCommands').replaceChildren();$('controlStatusAddress').textContent='';$('memberIdentity').textContent='使用者 · '+username;
+    $('statusError').textContent=message;$('statusMessage').textContent='';$('sshCopyStatus').textContent='';controls();
   }
   async function request(path,options={}){
     const controller=new AbortController();state.request=controller;
@@ -35,6 +35,22 @@
     if(node.container_id&&!rows.some(c=>c.id===node.container_id))rows.unshift({id:node.container_id,name:node.name,state:'',managed:true});
     return rows;
   }
+  function renderGuide(data){
+    const control=data.control,access=data.access;
+    $('controlStatusAddress').textContent='我的总控入口 · '+control.status_url;
+    $('sshAccessState').textContent=access.key_state==='ready'?'注册公钥已添加到跳板。':'跳板公钥尚未就绪，请联系管理员。'+(access.error||'');
+    const config=['Host alpha-jump','  HostName '+control.internal_ip,'  User alpha-jump','  Port 22','  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes'];
+    const connections=[];
+    for(const node of data.nodes){
+      if(!node.container_id||!node.port||node.state!=='ready')continue;
+      const alias='alpha-'+username+'-'+node.node_id.slice(0,8);
+      config.push('','Host '+alias,'  HostName '+node.internal_ip,'  User root','  Port '+node.port,'  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes','  ProxyJump alpha-jump');
+      connections.push({node,alias});
+    }
+    $('sshConfig').textContent=config.join('\n')+'\n';
+    $('sshCommands').innerHTML=connections.map(({node,alias})=>`<p>${esc(node.node_name)} · <code>ssh ${esc(alias)}</code>${node.online?'':' <span class="muted">（节点离线，恢复后连接）</span>'}</p>`).join('');
+    $('sshGuideNote').textContent=connections.length?'配置中的内网 IP 由管理员维护，容器端口来自你的分配记录。管理员另外分配的容器如未显示端口，请联系管理员获取连接信息。':'尚无容器时，在上方在线节点申请，成功后这里会自动补齐节点 IP、容器端口和连接命令。已有管理员分配的容器但未显示端口时，请联系管理员获取连接信息。';
+  }
   function render(){
     const data=state.data;
     $('memberIdentity').textContent=data.username+' · '+data.member_id;
@@ -43,6 +59,7 @@
     $('onlineNodes').textContent=data.nodes.filter(n=>n.online).length;
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
     $('checkedAt').textContent='更新于 '+new Date(data.checked_at*1000).toLocaleTimeString();
+    renderGuide(data);
     const focused=document.activeElement?.dataset?.apply;
     $('statusNodes').innerHTML=data.nodes.map((n,index)=>{
       const own=containers(n),hasContainer=own.length>0||n.state==='ready';
@@ -51,12 +68,12 @@
       const allocation=applying?'正在创建':hasContainer?'已分配容器':labels[n.state]||n.state;
       return `<article class="node" data-node="${esc(n.node_id)}">
         <div class="node-top"><span class="node-index">NODE / ${String(index+1).padStart(2,'0')}</span><span class="connection ${n.online?'':'offline'}">${n.online?'在线':'离线 / 不可用'}</span></div>
-        <div><h3>${esc(n.node_name)}</h3><p class="address">${esc(n.url)}</p></div>
+        <div><h3>${esc(n.node_name)}</h3><p class="address">内网 IP · ${esc(n.internal_ip)}</p></div>
         <dl class="details"><div><dt>主机</dt><dd>${esc(n.host||'未知')}</dd></div><div><dt>节点容器总数</dt><dd>${n.online?esc(n.container_count):'未知'}</dd></div><div><dt>扫描任务</dt><dd>${n.online?(n.scanning?'进行中':'空闲'):'未知'}</dd></div><div><dt>最近采集</dt><dd>${esc(n.observed_at||'尚无采集记录')}</dd></div></dl>
         ${n.connection_error?`<p class="node-note">${esc(n.connection_error)}</p>`:''}
         <div class="allocation"><div class="allocation-heading"><strong>${esc(allocation)}</strong>${canApply?`<button class="apply" data-apply="${esc(n.node_id)}" data-available="${n.online}" aria-label="${esc((n.state==='failed'?'重试':'申请')+' '+n.node_name+' 的容器')}" ${state.busy||!n.online?'disabled':''}><span aria-hidden="true">＋</span>${applying?'创建中…':n.state==='failed'?'重试':'申请'}</button>`:''}</div>
           ${own.length?`<ul class="container-list">${own.map(c=>`<li><code>${esc(c.name||c.id)}</code><small>${esc(c.state||'已登记 · 运行状态待采集')}</small></li>`).join('')}</ul>`:''}
-          ${n.port?`<p class="node-note">SSH · root @ ${esc(n.ssh_host||n.host||'待配置地址')}:${esc(n.port)}</p>`:''}
+          ${n.port?`<p class="node-note">SSH · root @ ${esc(n.internal_ip)} · 端口 ${esc(n.port)}</p>`:''}
           ${!hasContainer&&!n.online?'<p class="node-note">节点恢复在线后可申请。</p>':''}
           ${['pending','running'].includes(n.state)?'<p class="node-note">申请处理中，状态会自动更新。</p>':''}
           ${n.error?`<p class="error">${esc(n.error)}</p>`:''}
@@ -103,11 +120,16 @@
   }
   $('tokenForm').addEventListener('submit',event=>{event.preventDefault();if(state.busy)return;state.token=$('resourceToken').value.trim();refresh();});
   $('refreshStatus').addEventListener('click',()=>refresh());
+  $('copySSHConfig').addEventListener('click',async()=>{
+    const epoch=state.epoch;
+    try{await navigator.clipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请保存到 ~/.ssh/config 并修改私钥路径。';}
+    catch{if(epoch===state.epoch)$('sshCopyStatus').textContent='请手动复制上方 SSH 配置。';}
+  });
   $('forgetToken').addEventListener('click',()=>{clearSession();$('resourceToken').focus();});
   $('statusNodes').addEventListener('click',event=>{const button=event.target.closest('[data-apply]');if(button&&!button.disabled)apply(button.dataset.apply);});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(state.timer);else refresh();});
   window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);state.request?.abort();});
   window.addEventListener('pageshow',event=>{if(event.persisted){state.busy=false;state.applying=null;refresh();}});
-  $('memberIdentity').textContent='使用者 ID · '+memberID;
+  $('memberIdentity').textContent='使用者 · '+username;
   state.token=stored();if(state.token)refresh();
 })();

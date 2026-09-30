@@ -58,7 +58,11 @@ func (c *Client) Login(setup bool, name, password string) {
 	if setup {
 		route = "/api/setup"
 	}
-	status, out, w := c.Request("POST", route, map[string]any{"username": name, "password": password}, nil)
+	value := map[string]any{"username": name, "password": password}
+	if setup {
+		value["internal_ip"] = "10.0.0.1"
+	}
+	status, out, w := c.Request("POST", route, value, nil)
 	if status != 200 {
 		c.T.Fatalf("login: %d %v", status, out)
 	}

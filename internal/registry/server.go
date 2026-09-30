@@ -217,7 +217,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", typ)
 		w.Write(body)
 	case "/api/session":
-		httpapi.WriteJSON(w, 200, map[string]any{"schema": json.RawMessage(v.Schema), "csrf": v.CSRF, "submitted": v.Registration != "", "registered": v.Registered})
+		value := map[string]any{"schema": json.RawMessage(v.Schema), "csrf": v.CSRF, "submitted": v.Registration != "", "registered": v.Registered}
+		if v.Registered {
+			value["resource_token"] = v.Token
+		}
+		httpapi.WriteJSON(w, 200, value)
 	case "/api/register":
 		if !s.allow(r) {
 			writeError(w, httpapi.NewError(429, "请求过多，请在 5 分钟后重试"))
@@ -227,7 +231,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		httpapi.WriteJSON(w, 200, map[string]bool{"ok": true})
+		httpapi.WriteJSON(w, 200, map[string]any{"ok": true, "resource_token": v.Token})
 	case "/api/retry":
 		if !v.Registered || !s.allow(r) {
 			writeError(w, httpapi.NewError(409, "请等待当前注册完成后再重试资源分配"))

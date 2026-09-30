@@ -148,7 +148,7 @@ def inside():
 
     try:
         control = start_control()
-        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123'})['csrf']
+        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123', 'internal_ip': '10.0.0.1'})['csrf']
         resources = api('/api/bastion/resources')
         assert not resources['jump_installation']['web']['available']
         assert 'NoNewPrivileges' in api('/api/bastion/install', {'action': 'init', 'sudo_password': password}, expected=409)['error']
@@ -287,7 +287,7 @@ def inside():
         directory = '/var/lib/alpha-other-control'
         new_client('18766')
         second_control = start_control(no_new_privileges=False, port='18766')
-        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123'})['csrf']
+        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123', 'internal_ip': '10.0.0.1'})['csrf']
         invitation = invitation_for_pool()
         reused = register_pool('reused', key_a, invitation)
         missing = register_pool('missing', key_c, invitation)
@@ -328,7 +328,7 @@ def inside():
         os.chown(directory, pwd.getpwnam(service).pw_uid, pwd.getpwnam(service).pw_gid)
         new_client('18767')
         third_control = start_control(no_new_privileges=False, port='18767')
-        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123'})['csrf']
+        csrf = api('/api/setup', {'username': 'operator', 'password': 'Integration-test-password-123', 'internal_ip': '10.0.0.1'})['csrf']
         newest = register_pool('newest', key_d, invitation_for_pool())
         wait_for(lambda: api('/api/members/' + newest + '/resources')['access']['error'])
         api('/api/bastion/install', {'action': 'adopt', 'sudo_password': password})

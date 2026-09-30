@@ -116,7 +116,7 @@ func TestAuthenticationAndGuards(t *testing.T) {
 	p.Expect(403, "POST", "/api/setup", nil, map[string]string{"Origin": "https://attacker.invalid"})
 	p.Expect(403, "GET", "/api/session", nil, map[string]string{"Host": "attacker.invalid"})
 	p.Login(true, "administrator", "A-test-password-123")
-	p.Expect(409, "POST", "/api/setup", object{"username": "administrator", "password": "A-test-password-123"}, nil)
+	p.Expect(409, "POST", "/api/setup", object{"username": "administrator", "password": "A-test-password-123", "internal_ip": "10.0.0.1"}, nil)
 	p.Expect(403, "POST", "/api/jobs", nil, map[string]string{"X-CSRF-Token": "wrong"})
 	p.Expect(200, "POST", "/api/logout", nil, nil)
 	p.Expect(401, "GET", "/api/state", nil, nil)
@@ -323,7 +323,7 @@ func TestConcurrentSetupAndStrictConfig(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			raw := map[string]json.RawMessage{}
-			json.Unmarshal([]byte(httpapi.JSONText(object{"username": fmt.Sprintf("admin%d", i), "password": "A-test-password-123"})), &raw)
+			json.Unmarshal([]byte(httpapi.JSONText(object{"username": fmt.Sprintf("admin%d", i), "password": "A-test-password-123", "internal_ip": "10.0.0.1"})), &raw)
 			_, err := p.db.CreateUser(raw, "setup", true)
 			results <- err
 		}(i)

@@ -10,8 +10,9 @@ from playwright.sync_api import sync_playwright, expect
 
 repo = Path(__file__).resolve().parents[1]
 member = 'a' * 32
+username = 'alice'
 token = 'b' * 64
-endpoint = '/api/status/' + member
+endpoint = '/api/status/' + username
 nodes = []
 for index, (name, online, state) in enumerate([
     ('已有账号', True, 'ready'), ('可申请节点', True, 'unallocated'),
@@ -19,10 +20,10 @@ for index, (name, online, state) in enumerate([
     ('管理员分配', True, 'unallocated'), ('等待分配', True, 'pending'),
 ]):
     nodes.append(dict(node_id=str(index + 1) * 32, node_name=name, online=online, state=state,
-                      url='http://node.test:8765', host='compute-one', container_count=5,
+                      internal_ip='10.0.0.' + str(11 + index), host='compute-one', container_count=5,
                       observed_at='', scanning=False, containers=[], container_id='', name='',
-                      port=0, ssh_host='', error='默认镜像不可用' if state == 'failed' else ''))
-nodes[0].update(container_id='c' * 64, name='alpha-existing', port=2222, ssh_host='ssh.test')
+                      port=0, error='默认镜像不可用' if state == 'failed' else ''))
+nodes[0].update(container_id='c' * 64, name='alpha-existing', port=2222)
 nodes[4]['containers'] = [dict(id='d' * 64, name='manual-alice', state='running', managed=True)]
 writes = []
 fail = True
@@ -58,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/status/'):
             if self.authorized():
-                self.send(200, dict(member_id=member, username='alice', nodes=copy.deepcopy(nodes), checked_at=1800000000))
+                self.send(200, dict(member_id=member, username='alice', control=dict(internal_ip='100.100.0.1', status_url='http://100.100.0.1:8765/status/alice'), access=dict(key_state='ready', invite_state='invited'), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.removeprefix('/')
         if filename not in ('status.html', 'status.js', 'status.css'):
@@ -79,7 +80,7 @@ class Handler(BaseHTTPRequestHandler):
             node.update(state='failed', error='默认镜像不可用')
             self.send(409, dict(error='默认镜像不可用'))
             return
-        node.update(state='ready', error='', container_id='e' * 64, name='alpha-new', port=2223, ssh_host='ssh.test')
+        node.update(state='ready', error='', container_id='e' * 64, name='alpha-new', port=2223)
         self.send(200, dict(member_id=member, nodes=copy.deepcopy(nodes)))
 
 
@@ -96,7 +97,8 @@ try:
         page = browser.new_page(viewport=dict(width=1440, height=1080))
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
-        page.goto(url + '/status/' + member)
+        page.goto(url + '/status/' + username)
+        expect(page.locator('#memberIdentity')).to_have_text('使用者 · alice')
         expect(page.locator('#tokenPanel')).to_be_visible()
         expect(page.locator('#statusContent')).to_be_hidden()
         page.locator('#resourceToken').fill('invalid')
@@ -105,10 +107,23 @@ try:
         page.locator('#resourceToken').fill(token)
         page.locator('#tokenSubmit').click()
         expect(page.locator('#totalNodes')).to_have_text('6')
+        assert page.evaluate('sessionStorage.getItem("alpha.member-token.alice")') == token
         expect(page.locator('#onlineNodes')).to_have_text('5')
         expect(page.locator('#allocatedNodes')).to_have_text('2')
         expect(page.locator('#statusNodes')).to_contain_text('alpha-existing')
         expect(page.locator('#statusNodes')).to_contain_text('manual-alice')
+        expect(page.locator('#sshConfig')).to_contain_text('HostName 100.100.0.1')
+        expect(page.locator('#sshConfig')).to_contain_text('User alpha-jump')
+        expect(page.locator('#sshConfig')).to_contain_text('HostName 10.0.0.11')
+        expect(page.locator('#sshConfig')).to_contain_text('Port 2222')
+        expect(page.locator('#sshConfig')).to_contain_text('ProxyJump alpha-jump')
+        page.context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=url)
+        page.locator('#copySSHConfig').click()
+        expect(page.locator('#sshCopyStatus')).to_contain_text('SSH 配置已复制')
+        assert page.evaluate('navigator.clipboard.readText()') == page.locator('#sshConfig').inner_text()
+        expect(page.locator('#controlStatusAddress')).to_contain_text('/status/alice')
+        assert 'node.test' not in page.locator('#statusNodes').inner_text()
+        assert page.locator('#sshCommands img').count() == 0
         assert page.locator('#statusNodes img').count() == 0
         assert page.locator('[data-node="' + nodes[4]['node_id'] + '"] [data-apply]').count() == 0
         expect(page.locator('[data-apply="' + nodes[2]['node_id'] + '"]')).to_be_disabled()
@@ -132,6 +147,8 @@ try:
         hold.set()
         expect(page.locator('#statusMessage')).to_contain_text('创建成功 · alpha-new')
         expect(page.locator('#allocatedNodes')).to_have_text('3')
+        expect(page.locator('#sshConfig')).to_contain_text('HostName 10.0.0.12')
+        expect(page.locator('#sshConfig')).to_contain_text('Port 2223')
         assert target.count() == 0
         page.set_viewport_size(dict(width=390, height=844))
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
@@ -147,10 +164,11 @@ try:
         hold.set()
         expect(page.locator('#statusContent')).to_be_hidden()
         assert page.locator('#statusNodes').inner_text() == ''
+        assert page.locator('#sshConfig').inner_text() == ''
         assert page.evaluate('sessionStorage.length') == 0
         page.wait_for_timeout(200)
         expect(page.locator('#statusContent')).to_be_hidden()
-        page.goto(url + '/status/' + 'f' * 32)
+        page.goto(url + '/status/bob')
         page.locator('#resourceToken').fill(token)
         page.locator('#tokenSubmit').click()
         expect(page.locator('#statusError')).to_contain_text('与页面使用者不匹配')

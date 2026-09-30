@@ -209,6 +209,9 @@ func TestWebInstallRequiresAdminSessionAndCSRF(t *testing.T) {
 	users := map[string]login{}
 	for _, role := range []string{"admin", "viewer"} {
 		fields := map[string]json.RawMessage{"username": json.RawMessage(`"` + role + `"`), "password": json.RawMessage(`"test-platform-password"`), "role": json.RawMessage(`"` + role + `"`)}
+		if role == "admin" {
+			fields["internal_ip"] = json.RawMessage(`"10.0.0.1"`)
+		}
 		if _, err := h.DB.CreateUser(fields, "test", role == "admin"); err != nil {
 			t.Fatal(err)
 		}

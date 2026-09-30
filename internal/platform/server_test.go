@@ -31,7 +31,7 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 				path = "/"
 			}
 			if entry.Name() == "status.html" {
-				path = "/status/0123456789abcdef0123456789abcdef"
+				path = "/status/alice"
 			}
 			request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 			response := httptest.NewRecorder()

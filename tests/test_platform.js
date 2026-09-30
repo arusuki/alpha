@@ -165,7 +165,7 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   run('showPage("overview")');await run('syncState()');if(run('platform.resultLoad'))await run('platform.resultLoad.promise');
   run('platform.user.role="viewer";renderHistory()');assert(!element('jobsBody').innerHTML.includes('data-delete-job'));
   run('platform.user.role="viewer";select("container",snapshot.containers[0]);showPage("overview");showPage("scan-settings")');assert.equal(run('platform.page'),'overview');assert(!element('detail').innerHTML.includes('data-edit-owner'));
-  run('platform.nodeID="";showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'账号管理');
+  run('platform.nodeID="";showPage("settings")');assert.equal(run('platform.page'),'settings');assert(element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'设置');
   run('showPage("agent-settings")');assert.equal(run('platform.page'),'settings');
   run('platform.nodeID="e".repeat(32);showPage("overview")');assert(!element('scanActions').hidden);assert.equal(element('pageTitle').textContent,'空间用量');
   run(`

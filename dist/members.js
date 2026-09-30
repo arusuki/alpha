@@ -29,7 +29,7 @@ function renderSchema(schema){
 }
 function changed(){ $('memberSchemaStatus').textContent='有未保存的修改';preview(fields()); }
 function renderMembers(members){
-  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.id)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
+  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td></tr>`).join('')||'<tr><td colspan="3" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
 
 }
 async function load(epoch,reloadSchema=false){
