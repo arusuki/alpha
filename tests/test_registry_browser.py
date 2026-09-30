@@ -70,8 +70,6 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             admin.locator('.platform-nav [data-page="settings"]').click()
             expect(admin.locator('#controlInternalIP')).to_have_value('10.0.0.1')
             admin.locator('#controlInternalIP').fill('100.100.0.1')
-            admin.locator('#controlWebScheme').select_option('https')
-            admin.locator('#controlWebPort').fill('8443')
             admin.locator('#controlSaveSettings').click()
             expect(admin.locator('#controlSettingsStatus')).to_have_text('总控配置已保存')
             admin.locator('.platform-nav [data-page="cluster"]').click()
@@ -193,12 +191,13 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
                 time.sleep(.05)
             # Supply the result an external resource provisioner would persist.
             share_url = 'https://login.tailscale.com/admin/invite/browser-test'
-            sql('control', "UPDATE member_access SET invite_id='browser',invite_url=?,invite_state='invited',key_state='ready',error='' WHERE member_id=?", (share_url, member_id))
+            sql('control', "INSERT INTO bastion_tailscale VALUES('browser-share','Share',1,'100.64.0.2',22,9765,'http://10.0.0.1:8765')")
+            sql('control', "UPDATE member_access SET tailscale_id='browser-share',invite_id='browser',invite_url=?,invite_state='invited',key_state='ready',error='' WHERE member_id=?", (share_url, member_id))
             expect(page.locator('#share')).to_be_visible()
             expect(page.locator('#shareLink')).to_have_attribute('href', share_url)
             expect(page.locator('#percent')).to_have_text('100%')
             expect(page.locator('#controlGuide')).to_be_visible()
-            expect(page.locator('#controlStatusLink')).to_have_attribute('href', 'https://100.100.0.1:8443/status/alice')
+            expect(page.locator('#controlStatusLink')).to_have_attribute('href', 'http://100.64.0.2:9765/status/alice')
             resource_token = sql('registry', 'SELECT resource_token FROM registry_sessions')[0][0]
             expect(page.locator('#memberResourceToken')).to_have_value(resource_token)
             context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=registry_url)

@@ -1,52 +1,59 @@
 # 跳板机与使用者资源
 
-总控「跳板机管理」维护 Tailscale 分享节点池和固定 `alpha-jump` 账号。注册时发布成员公钥并分配容器，删除成员时撤销授权并清空容器归属。数据库格式及旧数据处理见 [运行与配置](operations.md#配置与数据)。
+总控维护 Tailscale 分享节点池。成员通过分配到的 share node 访问计算节点，并通过该节点的 HTTP 代理访问总控 status 页面。公钥保存在 share node，不要求总控本机安装跳板账号。
 
 ## 配置
 
-1. 保存 Tailscale API Key（`tskey-api-…`）和 Tailnet（`-` 为凭据所属网络），从已授权的自有节点中选择分享节点。总控无需 Tailscale 客户端；按关联人数最少优先分配，停用只影响新分配。
-2. 安装 OpenSSH，以普通系统用户运行 control，在网页添加或接管 `alpha-jump`。安装时使用页面所示服务用户的 sudo 密码，用户和数据目录由服务端确定。
-3. 创建管理员时填写总控内网 IP，后续可在“设置”修改网页协议与端口；在总控为每台 worker 配置内网 IP。成员教程使用这些地址。
-4. 在每个 worker 的容器管理中配置镜像、数据目录、Docker endpoint、起始端口及 SSH 地址。注册容器使用默认镜像、bridge 网络、全部 GPU 和自动端口。
-5. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。
+1. 总控以普通服务用户运行；让 Web 服务监听 share node 可达的内网地址，例如 `--host 10.0.0.1 --port 8765`。总控仅监听 `127.0.0.1` 时，其他主机上的代理无法连接。
+2. 在 share node 安装 OpenSSH 和 systemd，复制总控服务用户的 SSH **公钥**，执行下面的初始化命令。总控私钥保留在总控服务用户的 SSH 配置或 ssh-agent 中。
+3. 总控服务用户的 `known_hosts` 需事先信任 share node 的 SSH 主机公钥。网页保存 Tailscale API Key（`tskey-api-…`）和 Tailnet，查询已授权的自有节点，配置 SSH 端口和网页入口端口后加入分享池。加入和重新启用时，通过 `alpha-worker` 校验免密登录、管理协议、监听 IP 和入口端口；失败不保存节点。
+4. 在总控为 worker 配置内网 IP，在 worker 的容器管理中配置默认镜像、数据目录、Docker endpoint 和起始端口。share node 需能访问这些计算节点的容器 SSH 端口。
+5. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。按关联人数最少优先分配分享节点，停用只影响新分配。
 
-## 跳板账号
+## 一次初始化与卸载
 
-服务用户须能通过 sudo 执行当前二进制的 `bastion install-helper`。systemd 的 `User=` 与服务用户一致；网页账号操作要求 `NoNewPrivileges=false`，见 [部署单元](../deploy/project-alpha.service)。日常公钥管理无需 sudo。
-
-每次账号操作使用本次输入的密码，不缓存或持久化。密码经 stdin 管道交给 sudo，不传给安装辅助程序；关闭弹窗或断开请求会取消安装。认证最多等待 30 秒，整次请求最多 45 秒；中断后刷新状态核对。
-
-| 操作 | 行为 |
-| --- | --- |
-| 添加 / 重装 | 创建固定账号，或更新当前接管账号的工具与 SSH 配置，保留公钥 |
-| 接管 | 保留账号 UID/GID、home 及全部公钥，将管理权交给当前 control / 服务用户，并补齐活跃成员缺少的公钥 |
-| 取消接管 | 停止公钥写入，保留账号、工具、数据和已有 SSH 授权；重新接管后可重试待处理项 |
-| 删除账号 | 确认 `alpha-jump`，要求公钥池为空；不强制终止进程，保留工具、数据、home 和 SSH 配置 |
-
-终端命令以 `yuuka` 为服务用户示例：
+在 **share node 本机** 执行：
 
 ```sh
-sudo ./bin/project-alpha bastion init --service-user yuuka --data-dir /var/lib/project-alpha-control
-sudo ./bin/project-alpha bastion adopt --service-user yuuka --data-dir /var/lib/project-alpha-control
-sudo ./bin/project-alpha bastion release --service-user yuuka --data-dir /var/lib/project-alpha-control
-sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib/project-alpha-control --confirm alpha-jump
+sudo ./project-alpha share-node \
+  --control-key-file /tmp/control-service.pub \
+  --listen-host 100.64.0.2 \
+  --control-url http://10.0.0.1:8765 \
+  --status-port 9765
 ```
 
-数据目录上级须存在，已有目录须属于服务用户且不可由其他用户写入；数据库由服务用户初始化。`init` 不会隐式接管已有账号或其他 control 的安装。`adopt` 可接管已离开的服务用户所留下的安装，原目录归档到 `/var/lib/project-alpha-jump.before-adopt-*`。删除后重新添加复用原 UID/GID；身份冲突或格式损坏时拒绝操作。
+这个子命令创建两个独立的系统账号、安装公钥工具、配置 sshd 并启用 `project-alpha-share-node.service`。默认入口端口为 8765，监听地址需为 share node 自己的 Tailscale IP；代理直接连接指定总控 HTTP/HTTPS 地址，不建立 SSH 隧道。
 
-`init` / `adopt` 在 `/etc/ssh/sshd_config` 末尾维护固定账号的规则，经 `sshd -t` 和 `sshd -T -C` 校验后重载；发现已有规则冲突时拒绝，重载失败恢复原配置。首次改动备份为 `.before-alpha-jump`。自行管理 sshd 时可加 `--no-reload`，之后须自行重载。`release` / `delete` 不改 SSH 配置。
+| 账号 | 职责与权限 |
+| --- | --- |
+| `alpha-worker` | 接受总控管理公钥；SSH 仅允许固定 `alpha-worker cmd` 公钥管理协议，禁止任意 shell、SFTP、PTY 和所有转发；HTTP 代理服务也以此账号运行 |
+| `alpha-jump` | 接受成员公钥；只允许 ProxyJump 所需的本地 TCP 转发，禁止命令、shell、SFTP、PTY、反向监听、Agent、X11 和 Unix socket 转发 |
 
-新账号 home 为 `/var/empty/alpha-jump`，shell 为 `/bin/false`。SSH 只允许公钥认证和 ProxyJump 所需的本地 TCP 转发，禁止 shell、SFTP、PTY、Agent、X11 和 Unix socket 转发。使用 `AuthorizedKeysFile none`，home 中已有的 `authorized_keys` 不参与认证。读取器以 `alpha-jump` 运行，独立于 control 主进程。
+只有创建账号、修改 sshd 和安装服务需要本机 sudo。日常总控、代理、SSH 内部管理命令和公钥读取器均不使用 root 账号。总控尊重服务用户已有的 SSH 身份配置，强制公钥认证、严格主机公钥校验，并关闭客户端额外命令、转发和共享 SSH 会话。
 
-安装记录 `/var/lib/project-alpha-jump/installation.json` 和读取器 `/usr/local/libexec/project-alpha-jump` 由 root 持有。`keys/` 由服务用户持有，组为 `alpha-jump`，权限 `2750`；清单 `keys/keys.json` 为 `0640`。发布使用文件锁及原子替换，账号操作与发布串行；读取器拒绝版本或实例不匹配、无效公钥、不安全权限及链接文件。缺失清单不授权。
+`--control-url` 是 share node 能直接访问的总控地址，不能包含账号、路径、查询参数或片段。Go 标准库反向代理保留请求路径、查询、浏览器 Host 和 Origin，转发到固定目标；总控继续校验成员令牌、管理员会话及 CSRF。入口使用 HTTP，数据通过 Tailscale 网络传送。更改总控地址后，在 share node 重复初始化更新代理配置，并在总控重新保存分享节点以更新记录的代理目标。
+
+重复初始化保留账号身份和成员公钥；已有未管理账号、不同管理公钥、旧安装格式或冲突的 SSH 配置会明确拒绝，不自动接管或覆盖。配置经过 `sshd -t` 和两个账号的 `sshd -T -C` 校验，安装失败恢复本次修改的配置；原始 SSH 配置备份保留在 `.before-alpha-share-node`。
+
+非 systemd 部署可使用 `--no-reload --no-service`，自行重载 sshd 并以 `alpha-worker` 运行 `/usr/local/libexec/project-alpha-jump share-node --serve`。默认部署无需这些参数。
+
+卸载也是同一个子命令：
+
+```sh
+sudo ./project-alpha share-node --uninstall
+```
+
+卸载停止并移除代理服务，撤销本工具的 SSH 配置块，删除两个专用账号、组、工具、安装记录及成员公钥数据，保留原始 sshd 备份和其他账号的 SSH 配置。先在总控回收成员并移除池配置；卸载检查账号身份和活动进程，有管理或成员 SSH 连接时拒绝删除，不强制终止。重试卸载可继续处理已删除的账号。非 systemd 部署先停止手动代理，再加 `--no-reload --no-service`。
+
+安装记录 `/var/lib/project-alpha-jump/installation.json`、管理公钥授权文件和 `/usr/local/libexec/project-alpha-jump` 由 root 持有。`keys/` 属于 `alpha-worker`，组为 `alpha-jump`，权限 `2750`；清单 `keys/keys.json` 为 `0640`，成员账号只能读取。公钥发布通过文件锁和原子替换，拒绝无效身份、格式、公钥、权限或链接文件。管理授权独立于成员公钥池，成员撤销不会切断总控管理连接。
 
 ## 公钥池
 
-条目按规范化公钥内容关联成员，ID 独立于成员 ID；多名成员可共用公钥。撤销最后一个引用成员时删除该公钥的全部条目，撤销只影响后续认证。接管保留池中全部公钥，补齐活跃成员缺少的公钥，也可手动「补齐用户公钥」。
+公钥只发布到成员实际分配的 share node。每个节点的条目按规范化公钥关联成员，ID 独立于成员 ID；多名成员可以共用公钥。撤销同一节点上的最后一个引用成员时删除对应公钥的全部条目，不影响其他 share node。撤销只影响后续认证。
 
-`used` 表示当前有成员引用，`free` 表示没有；**free 公钥仍可用于 SSH 认证**。管理员可逐条清理 free 条目，服务器在事务和文件锁内复核引用，已被引用时返回 409。取消接管后可查看，不能写入或清理。
+`used` 表示该节点上有成员引用，`free` 表示没有；**free 公钥仍可用于 SSH 认证**。管理员可以按节点清理 free 条目，服务端在事务中复核引用，已被引用时返回 409。「补齐用户公钥」按分配节点补齐活跃成员的公钥，保留 free 条目；离线节点报告错误，其他节点仍可显示和管理。
 
-容器公钥写入所分配容器的 root `authorized_keys`，容器可使用正常 shell。容器设置中的 `ProxyJump` 仅生成客户端连接命令，例如 `alpha-jump@<地址>:<端口>`。
+容器公钥写入所分配容器的 root `authorized_keys`，容器可使用正常 shell。成员 SSH config 的 `alpha-jump` HostName 和端口来自分配到的 share node，容器目标使用计算节点内网 IP 及分配端口。
 
 ## 注册与补申请
 
@@ -62,11 +69,11 @@ sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib
 | GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
 | POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与令牌所属使用者一致 |
 
-`control` 返回当前总控内网 IP 和本人 `status_url`，`nodes[].internal_ip` 取自当前节点配置；编辑地址后所有成员引导即时使用新值。
+`control` 返回总控内网 IP 和通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
 
 `access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
 
-总控 `/status/<username>` 页面（如 `/status/alice`）凭本人令牌查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：总控 IP 用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。令牌仅存当前标签页的 `sessionStorage`，退出清除。离线节点保留中央分配记录，运行状态来自最近采集。
+总控 `/status/<username>` 页面（如 `/status/alice`）凭本人令牌查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：分配的 share node IP 和 SSH 端口用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。令牌仅存当前标签页的 `sessionStorage`，退出清除。离线节点保留中央分配记录，运行状态来自最近采集。
 
 每个 `(member_id,node_id)` 只有一个分配槽；worker 保存创建计划，断线或重启后核对同一容器继续。重复申请返回现有分配，外部容器或未标记的数据目录冲突时拒绝。状态为 `unallocated/pending/running/ready/failed/deleting/deleted`；失败须显式重试，同一成员正在处理时返回 409，后台最多并发 8 个 worker。
 
@@ -86,15 +93,14 @@ sudo ./bin/project-alpha bastion delete --service-user yuuka --data-dir /var/lib
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/bastion/resources` | 分享池、跳板安装状态及成员公钥状态；`jump_installation.web` 包含服务用户、网页 sudo 可用状态及原因；`account` 包含 `exists/managed/released/removed`，`data_directory` 为当前 control 目录；`key_pool` 包含条目及读取错误 |
-| POST | `/api/bastion/install` | `{action:"init/adopt/release/delete",sudo_password:"本次 sudo 密码"}`；删除额外要求 `confirm:"alpha-jump"`；管理员会话及 CSRF 校验，同步操作，不接受客户端指定用户或目录；并发操作返回 409 |
-| GET | `/api/bastion/keys` | 公钥池条目、指纹、关联用户及 `used/free` 状态 |
-| POST | `/api/bastion/keys/sync` | `{}`；补齐活跃用户缺少的公钥，保留 free 条目 |
-| DELETE | `/api/bastion/keys/<entryId>` | `{}`；仅清理当前无用户引用的 free 条目；有关联时返回 409 |
+| GET | `/api/bastion/resources` | 分享池的 SSH 地址、网页入口和总控代理目标，成员分配及远程 `key_pool`；离线池保留错误 |
+| GET | `/api/bastion/keys` | 远程公钥池条目，含 `node_id/node_name`、指纹、关联成员和 `used/free` 状态 |
+| POST | `/api/bastion/keys/sync` | `{}`；按成员分配节点补齐公钥，保留 free 条目 |
+| DELETE | `/api/bastion/keys/<nodeId>/<entryId>` | `{}`；清理指定 share node 的 free 公钥，已引用时返回 409 |
 | GET / PUT | `/api/tailscale/settings` | `{revision,tailnet,api_token}` 配置；读取不返回 Key |
 | POST | `/api/tailscale/test` | `{}` 测试已保存凭据 |
 | GET | `/api/tailscale/devices` | 读取当前网络设备 |
-| PUT | `/api/bastion/tailscale/<nodeId>` | `{enabled:true/false}` 加入分享池或启停 |
+| PUT | `/api/bastion/tailscale/<nodeId>` | `{enabled:true/false,ssh_host,ssh_port,status_port}`；加入或启用前校验 SSH，端口默认 22 / 8765，IP 必须属于该 Tailscale 节点；有成员引用时禁止改地址 |
 | GET | `/api/bastion/tailscale/<nodeId>/invites` | 核对节点现有邀请 |
 | DELETE | `/api/bastion/tailscale/<nodeId>` | 无使用者引用时移除分享池配置 |
 | POST | `/api/bastion/members/<id>/refresh` | `{}` 同步已知邀请接受状态 |

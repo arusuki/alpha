@@ -33,21 +33,21 @@ func TestControlSetupSettingsAndHostAccess(t *testing.T) {
 	}
 	client.Login(false, "operator", "A-test-password-123")
 	value := client.Expect(200, "GET", "/api/control/settings", nil, nil)
-	if value["internal_ip"] != "100.100.0.1" || value["web_scheme"] != "http" || value["web_port"] != float64(8765) {
+	if value["internal_ip"] != "100.100.0.1" {
 		t.Fatalf("bad setup settings: %+v", value)
 	}
 	client.Expect(200, "GET", "/api/session", nil, map[string]string{"Host": "100.100.0.1:8765"})
 	client.Expect(403, "GET", "/api/session", nil, map[string]string{"Host": "100.100.0.2:8765"})
 	client.Expect(403, "PUT", "/api/control/settings", value, map[string]string{"X-CSRF-Token": "wrong"})
 	for _, invalid := range []object{
-		{"internal_ip": "", "web_scheme": "https", "web_port": 443},
-		{"internal_ip": "10.0.0.1", "web_scheme": "file", "web_port": 443},
-		{"internal_ip": "10.0.0.1", "web_scheme": "https", "web_port": 0},
+		{"internal_ip": ""},
+		{"internal_ip": "127.0.0.1"},
+		{"internal_ip": "control.example"},
 	} {
 		invalid["revision"] = 1
 		client.Expect(400, "PUT", "/api/control/settings", invalid, nil)
 	}
-	update := object{"revision": 1, "internal_ip": "fd7a:115c:a1e0::1", "web_scheme": "https", "web_port": 8443}
+	update := object{"revision": 1, "internal_ip": "fd7a:115c:a1e0::1"}
 	saved := client.Expect(200, "PUT", "/api/control/settings", update, nil)
 	if saved["revision"] != float64(2) {
 		t.Fatal(saved)
@@ -56,8 +56,8 @@ func TestControlSetupSettingsAndHostAccess(t *testing.T) {
 	client.Expect(403, "GET", "/api/session", nil, map[string]string{"Host": "100.100.0.1:8765"})
 	client.Expect(200, "GET", "/api/session", nil, map[string]string{"Host": "[FD7A:115C:A1E0::1]:8443"})
 	settings, err := db.ControlSettings()
-	if err != nil || settings.StatusURL("alice") != "https://[fd7a:115c:a1e0::1]:8443/status/alice" {
-		t.Fatalf("invalid member URL: %+v %v", settings, err)
+	if err != nil || settings.InternalIP != "fd7a:115c:a1e0::1" {
+		t.Fatalf("invalid control address: %+v %v", settings, err)
 	}
 	client.Expect(201, "POST", "/api/users", object{"username": "reader", "password": "A-test-password-123", "role": "viewer"}, nil)
 	client.Login(false, "reader", "A-test-password-123")
@@ -82,23 +82,6 @@ func TestControlSetupRollsBackSettingsWithAccount(t *testing.T) {
 		var count int
 		if err = db.SQL.QueryRow("SELECT count(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 			t.Fatalf("setup left %s records: %d %v", table, count, err)
-		}
-	}
-}
-
-func TestControlStatusURLs(t *testing.T) {
-	for _, tc := range []struct {
-		ip, scheme string
-		port       int
-		want       string
-	}{
-		{"10.0.0.1", "http", 80, "http://10.0.0.1/status/alice"},
-		{"fd00::1", "https", 443, "https://[fd00::1]/status/alice"},
-		{"10.0.0.1", "http", 8765, "http://10.0.0.1:8765/status/alice"},
-	} {
-		settings := ControlSettings{InternalIP: tc.ip, WebScheme: tc.scheme, WebPort: tc.port}
-		if got := settings.StatusURL("alice"); got != tc.want {
-			t.Fatalf("status URL %q, want %q", got, tc.want)
 		}
 	}
 }

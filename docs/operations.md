@@ -2,6 +2,22 @@
 
 首次启动和节点接入见 [快速开始](README_cn.md#快速开始)。这里补充公网注册、数据保存、独立扫描和服务部署的说明。
 
+## 命令行帮助与版本
+
+主帮助列出子命令和常用参数；每个子命令支持 `--help` 或 `-h`，查看完整参数及示例。
+
+```bash
+./bin/project-alpha --help
+./bin/project-alpha serve --help
+./bin/project-alpha share-node --help
+./bin/project-alpha containers import --help
+./bin/project-alpha scan --help
+./bin/project-alpha process --help
+./bin/project-alpha --version
+```
+
+`--version` 输出版本、构建提交、Go 版本及平台。发布包的版本与 tag 一致；普通源码构建显示 `dev`，可用构建时的 `-ldflags -X` 指定，见 [开发说明](development.md#构建版本)。帮助和版本查询不会启动服务、初始化账号或创建数据目录。
+
 ## 公网 registry
 
 公网注册使用 registry，总控主动建立出站连接：
@@ -19,7 +35,7 @@ registry 启动时生成并打印供总控连接的令牌，保存到数据目�
 
 总控、worker 和 registry 各使用独立数据目录，目录绑定运行角色。默认目录为 `data/`，可通过 `--data-dir` 或 `PROJECT_ALPHA_DATA_DIR` 指定。未指定服务模式时启动总控；`--control`、`--worker` 和 `--registry` 互斥。
 
-数据库格式为 v28，快照格式为 v5。1.0 发布前不保证格式兼容，不提供旧格式迁移；格式不匹配时使用新数据目录，程序保留已有数据。
+数据库格式为 v30，快照格式为 v5。1.0 发布前不保证格式兼容，不提供旧格式迁移；格式不匹配时使用新数据目录，程序保留已有数据。
 
 总控保存账号、使用者、节点连接、Agent 配置、会话、报告和清理记录；worker 保存扫描配置、任务、容器和审计。扫描结果位于 `results/`。Agent API Key 加密存入 SQLite，密钥位于总控数据目录的 `agent-api-key.key`。备份时停止服务，复制整个数据目录及密钥文件。
 

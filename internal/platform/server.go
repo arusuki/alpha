@@ -125,8 +125,17 @@ func (s *Server) guard(r *http.Request) error {
 	if !s.AllowedHosts[strings.ToLower(host.Hostname())] {
 		var internalIP string
 		address, err := netip.ParseAddr(host.Hostname())
-		if err != nil || s.DB.SQL.QueryRow("SELECT internal_ip FROM control_settings WHERE id=1").Scan(&internalIP) != nil || address.Unmap().String() != internalIP {
+		if err != nil {
 			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+		}
+		ip := address.Unmap().String()
+		direct := s.DB.SQL.QueryRow("SELECT internal_ip FROM control_settings WHERE id=1").Scan(&internalIP) == nil && ip == internalIP
+		if !direct {
+			var count int
+			port := host.Port()
+			if s.DB.SQL.QueryRow("SELECT count(*) FROM bastion_tailscale WHERE ssh_host=? AND CAST(status_port AS TEXT)=?", ip, port).Scan(&count) != nil || count == 0 {
+				return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+			}
 		}
 	}
 	if r.Method != "GET" {
@@ -204,26 +213,6 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 			return failure(err)
 		}
 		if route == "/api/setup" {
-			// Use the address seen by the administrator to seed the web protocol
-			// and port; settings can adjust these for a reverse proxy later.
-			if _, ok := value["web_scheme"]; !ok {
-				scheme := "http"
-				if r.TLS != nil || s.SecureCookie {
-					scheme = "https"
-				}
-				value["web_scheme"], _ = json.Marshal(scheme)
-			}
-			if _, ok := value["web_port"]; !ok {
-				port := 80
-				if httpapi.FieldString(value, "web_scheme") == "https" {
-					port = 443
-				}
-				address, _ := url.Parse("//" + r.Host)
-				if address.Port() != "" {
-					port, _ = strconv.Atoi(address.Port())
-				}
-				value["web_port"], _ = json.Marshal(port)
-			}
 			if _, err = db.CreateUser(value, "setup", true); err != nil {
 				return failure(err)
 			}

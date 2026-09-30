@@ -53,9 +53,8 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 	h := NewHandler(db)
 	f := &networkFake{}
 	h.Tailscale = f
-	h.KeyEditor = func(string, string) error { return nil }
-	h.installation = func() error { return nil }
-	if _, e = db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('node-a','Node A',1)"); e != nil {
+	h.KeyEditor = func(context.Context, string, string) error { return nil }
+	if _, e = db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('node-a','Node A',1,'100.64.0.2',22,8765,'http://10.0.0.1:8765')"); e != nil {
 		t.Fatal(e)
 	}
 	store := &members.Store{Database: db}
@@ -72,7 +71,7 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 func TestAccessIdempotencyAndCompleteRevocation(t *testing.T) {
 	h, f, m := fixture(t)
 	calls := []string{}
-	h.KeyEditor = func(id, key string) error { calls = append(calls, id+key); return nil }
+	h.KeyEditor = func(_ context.Context, id, key string) error { calls = append(calls, id+key); return nil }
 	for range 2 {
 		if e := h.Apply(context.Background(), m.ID, testKey, false); e != nil {
 			t.Fatal(e)
@@ -130,12 +129,11 @@ func TestUnknownInviteNeverRecreatedOrForgotten(t *testing.T) {
 }
 func TestKeyFailureRetainsShareAndRetriesOnlyKey(t *testing.T) {
 	h, f, m := fixture(t)
-	h.KeyEditor = func(string, string) error { return errors.New("permission denied") }
+	h.KeyEditor = func(context.Context, string, string) error { return errors.New("permission denied") }
 	if e := h.Apply(context.Background(), m.ID, testKey, false); e == nil {
 		t.Fatal("missing failure")
 	}
-	h.KeyEditor = func(string, string) error { return nil }
-	h.installation = func() error { return nil }
+	h.KeyEditor = func(context.Context, string, string) error { return nil }
 	if e := h.Apply(context.Background(), m.ID, testKey, false); e != nil {
 		t.Fatal(e)
 	}

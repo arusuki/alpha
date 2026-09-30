@@ -86,6 +86,8 @@ Tags containing a hyphen, such as `v0.2.0-rc.1`, are marked as prereleases. Fail
 
 Each archive contains `bin/project-alpha`, `bin/rootless-docker`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
 
+Run `project-alpha --version` to check the binary's version and build information. Use `project-alpha --help` for a short command overview, and `<subcommand> --help` (such as `serve --help` or `share-node --help`) for detailed options and examples.
+
 The binaries are compiled natively for each architecture inside an Ubuntu 20.04 container, with CGO enabled for SQLite. They require glibc 2.31 or newer, such as Ubuntu 20.04, and do not directly support Alpine/musl. Release packages do not require Go or GCC to run; Docker and other features still need their runtime dependencies. For older Linux distributions, build from source using the [quick start](#quick-start).
 
 The workflow uses Ubuntu 24.04 runners with the compiler, headers, libraries, and packaged binary checks inside `ubuntu:20.04`. CI checks the container's glibc version and rejects binaries requiring GLIBC symbols newer than 2.31. Release builds do not reuse the host's Go/CGO caches.

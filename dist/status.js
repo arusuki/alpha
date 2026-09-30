@@ -37,19 +37,19 @@
   }
   function renderGuide(data){
     const control=data.control,access=data.access;
-    $('controlStatusAddress').textContent='我的总控入口 · '+control.status_url;
+    $('controlStatusAddress').textContent=control.status_url?'我的总控入口 · '+control.status_url:'尚未分配 share node，请联系管理员。';
     $('sshAccessState').textContent=access.key_state==='ready'?'注册公钥已添加到跳板。':'跳板公钥尚未就绪，请联系管理员。'+(access.error||'');
-    const config=['Host alpha-jump','  HostName '+control.internal_ip,'  User alpha-jump','  Port 22','  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes'];
+    const config=access.share_host?['Host alpha-jump','  HostName '+access.share_host,'  User alpha-jump','  Port '+access.share_ssh_port,'  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes']:[];
     const connections=[];
     for(const node of data.nodes){
-      if(!node.container_id||!node.port||node.state!=='ready')continue;
+      if(!access.share_host||!node.container_id||!node.port||node.state!=='ready')continue;
       const alias='alpha-'+username+'-'+node.node_id.slice(0,8);
       config.push('','Host '+alias,'  HostName '+node.internal_ip,'  User root','  Port '+node.port,'  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes','  ProxyJump alpha-jump');
       connections.push({node,alias});
     }
     $('sshConfig').textContent=config.join('\n')+'\n';
     $('sshCommands').innerHTML=connections.map(({node,alias})=>`<p>${esc(node.node_name)} · <code>ssh ${esc(alias)}</code>${node.online?'':' <span class="muted">（节点离线，恢复后连接）</span>'}</p>`).join('');
-    $('sshGuideNote').textContent=connections.length?'配置中的内网 IP 由管理员维护，容器端口来自你的分配记录。管理员另外分配的容器如未显示端口，请联系管理员获取连接信息。':'尚无容器时，在上方在线节点申请，成功后这里会自动补齐节点 IP、容器端口和连接命令。已有管理员分配的容器但未显示端口时，请联系管理员获取连接信息。';
+    $('sshGuideNote').textContent=connections.length?'跳板地址为分配到的 share node，计算节点内网 IP 由管理员维护，容器端口来自你的分配记录。管理员另外分配的容器如未显示端口，请联系管理员获取连接信息。':'尚无容器时，在上方在线节点申请，成功后这里会自动补齐节点 IP、容器端口和连接命令。已有管理员分配的容器但未显示端口时，请联系管理员获取连接信息。';
   }
   function render(){
     const data=state.data;

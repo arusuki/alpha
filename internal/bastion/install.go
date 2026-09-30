@@ -3,6 +3,7 @@ package bastion
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,211 +17,153 @@ import (
 	"syscall"
 	"time"
 
+	"project-alpha/internal/platform"
 	"project-alpha/internal/sshkeys"
 )
 
 const sshConfigPath = "/etc/ssh/sshd_config"
 const jumpHome = "/var/empty/alpha-jump"
-const configBegin = "# BEGIN project-alpha alpha-jump"
-const configEnd = "# END project-alpha alpha-jump"
+const workerHome = "/var/empty/alpha-worker"
+const workerKeysPath = installationDirectory + "/worker_authorized_keys"
+const configBegin = "# BEGIN project-alpha share-node"
+const configEnd = "# END project-alpha share-node"
 
-// These restrictions are set by the root-owned SSH configuration, independently
-// of the key publisher. The publisher cannot grant shell access or authorize a
-// different system account by changing its output.
-func jumpSSHConfig() string {
-	return configBegin + `
-Match User alpha-jump
-    AuthorizedKeysFile none
-    AuthorizedKeysCommand /usr/local/libexec/project-alpha-jump bastion authorized-keys %u %U
-    AuthorizedKeysCommandUser alpha-jump
-    AuthenticationMethods publickey
+func accountSSHConfig(name string) string {
+	common := `    AuthenticationMethods publickey
     PubkeyAuthentication yes
     PasswordAuthentication no
     KbdInteractiveAuthentication no
-    AllowTcpForwarding local
     AllowStreamLocalForwarding no
     AllowAgentForwarding no
     X11Forwarding no
     PermitTTY no
-    PermitTunnel no
     PermitUserRC no
+    PermitTunnel no
+`
+	if name == JumpUser {
+		return "Match User alpha-jump\n" + common + `    AuthorizedKeysFile none
+    AuthorizedKeysCommand /usr/local/libexec/project-alpha-jump bastion authorized-keys %u %U
+    AuthorizedKeysCommandUser alpha-jump
+    AllowTcpForwarding local
+    GatewayPorts no
+    PermitListen none
     MaxSessions 0
     ForceCommand /bin/false
-` + configEnd + "\n"
+`
+	}
+	return "Match User alpha-worker\n" + common + fmt.Sprintf(`    AuthorizedKeysFile %s
+    AuthorizedKeysCommand none
+    DisableForwarding yes
+    AllowTcpForwarding no
+    GatewayPorts no
+    PermitOpen none
+    PermitListen none
+    MaxSessions 4
+    ForceCommand %s bastion command
+`, workerKeysPath, readerExecutable)
 }
-
-func configuredSSH(original []byte) ([]byte, error) {
-	s := string(original)
-	if strings.Contains(s, configBegin) || strings.Contains(s, configEnd) {
-		if strings.Count(s, configBegin) != 1 || strings.Count(s, configEnd) != 1 {
-			return nil, fmt.Errorf("sshd_config 的 alpha-jump 标记无效")
-		}
-		start, end := strings.Index(s, configBegin), strings.Index(s, configEnd)
-		if end < start || strings.TrimSpace(s[end+len(configEnd):]) != "" {
-			return nil, fmt.Errorf("alpha-jump 配置必须位于 sshd_config 末尾，请核对已有配置")
-		}
-		s = s[:start]
-	}
-	return []byte(strings.TrimRight(s, "\n") + "\n\n" + jumpSSHConfig()), nil
+func jumpSSHConfig() string {
+	return configBegin + "\n" + accountSSHConfig(JumpUser) + accountSSHConfig(WorkerUser) + "Match all\n" + configEnd + "\n"
 }
-
-func CLI(ctx context.Context, args []string, out io.Writer) error {
-	if len(args) == 3 && args[0] == "authorized-keys" {
-		return systemKeyStore().authorizedKeys(args[1], args[2], out)
+func removeManagedSSH(raw []byte) ([]byte, error) {
+	s := string(raw)
+	begin, end := strings.Index(s, configBegin), strings.Index(s, configEnd)
+	if begin < 0 && end < 0 {
+		return raw, nil
 	}
-	if len(args) == 0 || !validAccountAction(args[0]) {
-		return fmt.Errorf("用法: project-alpha bastion <init|adopt|release|delete> --service-user <普通服务用户> --data-dir <总控目录> [--confirm alpha-jump]")
+	if begin < 0 || end < begin || strings.Count(s, configBegin) != 1 || strings.Count(s, configEnd) != 1 || strings.TrimSpace(s[end+len(configEnd):]) != "" {
+		return nil, fmt.Errorf("sshd_config 的分享节点配置标记无效或未处于末尾")
 	}
-	p := flag.NewFlagSet("bastion "+args[0], flag.ContinueOnError)
-	service := p.String("service-user", "", "运行 control 的现有非 root 用户")
-	directory := p.String("data-dir", "", "绑定的 control 数据目录；新目录以服务用户初始化")
-	confirm := p.String("confirm", "", "删除账号时须填写 alpha-jump；保留工具和 data")
-	noReload := p.Bool("no-reload", false, "仅安装和校验配置，由管理员另行重载 sshd")
-	if err := p.Parse(args[1:]); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return nil
-		}
-		return err
-	}
-	if p.NArg() != 0 || *service == "" || *directory == "" {
-		return fmt.Errorf("必须指定 --service-user 和 --data-dir")
-	}
-	if os.Geteuid() != 0 {
-		return fmt.Errorf("初始化需要 sudo；日常运行 control 不需要 sudo")
-	}
-	if args[0] == "delete" && *confirm != JumpUser {
-		return fmt.Errorf("删除账号须指定 --confirm alpha-jump；工具和 data 将保留")
-	}
-	return install(ctx, args[0], *service, *directory, *noReload, out)
+	return []byte(strings.TrimSuffix(s[:begin], "\n")), nil
 }
-
-func runInstall(ctx context.Context, name string, args ...string) ([]byte, error) {
-	child, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(child, name, args...)
-	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
-	raw, err := cmd.CombinedOutput()
+func configuredSSH(raw []byte) ([]byte, error) {
+	original, err := removeManagedSSH(raw)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w: %s", filepath.Base(name), err, strings.TrimSpace(string(raw)))
+		return nil, err
 	}
-	return raw, nil
+	return []byte(string(original) + "\n" + jumpSSHConfig()), nil
 }
-
-func numericAccount(u *user.User) (int, int, error) {
-	uid, e1 := strconv.Atoi(u.Uid)
-	gid, e2 := strconv.Atoi(u.Gid)
-	if e1 != nil || e2 != nil || uid <= 0 || gid <= 0 {
-		return 0, 0, fmt.Errorf("必须使用非 root 系统账号")
+func checkEffectiveSSH(raw []byte, name string) error {
+	effective := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			effective[parts[0]] = parts[1]
+		}
 	}
-	return uid, gid, nil
+	for _, line := range strings.Split(accountSSHConfig(name), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) < 2 || parts[0] == "Match" {
+			continue
+		}
+		if effective[strings.ToLower(parts[0])] != strings.Join(parts[1:], " ") {
+			return fmt.Errorf("sshd 已有配置与 %s 的 %s 冲突", name, parts[0])
+		}
+	}
+	return nil
 }
-
-// The root installer never opens the control database. A child running with the
-// service user's UID, GID and groups initializes/checks it using normal rules.
-func prepareControl(ctx context.Context, u *user.User, directory, executable, operation string) (string, error) {
-	uid, gid, err := numericAccount(u)
+func installRun(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
-	parent, err := os.OpenRoot(filepath.Dir(directory))
-	if err != nil {
-		return "", err
-	}
-	defer parent.Close()
-	name := filepath.Base(directory)
-	info, err := parent.Lstat(name)
-	if os.IsNotExist(err) {
-		if err = parent.Mkdir(name, 0700); err != nil {
-			return "", err
-		}
-		// Pin the new directory before changing ownership. A writable parent
-		// must never turn root's chown into a symlink to a different file.
-		created, err := parent.OpenFile(name, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
-		if err != nil {
-			return "", err
-		}
-		err = created.Chown(uid, gid)
-		created.Close()
-		if err != nil {
-			return "", err
-		}
-		info, err = parent.Lstat(name)
-	}
-	if err != nil {
-		return "", err
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.IsDir() || int(st.Uid) != uid || info.Mode().Perm()&0022 != 0 {
-		return "", fmt.Errorf("总控目录必须属于服务用户且不能允许其他用户写入")
-	}
-	groups, err := u.GroupIds()
-	if err != nil {
-		return "", err
-	}
-	cred := &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
-	for _, group := range groups {
-		v, err := strconv.ParseUint(group, 10, 32)
-		if err != nil {
-			return "", err
-		}
-		cred.Groups = append(cred.Groups, uint32(v))
-	}
-	child, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(child, executable, "bastion", operation, directory)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: cred}
-	cmd.Dir = "/"
-	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C"}
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	raw, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("以 %s 核验总控目录或同步公钥失败: %w: %s", u.Username, err, stderr.String())
-	}
-	id := strings.TrimSpace(string(raw))
-	if !sshkeys.ID.MatchString(id) {
-		return "", fmt.Errorf("总控返回了无效实例 ID")
-	}
-	return id, nil
+	return out, nil
 }
-
 func rootDirectory(path string, mode os.FileMode) error {
-	if path == "/" {
-		return nil
+	parent := filepath.Dir(path)
+	if parent != path {
+		info, err := os.Lstat(parent)
+		if os.IsNotExist(err) {
+			if err = rootDirectory(parent, 0755); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			st, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || int(st.Uid) != 0 || info.Mode().Perm()&0022 != 0 {
+				return fmt.Errorf("安装路径上级属主或权限无效: %s", parent)
+			}
+		}
 	}
-	if err := rootDirectory(filepath.Dir(path), 0755); err != nil {
+	if err := os.Mkdir(path, mode); err != nil && !os.IsExist(err) {
 		return err
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil || canonical != path {
+		return fmt.Errorf("安装路径不能经过符号链接: %s", path)
 	}
 	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		if err = os.Mkdir(path, mode); err != nil {
-			return err
-		}
-		if err = os.Chmod(path, mode); err != nil {
-			return err
-		}
-		info, err = os.Lstat(path)
-	}
 	if err != nil {
 		return err
 	}
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok || !info.IsDir() || int(st.Uid) != 0 || info.Mode().Perm()&0022 != 0 {
-		return fmt.Errorf("%s 必须是 root 持有且其他用户不可写的普通目录", path)
+		return fmt.Errorf("安装路径属主或权限无效: %s", path)
 	}
-	return nil
+	return os.Chmod(path, mode)
 }
-
-func rootFile(path string, raw []byte, mode os.FileMode) error {
-	if info, err := os.Lstat(path); err == nil {
-		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || !info.Mode().IsRegular() || int(st.Uid) != 0 || st.Nlink != 1 || info.Mode().Perm()&0022 != 0 {
-			return fmt.Errorf("拒绝覆盖非 root 普通文件 %s", path)
-		}
-	} else if !os.IsNotExist(err) {
+func rootFile(path string) ([]byte, os.FileMode, error) {
+	r, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return nil, 0, err
+	}
+	defer r.Close()
+	raw, err := readPrivateFile(r, filepath.Base(path), 0, -1, 0022, 256<<20)
+	if err != nil {
+		return nil, 0, err
+	}
+	info, err := r.Stat(filepath.Base(path))
+	if err != nil {
+		return nil, 0, err
+	}
+	return raw, info.Mode().Perm(), nil
+}
+func atomicRootFile(path string, raw []byte, mode os.FileMode) error {
+	if _, _, err := rootFile(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".alpha-install-")
+	f, err := os.CreateTemp(filepath.Dir(path), ".alpha-")
 	if err != nil {
 		return err
 	}
@@ -228,9 +171,6 @@ func rootFile(path string, raw []byte, mode os.FileMode) error {
 	_, err = f.Write(raw)
 	if err == nil {
 		err = f.Chmod(mode)
-	}
-	if err == nil {
-		err = f.Chown(0, 0)
 	}
 	if err == nil {
 		err = f.Sync()
@@ -244,147 +184,340 @@ func rootFile(path string, raw []byte, mode os.FileMode) error {
 	}
 	return os.Rename(f.Name(), path)
 }
-
-func checkEffectiveSSH(raw []byte) error {
-	values := map[string]string{}
-	for _, line := range strings.Split(string(raw), "\n") {
-		key, value, ok := strings.Cut(line, " ")
-		if ok {
-			values[key] = strings.TrimSpace(value)
-		}
+func validateSSH(ctx context.Context, raw []byte, checkAccounts bool) error {
+	tmp, err := os.CreateTemp(filepath.Dir(sshConfigPath), ".alpha-sshd-")
+	if err != nil {
+		return err
 	}
-	for _, line := range strings.Split(jumpSSHConfig(), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 2 || fields[0] == "#" || fields[0] == "Match" {
-			continue
-		}
-		key, want := strings.ToLower(fields[0]), strings.Join(fields[1:], " ")
-		if values[key] != want {
-			return fmt.Errorf("已有 SSH 配置覆盖了 %s（实际 %q，要求 %q），请先解决冲突", fields[0], values[key], want)
+	defer os.Remove(tmp.Name())
+	_, err = tmp.Write(raw)
+	closeErr := tmp.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if _, err = installRun(ctx, "/usr/sbin/sshd", "-t", "-f", tmp.Name()); err != nil {
+		return err
+	}
+	if checkAccounts {
+		for _, name := range []string{JumpUser, WorkerUser} {
+			out, err := installRun(ctx, "/usr/sbin/sshd", "-T", "-f", tmp.Name(), "-C", "user="+name+",host=localhost,addr=127.0.0.1")
+			if err != nil {
+				return err
+			}
+			if err = checkEffectiveSSH(out, name); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
+func sshUnit(ctx context.Context, noReload bool) (string, error) {
+	if noReload {
+		return "", nil
+	}
+	for _, name := range []string{"ssh.service", "sshd.service"} {
+		if _, err := installRun(ctx, "systemctl", "is-active", "--quiet", name); err == nil {
+			return name, nil
+		}
+	}
+	return "", fmt.Errorf("没有活动的 ssh/sshd 服务；自行管理 sshd 时使用 --no-reload")
+}
+func reloadSSH(ctx context.Context, unit string) error {
+	if unit == "" {
+		return nil
+	}
+	_, err := installRun(ctx, "systemctl", "reload", unit)
+	return err
+}
 
-func install(ctx context.Context, action, service, directory string, noReload bool, out io.Writer) error {
-	u, err := user.Lookup(service)
-	if err != nil {
-		return fmt.Errorf("服务用户不存在: %w", err)
+// CLI is used only by sshd's root-owned command/reader executable.
+func CLI(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) == 0 || len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprint(out, `用法：
+  project-alpha bastion <子命令>
+
+内部子命令（由 sshd 调用）：
+  authorized-keys <账号名> <UID>  读取成员授权公钥
+  command                       执行 alpha-worker 公钥管理协议
+
+使用 project-alpha bastion <子命令> --help 查看详细用法。
+安装和卸载请使用 project-alpha share-node --help。
+`)
+		return nil
 	}
-	uid, _, err := numericAccount(u)
-	if err != nil || service == JumpUser {
-		return fmt.Errorf("control 必须使用不同于 alpha-jump 的非 root 用户")
-	}
-	directory, err = filepath.Abs(directory)
-	if err != nil {
-		return err
-	}
-	executable, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	sshd, unit := "/usr/sbin/sshd", ""
-	if action == "init" || action == "adopt" {
-		if _, err = runInstall(ctx, sshd, "-t"); err != nil {
-			return fmt.Errorf("请先安装并配置可用的 OpenSSH 服务: %w", err)
-		}
-		if !noReload {
-			for _, candidate := range []string{"ssh.service", "sshd.service"} {
-				if _, e := runInstall(ctx, "/usr/bin/systemctl", "is-active", "--quiet", candidate); e == nil {
-					unit = candidate
-					break
-				}
-			}
-			if unit == "" {
-				return fmt.Errorf("未找到活动的 ssh/sshd systemd 服务；自行管理 sshd 时使用 --no-reload 并在安装后重载")
-			}
+	if len(args) == 2 && (args[1] == "-h" || args[1] == "--help") {
+		switch args[0] {
+		case "authorized-keys":
+			fmt.Fprint(out, "用法：\n  project-alpha bastion authorized-keys <账号名> <UID>\n\n由 sshd 的 AuthorizedKeysCommand 以 alpha-jump 运行，将成员授权公钥写入标准输出。\n")
+			return nil
+		case "command":
+			fmt.Fprint(out, "用法：\n  project-alpha bastion command\n\n由 sshd 以 alpha-worker 运行，从标准输入读取公钥管理 JSON 请求并输出 JSON 响应。\nSSH_ORIGINAL_COMMAND 必须为 alpha-worker cmd。\n")
+			return nil
 		}
 	}
-	id, err := prepareControl(ctx, u, directory, executable, "prepare-control")
+	if len(args) == 3 && args[0] == "authorized-keys" {
+		return systemKeyStore().authorizedKeys(args[1], args[2], out)
+	}
+	if len(args) == 1 && args[0] == "command" {
+		return serveCommand(systemKeyStore(), os.Getenv("SSH_ORIGINAL_COMMAND"), os.Stdin, out)
+	}
+	return fmt.Errorf("请在 share node 使用 project-alpha share-node 初始化；加 --uninstall 撤销安装")
+}
+func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
+	p := flag.NewFlagSet("project-alpha share-node", flag.ContinueOnError)
+	p.SetOutput(out)
+	p.Usage = func() {
+		fmt.Fprint(p.Output(), `用法：
+  sudo project-alpha share-node --control-key-file FILE --listen-host IP --control-url URL [选项]
+  sudo project-alpha share-node --uninstall [--no-reload] [--no-service]
+
+在 share node 本机初始化 alpha-worker、alpha-jump、sshd 和 HTTP 代理服务。
+初始化完成后退出；代理以 alpha-worker 运行，由 systemd 持续托管并开机启动。
+总控使用服务用户已有的 SSH 身份登录 alpha-worker，管理成员公钥。
+成员使用 alpha-jump 转发 SSH，通过监听 IP 和入口端口访问总控网页。
+
+示例：
+  sudo project-alpha share-node --control-key-file /tmp/control-service.pub \
+    --listen-host 100.64.0.2 --control-url http://10.0.0.1:8765 --status-port 9765
+  sudo project-alpha share-node --uninstall
+
+非 systemd 部署：初始化时加 --no-service --no-reload，自行重载 sshd，
+并以 alpha-worker 持续运行 project-alpha share-node --serve。
+
+选项：
+`)
+		p.PrintDefaults()
+	}
+	keyPath := p.String("control-key-file", "", "总控服务用户的 SSH 公钥文件")
+	host := p.String("listen-host", "", "share node 的 Tailscale IP")
+	port := p.Int("status-port", 8765, "share node 总控网页入口端口")
+	noReload := p.Bool("no-reload", false, "校验配置后由管理员重载 sshd")
+	noService := p.Bool("no-service", false, "安装代理服务单元，但不调用 systemd 启停；由管理员运行代理")
+	controlURL := p.String("control-url", "", "share node 可访问的总控内网 HTTP/HTTPS 地址")
+	serve := p.Bool("serve", false, "以 alpha-worker 运行已安装的 HTTP 代理")
+	uninstall := p.Bool("uninstall", false, "撤销 SSH 配置，删除两个专用账号、工具和公钥数据；会停止 HTTP 代理；需先断开成员及管理 SSH 连接")
+	if err := p.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	if p.NArg() != 0 {
+		return fmt.Errorf("不接受额外参数")
+	}
+	var invalidFlag string
+	p.Visit(func(f *flag.Flag) {
+		if *serve && f.Name != "serve" || *uninstall && f.Name != "uninstall" && f.Name != "no-reload" && f.Name != "no-service" {
+			invalidFlag = f.Name
+		}
+	})
+	if invalidFlag != "" {
+		return fmt.Errorf("当前操作不接受 --%s", invalidFlag)
+	}
+	if *serve {
+		return serveShareProxy(ctx, systemKeyStore())
+	}
+	if *uninstall {
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("创建或删除系统账号及修改 sshd 需要 sudo")
+		}
+		unlock, err := lockShareInstall()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		return uninstallShare(ctx, *noReload, *noService, out)
+	}
+	if *keyPath == "" || *host == "" || *controlURL == "" || *port < 1024 || *port > 65535 {
+		return fmt.Errorf("需提供 --control-key-file、--listen-host、--control-url 和 1024–65535 的 --status-port")
+	}
+	ip, err := platform.InternalIP(*host)
 	if err != nil {
 		return err
+	}
+	raw, err := os.ReadFile(*keyPath)
+	if err != nil {
+		return err
+	}
+	key, err := sshkeys.Normalize(string(raw))
+	if err != nil {
+		return err
+	}
+	if os.Geteuid() != 0 {
+		return fmt.Errorf("创建系统账号及修改 sshd 需要 sudo；日常 SSH 管理使用 alpha-worker")
+	}
+	target, err := proxyTarget(*controlURL)
+	if err != nil {
+		return err
+	}
+	if target.Host == netAddress(ip, *port) {
+		return fmt.Errorf("总控代理目标不能指向分享节点自身的入口")
+	}
+
+	unlock, err := lockShareInstall()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return initializeShare(ctx, installation{Version: keyFormat, ControlKey: key, ControlURL: *controlURL, ListenHost: ip, StatusPort: *port}, *noReload, *noService, out)
+}
+func initializeShare(ctx context.Context, c installation, noReload, noService bool, out io.Writer) (result error) {
+	unit, err := sshUnit(ctx, noReload)
+	if err != nil {
+		return err
+	}
+	existing := false
+	if _, err = os.Lstat(installationDirectory); err == nil {
+		r, old, e := systemKeyStore().open()
+		if e != nil {
+			return fmt.Errorf("已有安装格式无效，原数据保留，请使用新的 share node 安装目录: %w", e)
+		}
+		r.Close()
+		if old.ControlKey != c.ControlKey {
+			return fmt.Errorf("已有分享节点由其他管理公钥持有，拒绝覆盖")
+		}
+		existing = true
+		c.JumpUID, c.JumpGID, c.WorkerUID, c.WorkerGID = old.JumpUID, old.JumpGID, old.WorkerUID, old.WorkerGID
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if !existing {
+		for _, name := range []string{JumpUser, WorkerUser} {
+			if _, e := user.Lookup(name); e == nil {
+				return fmt.Errorf("%s 已存在，拒绝覆盖未管理账号", name)
+			} else if _, ok := e.(user.UnknownUserError); !ok {
+				return e
+			}
+			if _, e := user.LookupGroup(name); e == nil {
+				return fmt.Errorf("%s 组已存在，拒绝覆盖", name)
+			} else if _, ok := e.(user.UnknownGroupError); !ok {
+				return e
+			}
+		}
+	}
+	if previous, _, e := rootFile(proxyUnitPath); e == nil {
+		if !existing || !bytes.Equal(previous, proxyUnit()) {
+			return fmt.Errorf("代理服务单元已存在且不属于当前安装，拒绝覆盖")
+		}
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+	created := []string{}
+	type savedFile struct {
+		path   string
+		raw    []byte
+		mode   os.FileMode
+		exists bool
+	}
+	saved := []savedFile{}
+	sshChanged, serviceChanged := false, false
+	write := func(path string, raw []byte, mode os.FileMode) error {
+		previous, perm, e := rootFile(path)
+		if e != nil && !os.IsNotExist(e) {
+			return e
+		}
+		saved = append(saved, savedFile{path, previous, perm, e == nil})
+		return atomicRootFile(path, raw, mode)
+	}
+	defer func() {
+		if result == nil {
+			return
+		}
+		rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		recordError := func(action string, err error) {
+			if err != nil && !os.IsNotExist(err) {
+				result = errors.Join(result, fmt.Errorf("%s 失败: %w", action, err))
+			}
+		}
+		run := func(name string, args ...string) {
+			_, err := installRun(rollbackCtx, name, args...)
+			recordError("回滚 "+name+" "+strings.Join(args, " "), err)
+		}
+		for i := len(saved) - 1; i >= 0; i-- {
+			v := saved[i]
+			var e error
+			if v.exists {
+				e = atomicRootFile(v.path, v.raw, v.mode)
+			} else {
+				e = os.Remove(v.path)
+			}
+			recordError("恢复 "+v.path, e)
+		}
+		if sshChanged {
+			recordError("恢复 sshd 重载", reloadSSH(rollbackCtx, unit))
+		}
+		if serviceChanged {
+			if existing {
+				run("systemctl", "daemon-reload")
+				run("systemctl", "restart", proxyUnitName)
+			} else {
+				run("systemctl", "disable", "--now", proxyUnitName)
+				run("systemctl", "daemon-reload")
+			}
+		}
+		for i := len(created) - 1; i >= 0; i-- {
+			run("/usr/sbin/userdel", created[i])
+			if _, e := user.LookupGroup(created[i]); e == nil {
+				run("/usr/sbin/groupdel", created[i])
+			} else if _, ok := e.(user.UnknownGroupError); !ok {
+				recordError("查询 "+created[i]+" 组", e)
+			}
+		}
+		if !existing {
+			recordError("清理公钥目录", os.Remove(filepath.Join(installationDirectory, "keys")))
+			recordError("清理安装目录", os.Remove(installationDirectory))
+			for _, name := range created {
+				recordError("清理 "+name+" home", os.Remove("/var/empty/"+name))
+			}
+		}
+	}()
+	if !existing {
+		for _, name := range []string{JumpUser, WorkerUser} {
+			home, shell := jumpHome, "/bin/false"
+			if name == WorkerUser {
+				home, shell = workerHome, "/bin/sh"
+			}
+			if err = rootDirectory(home, 0755); err != nil {
+				return err
+			}
+			args := []string{"--system", "--user-group", "--home-dir", home, "--no-create-home", "--shell", shell, "--password", "*"}
+			if name == WorkerUser {
+				args = append(args, "--groups", JumpUser)
+			}
+			args = append(args, name)
+			if _, err = installRun(ctx, "/usr/sbin/useradd", args...); err != nil {
+				return err
+			}
+			created = append(created, name)
+			u, err := user.Lookup(name)
+			if err != nil {
+				return err
+			}
+			uid, e := strconv.Atoi(u.Uid)
+			if e != nil {
+				return e
+			}
+			gid, e := strconv.Atoi(u.Gid)
+			if e != nil {
+				return e
+			}
+			if name == JumpUser {
+				c.JumpUID, c.JumpGID = uid, gid
+			} else {
+				c.WorkerUID, c.WorkerGID = uid, gid
+			}
+		}
 	}
 	if err = rootDirectory(installationDirectory, 0755); err != nil {
 		return err
 	}
-	// Serialize installers independently of normal key publication.
-	lock, err := os.OpenFile(filepath.Join(installationDirectory, ".install.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return fmt.Errorf("另一初始化正在运行")
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
-	var c installation
-	manifest := filepath.Join(installationDirectory, "installation.json")
-	if _, err = os.Lstat(manifest); err == nil {
-		open := systemKeyStore().open
-		if action == "adopt" {
-			open = systemKeyStore().openForAdoption
-		}
-		r, existing, err := open()
-		if err != nil {
-			return err
-		}
-		r.Close()
-		c = existing
-		if err = checkInstallationBinding(c, id, service, uid, action); err != nil {
-			return err
-		}
-		if c.JumpUID == uid {
-			return fmt.Errorf("control 服务用户不能与 alpha-jump 使用相同 UID")
-		}
-	} else if os.IsNotExist(err) {
-		if action == "release" || action == "delete" {
-			return fmt.Errorf("alpha-jump 尚未由当前 control 接管，请先接管")
-		}
-		if _, e := os.Lstat(filepath.Join(installationDirectory, "keys")); !os.IsNotExist(e) {
-			return fmt.Errorf("已有公钥 data 但缺少安装记录，拒绝覆盖；请核对数据，格式不匹配时使用新数据目录")
-		}
-		jump, e := user.Lookup(JumpUser)
-		if action == "adopt" {
-			if e != nil {
-				return fmt.Errorf("接管要求已有 alpha-jump 账号: %w", e)
-			}
-		} else {
-			if e == nil {
-				return fmt.Errorf("alpha-jump 已存在，请选择接管已有账号")
-			}
-			if _, absent := e.(user.UnknownUserError); !absent {
-				return e
-			}
-			if _, e = user.LookupGroup(JumpUser); e == nil {
-				return fmt.Errorf("alpha-jump 组已存在，请核对后添加账号并选择接管")
-			} else if _, absent := e.(user.UnknownGroupError); !absent {
-				return e
-			}
-			if err = rootDirectory(jumpHome, 0755); err != nil {
-				return err
-			}
-			if _, err = runInstall(ctx, "/usr/sbin/useradd", "--system", "--user-group", "--home-dir", jumpHome, "--no-create-home", "--shell", "/bin/false", "--password", "*", JumpUser); err != nil {
-				return err
-			}
-			jump, err = user.Lookup(JumpUser)
-			if err != nil {
-				return err
-			}
-		}
-		juid, jgid, err := numericAccount(jump)
-		if err != nil || juid == uid {
-			return fmt.Errorf("alpha-jump 必须为独立的非 root 系统账号")
-		}
-		c = installation{Version: keyFormat, ControlID: id, ServiceUser: service, ServiceUID: uid, JumpUID: juid, JumpGID: jgid}
-		if err = saveInstallation(c); err != nil {
-			return err
-		}
-	} else {
-		return err
-	}
 	keys := filepath.Join(installationDirectory, "keys")
 	if err = os.Mkdir(keys, 0700); err == nil {
-		if err = os.Chown(keys, c.ServiceUID, c.JumpGID); err != nil {
+		if err = os.Chown(keys, c.WorkerUID, c.JumpGID); err != nil {
 			return err
 		}
 		if err = os.Chmod(keys, os.ModeSetgid|0750); err != nil {
@@ -402,129 +535,329 @@ func install(ctx context.Context, action, service, directory string, noReload bo
 	if err != nil {
 		return err
 	}
-	defer k.Close()
-	keyLock, err := lockInstallationKeys(k, c)
+	_, err = loadSnapshot(k, c)
+	k.Close()
 	if err != nil {
 		return err
 	}
-	defer keyLock.Close()
-	snapshot, err := loadSnapshot(k, c)
+	source, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	if action == "release" || action == "delete" {
-		return manageAccount(ctx, action, c, snapshot, out)
+	binary, err := os.ReadFile(source)
+	if err != nil {
+		return err
 	}
-	if c.AccountRemoved {
-		if err = recreateAccount(ctx, c); err != nil {
-			return err
-		}
-		c.AccountRemoved = false
-		if err = saveInstallation(c); err != nil {
-			return err
-		}
-	}
-
 	if err = rootDirectory(filepath.Dir(readerExecutable), 0755); err != nil {
 		return err
 	}
-	binary, err := os.ReadFile(executable)
+	original, mode, err := rootFile(sshConfigPath)
 	if err != nil {
 		return err
 	}
-	if err = rootFile(readerExecutable, binary, 0755); err != nil {
-		return err
-	}
-	if err = rootDirectory(filepath.Dir(sshConfigPath), 0755); err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(filepath.Dir(sshConfigPath))
+	candidate, err := configuredSSH(original)
 	if err != nil {
 		return err
 	}
-	original, err := readPrivateFile(root, filepath.Base(sshConfigPath), 0, -1, 0022, 1<<20)
-	root.Close()
-	if err != nil {
+	if err = write(readerExecutable, binary, 0755); err != nil {
 		return err
 	}
-	updated, err := configuredSSH(original)
-	if err != nil {
+	if err = validateSSH(ctx, candidate, true); err != nil {
 		return err
 	}
-	candidate, err := os.CreateTemp(filepath.Dir(sshConfigPath), ".alpha-sshd-")
-	if err != nil {
+	manifest, _ := json.Marshal(c)
+	if err = write(filepath.Join(installationDirectory, "installation.json"), manifest, 0644); err != nil {
 		return err
 	}
-	defer os.Remove(candidate.Name())
-	_, err = candidate.Write(updated)
-	closeErr := candidate.Close()
-	if err != nil {
+	auth := "restrict " + c.ControlKey + "\n"
+	if err = write(workerKeysPath, []byte(auth), 0644); err != nil {
 		return err
 	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if _, err = runInstall(ctx, sshd, "-t", "-f", candidate.Name()); err != nil {
+	if err = write(proxyUnitPath, proxyUnit(), 0644); err != nil {
 		return err
 	}
-	effective, err := runInstall(ctx, sshd, "-T", "-f", candidate.Name(), "-C", "user=alpha-jump,host=localhost,addr=127.0.0.1")
-	if err != nil {
-		return err
-	}
-	if err = checkEffectiveSSH(effective); err != nil {
-		return err
-	}
-	if !bytes.Equal(updated, original) {
-		backup := sshConfigPath + ".before-alpha-jump"
-		if _, e := os.Lstat(backup); os.IsNotExist(e) {
-			if err = rootFile(backup, original, 0600); err != nil {
-				return err
-			}
-		} else if e != nil {
-			return e
+	backup := sshConfigPath + ".before-alpha-share-node"
+	if _, err = os.Lstat(backup); os.IsNotExist(err) {
+		if err = atomicRootFile(backup, original, 0600); err != nil {
+			return err
 		}
-		if err = rootFile(sshConfigPath, updated, 0600); err != nil {
+	} else if err != nil {
+		return err
+	}
+	if err = write(sshConfigPath, candidate, mode); err != nil {
+		return err
+	}
+	sshChanged = true
+	if err = reloadSSH(ctx, unit); err != nil {
+		return fmt.Errorf("重载失败，撤销本次安装: %w", err)
+	}
+	if !noService {
+		serviceChanged = true
+		if _, err = installRun(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+		if _, err = installRun(ctx, "systemctl", "enable", proxyUnitName); err != nil {
+			return err
+		}
+		if _, err = installRun(ctx, "systemctl", "restart", proxyUnitName); err != nil {
 			return err
 		}
 	}
-	if unit != "" {
-		if _, err = runInstall(ctx, "/usr/bin/systemctl", "reload", unit); err != nil {
-			if restore := rootFile(sshConfigPath, original, 0600); restore != nil {
-				return fmt.Errorf("重载失败且恢复配置失败: %v; %w", err, restore)
+	_, err = fmt.Fprintf(out, "share node 已初始化：alpha-worker 负责内部命令及 HTTP 代理，alpha-jump 负责成员访问；总控网页入口 %s -> %s。\n", netAddress(c.ListenHost, c.StatusPort), c.ControlURL)
+	return err
+}
+func uninstallShare(ctx context.Context, noReload, noService bool, out io.Writer) (result error) {
+	_, err := os.Lstat(installationDirectory)
+	if os.IsNotExist(err) {
+		for _, name := range []string{JumpUser, WorkerUser} {
+			if _, e := user.Lookup(name); e == nil {
+				return fmt.Errorf("缺失安装记录但 %s 仍存在，拒绝删除未核对账号", name)
+			} else if _, ok := e.(user.UnknownUserError); !ok {
+				return e
 			}
-			_, reloadErr := runInstall(ctx, "/usr/bin/systemctl", "reload", unit)
-			return fmt.Errorf("SSH 重载失败，已恢复原配置（恢复后重载: %v）: %w", reloadErr, err)
+		}
+		_, err = fmt.Fprintln(out, "share node 未安装。")
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	s := systemKeyStore()
+	r, c, err := s.openManifest(false)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	hasUnit := false
+	if raw, _, e := rootFile(proxyUnitPath); e == nil {
+		if !bytes.Equal(raw, proxyUnit()) {
+			return fmt.Errorf("代理服务单元已改变，拒绝卸载")
+		}
+		hasUnit = true
+	} else if !os.IsNotExist(e) {
+		return e
+	}
+	wasActive := false
+	if !noService && hasUnit {
+		if _, e := installRun(ctx, "systemctl", "is-active", "--quiet", proxyUnitName); e == nil {
+			wasActive = true
+		}
+		if _, e := installRun(ctx, "systemctl", "stop", proxyUnitName); e != nil {
+			return e
 		}
 	}
-	if action == "adopt" && (c.ControlID != id || c.ServiceUID != uid || c.ServiceUser != service) {
-		target := c
-		target.ControlID, target.ServiceUser, target.ServiceUID = id, service, uid
-		target.Ready, target.Released = true, false
-		archive, err := transferInstallation(c, target, snapshot)
+	defer func() {
+		if result != nil && wasActive {
+			if _, e := user.Lookup(WorkerUser); e == nil {
+				_, _ = installRun(context.WithoutCancel(ctx), "systemctl", "start", proxyUnitName)
+			}
+		}
+	}()
+	for name, ids := range map[string][2]int{JumpUser: {c.JumpUID, c.JumpGID}, WorkerUser: {c.WorkerUID, c.WorkerGID}} {
+		home := "/var/empty/" + name
+		if info, e := os.Lstat(home); e == nil {
+			st, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || st.Uid != 0 || info.Mode().Perm()&0022 != 0 {
+				return fmt.Errorf("%s home 身份或权限无效，拒绝卸载", name)
+			}
+			entries, e := os.ReadDir(home)
+			if e != nil {
+				return e
+			}
+			if len(entries) > 0 {
+				return fmt.Errorf("%s home 包含额外文件，保留数据并拒绝卸载", name)
+			}
+		} else if !os.IsNotExist(e) {
+			return e
+		}
+		if g, e := user.LookupGroup(name); e == nil {
+			if g.Gid != strconv.Itoa(ids[1]) {
+				return fmt.Errorf("%s 组身份已改变，拒绝卸载", name)
+			}
+		} else if _, ok := e.(user.UnknownGroupError); !ok {
+			return e
+		}
+
+		u, e := user.Lookup(name)
+		if e != nil {
+			if _, ok := e.(user.UnknownUserError); ok {
+				continue
+			}
+			return e
+		}
+		if u.Uid != strconv.Itoa(ids[0]) || u.Gid != strconv.Itoa(ids[1]) || u.HomeDir != "/var/empty/"+name {
+			return fmt.Errorf("%s 身份已改变，拒绝卸载", name)
+		}
+		cmd := exec.CommandContext(ctx, "pgrep", "-u", u.Uid)
+		if e = cmd.Run(); e == nil {
+			return fmt.Errorf("%s 仍有进程，请先断开管理及成员 SSH 连接后卸载", name)
+		} else if exit, ok := e.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+			return fmt.Errorf("无法检查 %s 的进程: %w", name, e)
+		}
+	}
+	entries, err := rootEntries(r)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "installation.json" && entry.Name() != "worker_authorized_keys" && entry.Name() != "keys" {
+			return fmt.Errorf("安装目录包含未知文件 %s，拒绝清理", entry.Name())
+		}
+	}
+	k, err := openKeys(r, c)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var keyEntries []os.DirEntry
+	if k != nil {
+		defer k.Close()
+		if _, err = loadSnapshot(k, c); err != nil {
+			return err
+		}
+		keyEntries, err = rootEntries(k)
 		if err != nil {
 			return err
 		}
-		c = target
-		fmt.Fprintf(out, "已将 alpha-jump 和全部现有公钥转交当前 control；原 data 完整保留在 %s。\n", archive)
+		for _, entry := range keyEntries {
+			if entry.Name() != "keys.json" && entry.Name() != ".lock" {
+				return fmt.Errorf("公钥目录包含未知文件 %s，拒绝清理", entry.Name())
+			}
+			info, e := k.Lstat(entry.Name())
+			if e != nil {
+				return e
+			}
+			st, ok := info.Sys().(*syscall.Stat_t)
+			if !ok || !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != c.WorkerUID {
+				return fmt.Errorf("公钥文件身份无效，拒绝清理")
+			}
+		}
 	}
-	if !c.Ready || c.Released {
-		c.Ready = true
-		c.Released = false
-		if err = saveInstallation(c); err != nil {
+	if _, _, err = rootFile(readerExecutable); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if _, _, err = rootFile(workerKeysPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	unit, err := sshUnit(ctx, noReload)
+	if err != nil {
+		return err
+	}
+	original, mode, err := rootFile(sshConfigPath)
+	if err != nil {
+		return err
+	}
+	candidate, err := removeManagedSSH(original)
+	if err != nil {
+		return err
+	}
+	if err = validateSSH(ctx, candidate, false); err != nil {
+		return err
+	}
+	if err = atomicRootFile(sshConfigPath, candidate, mode); err != nil {
+		return err
+	}
+	if err = reloadSSH(ctx, unit); err != nil {
+		restore := atomicRootFile(sshConfigPath, original, mode)
+		_ = reloadSSH(context.WithoutCancel(ctx), unit)
+		return fmt.Errorf("卸载重载失败，SSH 配置已恢复（恢复错误 %v）: %w", restore, err)
+	}
+	if !noService && hasUnit {
+		if _, err = installRun(ctx, "systemctl", "disable", proxyUnitName); err != nil {
 			return err
 		}
 	}
-	// The ordinary service user reconciles the pool with its own database.
-	// Release the publisher lock first; the installation lock stays held.
-	if err = keyLock.Close(); err != nil {
+	for _, name := range []string{WorkerUser, JumpUser} {
+		if _, err = user.Lookup(name); err == nil {
+			if _, err = installRun(ctx, "/usr/sbin/userdel", name); err != nil {
+				return err
+			}
+		} else if _, ok := err.(user.UnknownUserError); !ok {
+			return err
+		}
+		if g, e := user.LookupGroup(name); e == nil {
+			gid := c.JumpGID
+			if name == WorkerUser {
+				gid = c.WorkerGID
+			}
+			if g.Gid != strconv.Itoa(gid) {
+				return fmt.Errorf("%s 组身份已改变，拒绝删除", name)
+			}
+			if _, err = installRun(ctx, "/usr/sbin/groupdel", name); err != nil {
+				return err
+			}
+		} else if _, ok := e.(user.UnknownGroupError); !ok {
+			return e
+		}
+	}
+	for _, entry := range keyEntries {
+		if err = k.Remove(entry.Name()); err != nil {
+			return err
+		}
+	}
+	if k != nil {
+		k.Close()
+	}
+	if err = r.Remove("keys"); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if _, err = prepareControl(ctx, u, directory, executable, "sync-control-keys"); err != nil {
-		return fmt.Errorf("账号已接管，补齐当前用户公钥失败，可在公钥池重试同步: %w", err)
+	if err = r.Remove("worker_authorized_keys"); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	fmt.Fprintf(out, "alpha-jump 初始化完成；control 用户: %s；数据目录: %s\n后续以该普通用户运行 control，公钥管理无需 sudo。\n", service, directory)
-	if noReload {
-		fmt.Fprintln(out, "SSH 配置已校验但尚未重载，请在启用前重载 sshd。")
+	if err = os.Remove(readerExecutable); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	return nil
+	if err = os.Remove(proxyUnitPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if !noService {
+		if _, err = installRun(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	for _, home := range []string{workerHome, jumpHome} {
+		if err = os.Remove(home); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("账号和 SSH 配置已撤销；home 非空或无法删除，保留 %s: %w", home, err)
+		}
+	}
+	// Keep the manifest until all other cleanup succeeds so a retry can verify identities.
+	if err = r.Remove("installation.json"); err != nil {
+		return err
+	}
+	r.Close()
+	if err = os.Remove(installationDirectory); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, "已撤销 share node HTTP 代理服务及 SSH 配置，删除 alpha-worker、alpha-jump、工具和公钥数据；sshd 原始备份保留。")
+	return err
+}
+
+func rootEntries(r *os.Root) ([]os.DirEntry, error) {
+	f, err := r.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.ReadDir(-1)
+}
+
+func lockShareInstall() (func(), error) {
+	f, err := os.OpenFile("/run/project-alpha-share-node.lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || !info.Mode().IsRegular() || st.Nlink != 1 || st.Uid != 0 || info.Mode().Perm() != 0600 {
+		f.Close()
+		return nil, fmt.Errorf("share node 安装锁无效")
+	}
+	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		return nil, fmt.Errorf("share node 正在安装或卸载，请稍后重试")
+	}
+	return func() { _ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN); _ = f.Close() }, nil
 }

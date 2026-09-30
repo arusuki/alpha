@@ -3,6 +3,7 @@ package cluster
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -69,7 +70,7 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	if view.MemberID != alice || view.Username != "alice" || len(view.Nodes) != 2 {
 		t.Fatalf("bad member status: %+v", view)
 	}
-	if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://10.0.0.1:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
+	if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "" || view.Nodes[0].InternalIP != "10.0.0.11" {
 		t.Fatalf("status did not use configured addresses: %+v", view)
 	}
 	n := view.Nodes[0]
@@ -123,6 +124,12 @@ func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
 	f := setup(t)
 	id, token := registerResource(t, f, "alice")
 	awaitIdle(t, f, id)
+	if _, err := f.db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('share','Share',1,'100.64.0.3',2222,9765,'http://100.100.0.2:8765')"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.db.SQL.Exec("UPDATE member_access SET tailscale_id='share' WHERE member_id=?", id); err != nil {
+		t.Fatal(err)
+	}
 	w, s := worker(t, strings.Repeat("7", 32), Inventory{}, nil)
 	body := map[string]string{"kind": "worker", "name": "Compute", "url": s.URL, "token": w.Token}
 	for _, ip := range []string{"", "127.0.0.1", "http://10.0.0.11", "10.0.0.11:22"} {
@@ -136,10 +143,10 @@ func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
 	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 400)
 	body["internal_ip"] = "fd00::11"
 	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 200)
-	requireStatus(t, f.request(t, "PUT", "/api/control/settings", platform.ControlSettings{Revision: 1, InternalIP: "100.100.0.2", WebScheme: "https", WebPort: 443}), 200)
+	requireStatus(t, f.request(t, "PUT", "/api/control/settings", platform.ControlSettings{Revision: 1, InternalIP: "100.100.0.2"}), 200)
 	response := selfCall(f, "GET", "/api/status/alice", token, nil)
 	requireStatus(t, response, 200)
-	if !strings.Contains(response.Body.String(), "https://100.100.0.2/status/alice") || !strings.Contains(response.Body.String(), "fd00::11") || strings.Contains(response.Body.String(), "10.0.0.11") || strings.Contains(response.Body.String(), s.URL) {
+	if !strings.Contains(response.Body.String(), "http://100.64.0.3:9765/status/alice") || !strings.Contains(response.Body.String(), "fd00::11") || strings.Contains(response.Body.String(), "10.0.0.11") || strings.Contains(response.Body.String(), s.URL) {
 		t.Fatalf("guidance retained an old or management address: %s", response.Body.String())
 	}
 }
@@ -202,5 +209,37 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	var count int
 	if err := f.db.SQL.QueryRow("SELECT count(*) FROM member_node_resources WHERE member_id=? AND node_id=?", id, offline.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("offline application was queued: %d %v", count, err)
+	}
+}
+
+func TestShareStatusEntranceHostAndOriginAreValidated(t *testing.T) {
+	f := setup(t)
+	id, token := registerResource(t, f, "alice")
+	awaitIdle(t, f, id)
+	if _, err := f.db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('share','Share',1,'100.64.0.2',22,9765,'http://10.0.0.1:8765')"); err != nil {
+		t.Fatal(err)
+	}
+	request := func(host, method, path, origin string) int {
+		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader("{}"))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		if origin != "" {
+			r.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		f.server.ServeHTTP(w, r)
+		return w.Code
+	}
+	if got := request("100.64.0.2:9765", "GET", "/api/status/alice", ""); got != 200 {
+		t.Fatal(got)
+	}
+	if got := request("100.64.0.2:9766", "GET", "/api/status/alice", ""); got != 403 {
+		t.Fatal("unconfigured port accepted", got)
+	}
+	if got := request("100.64.0.2:9765", "POST", "/api/members/me/retry", "http://evil.example"); got != 403 {
+		t.Fatal("cross origin accepted", got)
+	}
+	if got := request("100.64.0.2:9765", "POST", "/api/members/me/retry", "http://100.64.0.2:9765"); got != 202 {
+		t.Fatal(got)
 	}
 }

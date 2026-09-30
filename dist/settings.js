@@ -6,7 +6,6 @@ function controlSettingsControls(){
 }
 function renderControlSettings(value){
   settingsState.control=value;$('controlInternalIP').value=value.internal_ip;
-  $('controlWebScheme').value=value.web_scheme;$('controlWebPort').value=value.web_port;
   $('controlSettingsStatus').textContent='总控配置已载入';
 }
 async function loadControlSettings(){
@@ -61,7 +60,7 @@ $('controlSettingsForm').addEventListener('submit',async event=>{
   event.preventDefault();if(platform.user?.role!=='admin'||!settingsState.control||settingsState.controlLoading||settingsState.controlSaving)return;
   const epoch=settingsState.epoch;settingsState.controlSaving=true;$('controlSettingsError').textContent='';controlSettingsControls();
   try{
-    const value=await api('/api/control/settings',{method:'PUT',body:JSON.stringify({revision:settingsState.control.revision,internal_ip:$('controlInternalIP').value.trim(),web_scheme:$('controlWebScheme').value,web_port:Number($('controlWebPort').value)})});
+    const value=await api('/api/control/settings',{method:'PUT',body:JSON.stringify({revision:settingsState.control.revision,internal_ip:$('controlInternalIP').value.trim()})});
     if(epoch!==settingsState.epoch)return;
     renderControlSettings(value);$('controlSettingsStatus').textContent='总控配置已保存';
   }catch(error){if(epoch===settingsState.epoch)$('controlSettingsError').textContent=error.message;}

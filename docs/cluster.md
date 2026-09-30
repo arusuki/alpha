@@ -15,7 +15,7 @@
 
 总控保存 Agent 配置、加密 API Key、会话与报告，调用模型并通过 `/api/worker/records` 使用指定节点的查询、扫描和清理能力；不创建扫描配置或扫描任务表，不启动 Docker、扫描调度或 Tetragon。worker 不创建 Agent 表或保存模型凭据，基础数据库包含空的账号/会话表，但不创建账号、接受登录或持久化总控账号副本。Agent 会话保存总控用户 ID 和节点 ID，同一节点同时运行一个分析会话，不同节点可并行。
 
-数据库格式 v28，worker 节点协议 v4，registry 长连接协议 v2，不提供旧版本迁移。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。升级旧格式或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
+数据库格式 v30，worker 节点协议 v4，registry 长连接协议 v2，不提供旧版本迁移。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。升级旧格式或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
 
 ## 部署
 
@@ -31,7 +31,7 @@
 
 需要自行指定令牌时，通过 `--worker-token-file ./node-token`（建议文件权限 0600）或 `PROJECT_ALPHA_WORKER_TOKEN` 提供；指定文件时以文件为准。显式提供的令牌不打印；空文件、无效令牌或文件读取失败均报错。令牌须为 32–256 位不含空白的 ASCII 字符，不提供命令行明文令牌参数。node 无需 `--allowed-host`，请求必须携带服务令牌和匹配的节点身份；网页会话和 Host/Origin 校验由总控完成。
 
-首次打开总控创建管理员，同时必填用户通过 VPN 可访问的总控内网 IP（支持 IPv4 / IPv6，包括 Tailscale IP）。管理员账号和访问设置在同一事务中保存；可在“设置”修改内网 IP、网页协议和端口。协议和端口默认沿用初始化时的访问地址，反向代理部署须核对用户实际访问端口。当前配置的 IP 自动允许通过总控 Host 校验，修改后即时更新；总控仍须监听该 IP 或 `0.0.0.0` / `::`，网络路由由部署负责。
+首次打开总控创建管理员，同时必填总控内网 IP（支持 IPv4 / IPv6，包括 Tailscale IP）。管理员账号和访问设置在同一事务中保存；可在“设置”修改内网 IP。当前配置的 IP 自动允许通过总控 Host 校验，修改后即时更新；总控仍须监听该 IP 或 `0.0.0.0` / `::`，网络路由由部署负责。成员网页入口使用分配的 share node IP 和入口端口，在分享节点池中配置。
 
 然后在“添加节点”选择 worker 或 registry，输入名称、根地址和该节点的令牌。每台 worker 还须填写跳板机可访问的计算节点内网 IP，用于成员 SSH 教程；不从管理 URL 推断，registry 无此配置。总控分别用 `/api/worker/info` 或 `/api/registry/info` 核验类型、协议版本和实例 ID；同一实例不能重复添加。registry 还会检查是否已绑定其他 control，认证探测本身不建立绑定。registry 地址必须为 HTTPS，仅回环地址允许 HTTP。节点地址只允许 HTTP(S) 根地址，不允许路径、URL 用户密码、查询参数或 fragment。探测不跟随重定向，避免令牌被转发到其他目标。
 
@@ -49,7 +49,7 @@ registry 卡片显示连接状态、错误和最近通信时间，参与在线�
 
 总控首页提供节点状态卡片和 Agent 配置入口，集群使用者也统一在总控管理。`/nodes/<id>/` 展示所选 node 的存储、容器和进程工作台，可在存储内生成 Agent 报告。静态资源由总控提供。浏览器不获取节点令牌、不向 node 发起请求。
 
-`/status/<username>`（如 `/status/alice`）是独立的本人状态页，凭注册时的资源令牌查看全部 node 的基本信息及自己的容器，并在在线 node 立即补申请容器。该页同时提供容器状态、申请功能和 SSH config 示例，示例直接使用当前总控 / worker 内网 IP，通过固定 `alpha-jump` 账号转发到分配容器端口。它使用 `/api/status/<username>`，校验用户名与令牌所属使用者一致，不会开放节点运维代理权限，详情见 [使用者资源](bastion.md)。
+`/status/<username>`（如 `/status/alice`）是独立的本人状态页，凭注册时的资源令牌查看全部 node 的基本信息及自己的容器，并在在线 node 立即补申请容器。该页同时提供容器状态、申请功能和 SSH config 示例，status 入口通过分配的 share node HTTP 代理访问；SSH 示例使用该 share node 的固定 `alpha-jump` 账号，转发到 worker 内网 IP 和分配容器端口。它使用 `/api/status/<username>`，校验用户名与令牌所属使用者一致，不会开放节点运维代理权限，详情见 [使用者资源](bastion.md)。
 
 原有 node API `/api/jobs` 等在浏览器使用 `/api/cluster/nodes/<id>/api/jobs`；快照下载、ETag、目录变更、SSE 事件同样经过代理。节点切换使用整页导航，清除在途任务状态；缓存 URL 包含节点 ID，防止相同任务 ID 串节点。服务端只代理节点操作白名单，不能通过代理访问 node 登录、成员或内部工具接口。节点路径下的 Agent 请求由总控处理；模型配置仅通过总控 `/api/agent/settings` 访问。
 
@@ -78,7 +78,7 @@ Agent 后台任务直接检查总控中的管理员权限和节点注册；每�
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET / PUT | `/api/agent/settings` | 总控统一 Agent 配置，仅管理员可访问 |
-| GET / PUT | `/api/control/settings` | 管理员配置 `{revision,internal_ip,web_scheme,web_port}`；保存需当前 revision，冲突返回 409 |
+| GET / PUT | `/api/control/settings` | 管理员配置 `{revision,internal_ip}`；保存需当前 revision，冲突返回 409 |
 | GET | `/api/cluster/nodes` | 节点注册列表，不含 token |
 | POST | `/api/cluster/nodes` | `{kind,name,url,token,internal_ip}`，kind 为 worker 或 registry；验证成功后添加，返回 201 |
 | GET | `/api/cluster/nodes/<id>` | 节点连接信息，不含 token |

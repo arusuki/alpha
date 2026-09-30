@@ -97,8 +97,8 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 		}
 	}()
 	f.control.Bastion.Tailscale = registryNetwork{release}
-	f.control.Bastion.KeyEditor = func(string, string) error { return nil }
-	if _, err := f.db.SQL.Exec(`INSERT INTO bastion_tailscale VALUES('device','network',1)`); err != nil {
+	f.control.Bastion.KeyEditor = func(context.Context, string, string) error { return nil }
+	if _, err := f.db.SQL.Exec(`INSERT INTO bastion_tailscale VALUES('device','network',1,'100.64.0.2',22,8765,'http://10.0.0.1:8765')`); err != nil {
 		t.Fatal(err)
 	}
 	store := &members.Store{Database: f.db}
@@ -246,7 +246,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 			close(release)
 		}
 		if view.Access.InviteState == "invited" && view.Access.KeyState == "ready" && len(view.Nodes) == 1 && view.Nodes[0].State == "ready" {
-			if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://10.0.0.1:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
+			if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://100.64.0.2:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
 				t.Fatalf("registration guidance lost configured IPs: %+v", view)
 			}
 			if view.Access.InviteURL != "https://login.tailscale.com/admin/invite/test-share" {

@@ -264,8 +264,7 @@ func (s *Scanner) begin(path string, root bool) (*Node, *os.File) {
 	if s.Analysis != nil {
 		s.Analysis.observe(path, st)
 	}
-	// Like du --apparent-size, only regular files and symlinks have a
-	// meaningful logical length. Directory metadata still counts as allocated.
+	// Directories and special files contribute allocated blocks, but no logical length.
 	if mode == syscall.S_IFREG || mode == syscall.S_IFLNK {
 		n.Apparent = max(int64(0), st.Size)
 	}

@@ -257,7 +257,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	v := &memberResourceView{MemberID: id, Status: status, Access: a, Control: memberControlAccess{InternalIP: settings.InternalIP, StatusURL: settings.StatusURL(a.Username)}, Nodes: []memberNodeResource{}}
+	v := &memberResourceView{MemberID: id, Status: status, Access: a, Control: memberControlAccess{InternalIP: settings.InternalIP, StatusURL: memberStatusURL(a)}, Nodes: []memberNodeResource{}}
 	for rows.Next() {
 		var n memberNodeResource
 		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error); err != nil {

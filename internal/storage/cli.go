@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"runtime"
 	"time"
 
@@ -19,20 +20,36 @@ func (s *stringFlags) Set(v string) error { *s = append(*s, v); return nil }
 func ScanCLI(ctx context.Context, args []string) error {
 	c := defaultConfig()
 	p := flag.NewFlagSet("project-alpha scan", flag.ContinueOnError)
+	p.SetOutput(os.Stdout)
+	p.Usage = func() {
+		fmt.Fprint(p.Output(), `用法：
+  project-alpha scan [选项]
+
+独立扫描 Docker 资源和显式指定的宿主路径，导出 JSON 存储快照，无需启动 Web 服务。
+--root 和 --exclude 可重复指定；--no-docker 仅扫描宿主路径。
+
+示例：
+  project-alpha scan --output snapshots/latest.json
+  project-alpha scan --no-docker --root /srv/data --exclude /srv/data/cache -o snapshot.json
+
+选项：
+`)
+		p.PrintDefaults()
+	}
 	output := "snapshots/latest.json"
-	p.StringVar(&output, "output", output, "Snapshot JSON output")
-	p.StringVar(&output, "o", output, "Snapshot JSON output")
+	p.StringVar(&output, "output", output, "快照 JSON 输出路径")
+	p.StringVar(&output, "o", output, "--output 的简写")
 	var roots, excludes stringFlags
-	p.Var(&roots, "root", "Host path; repeatable")
-	p.Var(&excludes, "exclude", "Excluded path; repeatable")
-	p.BoolVar(&c.NoDocker, "no-docker", false, "Scan host paths without Docker")
-	p.BoolVar(&c.IncludeDockerRoot, "include-docker-root", false, "Scan entire Docker data directory")
-	p.StringVar(&c.ScanBackend, "scan-backend", "auto", "Scan backend: auto, host, docker (read-only helper container)")
-	p.StringVar(&c.ScanMode, "scan-mode", "normal", "Scan mode: normal (up to 4 CPUs), fast (all available CPUs)")
-	p.IntVar(&c.MaxDepth, "max-depth", c.MaxDepth, "Retained detail depth")
-	p.IntVar(&c.MaxNodes, "max-nodes", c.MaxNodes, "Retained node budget")
-	p.IntVar(&c.DockerTimeout, "docker-timeout", c.DockerTimeout, "Docker command timeout in seconds")
-	p.StringVar(&c.OwnerLabel, "owner-label", c.OwnerLabel, "Docker owner label")
+	p.Var(&roots, "root", "额外扫描的宿主路径；可重复指定")
+	p.Var(&excludes, "exclude", "排除的路径；可重复指定")
+	p.BoolVar(&c.NoDocker, "no-docker", false, "仅扫描宿主路径，不扫描 Docker")
+	p.BoolVar(&c.IncludeDockerRoot, "include-docker-root", false, "扫描整个 Docker 数据目录")
+	p.StringVar(&c.ScanBackend, "scan-backend", "auto", "扫描后端：auto、host、docker（只读辅助容器）")
+	p.StringVar(&c.ScanMode, "scan-mode", "normal", "扫描模式：normal（最多 4 个 CPU）、fast（全部可用 CPU）")
+	p.IntVar(&c.MaxDepth, "max-depth", c.MaxDepth, "保留明细的最大深度")
+	p.IntVar(&c.MaxNodes, "max-nodes", c.MaxNodes, "保留节点的数量上限")
+	p.IntVar(&c.DockerTimeout, "docker-timeout", c.DockerTimeout, "Docker 命令超时秒数")
+	p.StringVar(&c.OwnerLabel, "owner-label", c.OwnerLabel, "Docker 容器归属标签")
 	if err := p.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil

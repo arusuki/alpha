@@ -22,12 +22,28 @@ func RunCLI(ctx context.Context, args []string) error {
 	duration := 30 * time.Second
 	includeHost := false
 	p := flag.NewFlagSet("project-alpha process", flag.ContinueOnError)
-	p.StringVar(&output, "output", output, "Forest JSON output")
-	p.StringVar(&output, "o", output, "Forest JSON output")
-	p.StringVar(&socket, "socket", socket, "Tetragon gRPC unix socket")
-	p.StringVar(&eventsFile, "events-file", eventsFile, "Replay a Tetragon JSON event dump (or - for stdin) instead of a live agent")
-	p.DurationVar(&duration, "duration", duration, "Live collection window; 0 collects until interrupted")
-	p.BoolVar(&includeHost, "host", includeHost, "Include processes that have no container ID")
+	p.SetOutput(os.Stdout)
+	p.Usage = func() {
+		fmt.Fprint(p.Output(), `用法：
+  project-alpha process [选项]
+
+从 Tetragon 实时采集容器进程，或回放 JSON 事件文件，导出 JSON 进程树。
+默认采集 30 秒；--duration 0 持续采集直到中断，回放模式不使用采集时长。
+
+示例：
+  project-alpha process --duration 30s --output process-forest.json
+  project-alpha process --events-file events.json -o replay.json
+
+选项：
+`)
+		p.PrintDefaults()
+	}
+	p.StringVar(&output, "output", output, "进程树 JSON 输出路径")
+	p.StringVar(&output, "o", output, "--output 的简写")
+	p.StringVar(&socket, "socket", socket, "Tetragon gRPC Unix socket")
+	p.StringVar(&eventsFile, "events-file", eventsFile, "回放 Tetragon JSON 事件文件；- 表示标准输入")
+	p.DurationVar(&duration, "duration", duration, "实时采集时长；0 表示持续采集直到中断")
+	p.BoolVar(&includeHost, "host", includeHost, "包含没有容器 ID 的宿主进程")
 	if err := p.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil

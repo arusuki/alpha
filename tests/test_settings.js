@@ -12,7 +12,7 @@ function element(id){
   return elements.get(id);
 }
 let config={revision:1,value:{protocol:'responses',endpoint:'https://model.example/v1',model:'test-model',timeout_seconds:180,has_api_key:true}};
-let controlConfig={revision:1,internal_ip:'10.0.0.1',web_scheme:'http',web_port:8765};
+let controlConfig={revision:1,internal_ip:'10.0.0.1'};
 const requests=[];let accountLoads=0,failSave=false,pendingLoad=null,pendingSave=null;
 const sandbox={console,window:{},$:element,platform:{user:{username:'admin',role:'admin'}},loadAccounts:async()=>{accountLoads++;},message(){},api:async(path,options={})=>{
   requests.push({path,options});
@@ -36,7 +36,7 @@ const submit=()=>element('agentSettingsForm').listeners.submit({preventDefault()
 (async()=>{
   run('window.SettingsUI.reset();window.SettingsUI.open()');await flush();
   assert.equal(accountLoads,1);assert.equal(element('settingsUsername').textContent,'admin');assert.equal(requests.length,1);assert.equal(element('controlInternalIP').value,'10.0.0.1');
-  element('controlInternalIP').value='100.100.0.1';element('controlWebScheme').value='https';element('controlWebPort').value='8443';await element('controlSettingsForm').listeners.submit({preventDefault(){}});assert.equal(controlConfig.internal_ip,'100.100.0.1');assert.equal(controlConfig.web_port,8443);assert.equal(controlConfig.revision,2);
+  element('controlInternalIP').value='100.100.0.1';await element('controlSettingsForm').listeners.submit({preventDefault(){}});assert.equal(controlConfig.internal_ip,'100.100.0.1');assert.equal(controlConfig.revision,2);
   run('window.SettingsUI.openModel()');await flush();assert.equal(element('agentModel').value,'test-model');assert(element('agentKeyState').textContent.includes('已保存'));assert.equal(element('agentKey').value,'');assert(!element('agentSaveSettings').disabled);
   element('agentReasoningSummary').checked=true;element('agentKey').value='new-secret';element('agentProtocol').value='completions';await submit();
   assert.equal(JSON.parse(requests[requests.length-1].options.body).value.api_key,'new-secret');assert.equal(config.value.protocol,'completions');assert.equal(element('agentKey').value,'');assert.equal(run('settingsState.model.revision'),2);

@@ -3,217 +3,188 @@ package bastion
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 )
 
-func keyFixture(t *testing.T) (keyStore, installation) {
+const managerTestKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIH9/f39/f39/f39/f39/f39/f39/f39/f39/f39/f39/"
+
+func testKeyStore(t *testing.T) (keyStore, installation) {
 	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("publisher is intentionally non-root")
+		t.Skip("non-root key writer")
 	}
-	c := installation{Version: keyFormat, Ready: true, ControlID: strings.Repeat("a", 32), ServiceUser: "control", ServiceUID: os.Geteuid(), JumpUID: os.Geteuid() + 1, JumpGID: os.Getegid()}
+	c := installation{Version: keyFormat, ControlKey: managerTestKey, ControlURL: "http://10.0.0.1:8765", ListenHost: "100.64.0.2", StatusPort: 9765, JumpUID: os.Geteuid() + 1, JumpGID: os.Getegid(), WorkerUID: os.Geteuid(), WorkerGID: os.Getegid()}
 	s := keyStore{path: t.TempDir(), owner: os.Geteuid(), lookup: func(name string) (*user.User, error) {
-		if name == "control" {
-			return &user.User{Uid: strconv.Itoa(c.ServiceUID)}, nil
+		uid, gid := c.JumpUID, c.JumpGID
+		if name == WorkerUser {
+			uid, gid = c.WorkerUID, c.WorkerGID
 		}
-		if name == JumpUser {
-			return &user.User{Uid: strconv.Itoa(c.JumpUID), Gid: strconv.Itoa(c.JumpGID)}, nil
-		}
-		return nil, fmt.Errorf("unknown user")
+		return &user.User{Uid: strconv.Itoa(uid), Gid: strconv.Itoa(gid)}, nil
 	}}
-	if err := os.Chmod(s.path, 0755); err != nil {
+	if err := os.Chmod(s.path, 0700); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(c)
 	if err := os.WriteFile(filepath.Join(s.path, "installation.json"), raw, 0644); err != nil {
 		t.Fatal(err)
 	}
-	keys := filepath.Join(s.path, "keys")
-	if err := os.Mkdir(keys, 0750); err != nil {
+	if err := os.Mkdir(filepath.Join(s.path, "keys"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(keys, os.ModeSetgid|0750); err != nil {
+	if err := os.Chmod(filepath.Join(s.path, "keys"), os.ModeSetgid|0750); err != nil {
 		t.Fatal(err)
 	}
 	return s, c
 }
-
-// setPoolEntry seeds or removes a pool entry without any member-ID mapping.
-func setPoolEntry(s keyStore, control, entry, key string) error {
-	return s.update(control, func(v *keySnapshot) error {
-		if key == "" {
-			delete(v.Keys, entry)
-		} else {
-			v.Keys[entry] = key
-		}
-		return nil
-	})
-}
-
-func TestKeySnapshotPublicationAndRevocation(t *testing.T) {
-	s, c := keyFixture(t)
-	a, b := strings.Repeat("b", 32), strings.Repeat("c", 32)
-	for _, id := range []string{a, b} {
-		if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
+func TestWorkerWritesJumpReadsAndControllerKeyIsIndependent(t *testing.T) {
+	s, c := testKeyStore(t)
+	for range 2 {
+		if _, err := s.update(func(v *keySnapshot) error { ensurePoolKeys(v, testKey); return nil }); err != nil {
 			t.Fatal(err)
 		}
 	}
+	v, err := s.snapshot()
+	if err != nil || len(v.Keys) != 1 {
+		t.Fatalf("%+v %v", v, err)
+	}
+	info, _ := os.Stat(filepath.Join(s.path, "keys", "keys.json"))
+	if info.Mode().Perm() != 0640 {
+		t.Fatal(info.Mode())
+	}
 	var out bytes.Buffer
-	if err := s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err != nil {
+	if err = s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Count(out.String(), keyOptions) != 2 {
-		t.Fatal(out.String())
+	if !strings.Contains(out.String(), testKey) || strings.Contains(out.String(), c.ControlKey) {
+		t.Fatal("manager key entered member pool")
 	}
-	if err := setPoolEntry(s, c.ControlID, a, ""); err != nil {
-		t.Fatal(err)
+	if err = s.authorizedKeys(WorkerUser, strconv.Itoa(c.WorkerUID), &out); err == nil {
+		t.Fatal("reader accepted worker")
 	}
-	out.Reset()
-	if err := s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(out.String(), a) || !strings.Contains(out.String(), b) {
-		t.Fatal("removed another pool entry")
-	}
-	if err := setPoolEntry(s, c.ControlID, b, ""); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	if err := s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err != nil || out.Len() != 0 {
-		t.Fatalf("revocation failed: %v %s", err, out.String())
-	}
-	info, err := os.Stat(filepath.Join(s.path, "keys", "keys.json"))
-	if err != nil || info.Mode().Perm() != 0640 {
-		t.Fatalf("snapshot permissions: %v %v", info, err)
+	if _, err = s.update(func(v *keySnapshot) error { ensurePoolKeys(v, c.ControlKey); return nil }); err == nil {
+		t.Fatal("manager key accepted as member")
 	}
 }
-
-func TestKeyStoreRejectsIdentityAndUnsafeFiles(t *testing.T) {
-	for _, kind := range []string{"control", "service", "jump", "version", "incomplete", "symlink", "hardlink", "fifo", "directory-mode", "file-mode", "invalid-key", "invalid-entry", "missing-version", "missing-control", "snapshot-version", "wrong-account", "wrong-uid"} {
+func TestKeyStoreRejectsChangedIdentityFormatsAndUnsafeFiles(t *testing.T) {
+	for _, kind := range []string{"old-version", "unknown-field", "worker-uid", "group", "mode", "symlink", "hardlink", "invalid-key", "missing-version", "missing-keys", "null-snapshot", "control-key", "lock-symlink"} {
 		t.Run(kind, func(t *testing.T) {
-			s, c := keyFixture(t)
-			id := strings.Repeat("b", 32)
-			if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
+			s, c := testKeyStore(t)
+			_, err := s.update(func(v *keySnapshot) error { ensurePoolKeys(v, testKey); return nil })
+			if err != nil {
 				t.Fatal(err)
 			}
-			path := filepath.Join(s.path, "keys", "keys.json")
-			before, _ := os.ReadFile(path)
-			var out bytes.Buffer
-			var err error
+			manifest := filepath.Join(s.path, "installation.json")
+			keys := filepath.Join(s.path, "keys", "keys.json")
 			switch kind {
-			case "control":
-				err = setPoolEntry(s, strings.Repeat("d", 32), id, "")
-			case "service", "jump":
-				lookup := s.lookup
-				s.lookup = func(name string) (*user.User, error) {
-					u, e := lookup(name)
-					if name == "control" && kind == "service" || name == JumpUser && kind == "jump" {
-						u.Uid = "12345678"
-					}
-					return u, e
-				}
-				err = setPoolEntry(s, c.ControlID, id, "")
-			case "version", "incomplete":
-				if kind == "version" {
-					c.Version++
-				} else {
-					c.Ready = false
-				}
-				raw, _ := json.Marshal(c)
-				os.WriteFile(filepath.Join(s.path, "installation.json"), raw, 0644)
-				err = setPoolEntry(s, c.ControlID, id, "")
-			case "symlink", "hardlink", "fifo":
-				if e := os.Remove(path); e != nil {
-					t.Fatal(e)
-				}
-				outside := filepath.Join(t.TempDir(), "outside")
-				os.WriteFile(outside, before, 0640)
-				if kind == "symlink" {
-					err = os.Symlink(outside, path)
-				} else if kind == "hardlink" {
-					err = os.Link(outside, path)
-				} else {
-					err = syscall.Mkfifo(path, 0600)
-				}
-				if err != nil {
+			case "old-version":
+				c.Version = 1
+				if err := os.Chmod(s.path, 0700); err != nil {
 					t.Fatal(err)
 				}
-				err = setPoolEntry(s, c.ControlID, id, "")
-				after, _ := os.ReadFile(outside)
-				if !bytes.Equal(before, after) {
-					t.Fatal("modified external file")
+				raw, _ := json.Marshal(c)
+				os.WriteFile(manifest, raw, 0644)
+			case "unknown-field":
+				raw, _ := os.ReadFile(manifest)
+				os.WriteFile(manifest, append(raw[:len(raw)-1], []byte(",\"extra\":true}")...), 0644)
+			case "worker-uid":
+				s.lookup = func(name string) (*user.User, error) { return &user.User{Uid: "1", Gid: "1"}, nil }
+			case "group":
+				c.JumpGID++
+				if err := os.Chmod(s.path, 0700); err != nil {
+					t.Fatal(err)
 				}
-			case "directory-mode":
-				os.Chmod(filepath.Dir(path), 0770)
-				err = setPoolEntry(s, c.ControlID, id, "")
-			case "file-mode":
-				os.Chmod(path, 0660)
-				err = setPoolEntry(s, c.ControlID, id, "")
-			case "invalid-key", "invalid-entry", "missing-version", "missing-control", "snapshot-version":
-				var fields map[string]any
-				json.Unmarshal(before, &fields)
-				switch kind {
-				case "invalid-key":
-					fields["keys"].(map[string]any)[id] = "command=\"/bin/sh\" " + testKey
-				case "invalid-entry":
-					fields["keys"].(map[string]any)["../root"] = testKey
-				case "snapshot-version":
-					fields["version"] = keyFormat + 1
-				case "missing-version":
-					delete(fields, "version")
-				case "missing-control":
-					delete(fields, "control_id")
+				raw, _ := json.Marshal(c)
+				os.WriteFile(manifest, raw, 0644)
+			case "mode":
+				os.Chmod(keys, 0666)
+			case "symlink":
+				os.Rename(keys, keys+".original")
+				os.Symlink(keys+".original", keys)
+			case "hardlink":
+				os.Link(keys, keys+".copy")
+			case "invalid-key":
+				os.WriteFile(keys, []byte(`{"version":2,"keys":{"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa":"bad"}}`), 0640)
+			case "missing-version":
+				os.WriteFile(keys, []byte(`{"keys":{}}`), 0640)
+			case "missing-keys":
+				os.WriteFile(keys, []byte(`{"version":2}`), 0640)
+			case "null-snapshot":
+				os.WriteFile(keys, []byte(`null`), 0640)
+			case "control-key":
+				raw, _ := json.Marshal(keySnapshot{Version: keyFormat, Keys: map[string]string{strings.Repeat("a", 32): testKey, strings.Repeat("b", 32): c.ControlKey}})
+				os.WriteFile(keys, raw, 0640)
+			case "lock-symlink":
+				lock := filepath.Join(s.path, "keys", ".lock")
+				os.Remove(lock)
+				os.Symlink(keys, lock)
+				_, err = s.update(func(*keySnapshot) error { return nil })
+				if err == nil {
+					t.Fatal("unsafe lock accepted")
 				}
-				raw, _ := json.Marshal(fields)
-				os.WriteFile(path, raw, 0640)
-				err = s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out)
-			case "wrong-account":
-				err = s.authorizedKeys("root", "0", &out)
-			case "wrong-uid":
-				err = s.authorizedKeys(JumpUser, "0", &out)
+				return
 			}
-			if err == nil || out.Len() != 0 {
-				t.Fatalf("accepted %s: %v %s", kind, err, out.String())
+			if _, err = s.snapshot(); err == nil {
+				t.Fatal("unsafe store accepted")
+			}
+			var out bytes.Buffer
+			if err = s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err == nil || out.Len() != 0 {
+				t.Fatalf("invalid store emitted authorization: %q %v", out.String(), err)
 			}
 		})
 	}
 }
+func TestManagementCommandRejectsShellAndMalformedRequests(t *testing.T) {
+	s, _ := testKeyStore(t)
+	for _, command := range []string{"", "sh", "alpha-worker cmd; id", "alpha-jump cmd", "alpha-worker tunnel"} {
+		if err := serveCommand(s, command, strings.NewReader("{}"), &bytes.Buffer{}); err == nil {
+			t.Fatal(command)
+		}
+	}
+	for _, request := range []string{`{"version":1,"operation":"inspect"}`, `{"version":2,"operation":"shell"}`, `{"version":2,"operation":"ensure","keys":["bad"]}`, `{"version":2,"operation":"inspect","unknown":1}`, `{"version":2,"operation":"inspect"}{}`} {
+		if err := serveCommand(s, "alpha-worker cmd", strings.NewReader(request), &bytes.Buffer{}); err == nil {
+			t.Fatal(request)
+		}
+	}
+	for _, request := range []string{`{"version":2,"operation":"ensure","keys":["` + testKey + `"]}`, `{"version":2,"operation":"inspect"}`, `{"version":2,"operation":"remove","key":"` + testKey + `"}`} {
+		var output bytes.Buffer
+		if err := serveCommand(s, "alpha-worker cmd", strings.NewReader(request), &output); err != nil {
+			t.Fatal(err)
+		}
+		var reply commandReply
+		if err := strictJSON(output.Bytes(), &reply); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v, err := s.snapshot()
+	if err != nil || len(v.Keys) != 0 {
+		t.Fatalf("revocation failed: %+v %v", v, err)
+	}
+}
 
-func TestKeyStoreLockAndFailedUpdatePreserveSnapshot(t *testing.T) {
-	s, c := keyFixture(t)
-	id := strings.Repeat("b", 32)
-	if err := setPoolEntry(s, c.ControlID, id, testKey); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(s.path, "keys", "keys.json")
-	before, _ := os.ReadFile(path)
-	f, err := os.OpenFile(filepath.Join(s.path, "keys", ".lock"), os.O_RDWR, 0600)
+func (s keyStore) snapshot() (keySnapshot, error) {
+	r, c, err := s.open()
 	if err != nil {
-		t.Fatal(err)
+		return keySnapshot{}, err
 	}
-	defer f.Close()
-	if err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		t.Fatal(err)
+	defer r.Close()
+	k, err := openKeys(r, c)
+	if err != nil {
+		return keySnapshot{}, err
 	}
-	if err = setPoolEntry(s, c.ControlID, id, ""); err == nil {
-		t.Fatal("ignored concurrent writer")
+	defer k.Close()
+	return loadSnapshot(k, c)
+}
+
+func (s keyStore) update(change func(*keySnapshot) error) (keySnapshot, error) {
+	r, c, err := s.open()
+	if err != nil {
+		return keySnapshot{}, err
 	}
-	syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	if err = s.update(c.ControlID, func(v *keySnapshot) error {
-		delete(v.Keys, id)
-		return fmt.Errorf("publication rejected")
-	}); err == nil {
-		t.Fatal("ignored rejected update")
-	}
-	after, _ := os.ReadFile(path)
-	if !bytes.Equal(before, after) {
-		t.Fatal("failed write changed snapshot")
-	}
+	defer r.Close()
+	return updateKeys(r, c, change)
 }

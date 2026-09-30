@@ -1,4 +1,4 @@
-// Package bastion tracks shared network access and annotated local SSH keys.
+// Package bastion manages shared access through remote share nodes.
 package bastion
 
 import (
@@ -41,34 +41,13 @@ type Handler struct {
 	DB            *platform.Database
 	Tailscale     Network
 	mu            sync.Mutex
-	KeyEditor     func(string, string) error
-	installation  func() error
-	accountStatus func() accountInfo
-	installMu     sync.Mutex
-	installInfo   func() webInstallInfo
-	installRunner func(context.Context, []byte, installRequest) error
-	keys          keyStore
+	KeyEditor     func(context.Context, string, string) error
+	RemoteCommand func(context.Context, ShareNode, commandRequest) (commandReply, error)
 }
 
 func NewHandler(db *platform.Database) *Handler {
 	h := &Handler{DB: db, Tailscale: tailscale.NewHandler(db)}
-	h.installInfo = installAvailability
-	h.installRunner = func(ctx context.Context, password []byte, request installRequest) error {
-		return runSudoInstall(ctx, password, request, nil)
-	}
-	store := systemKeyStore()
-	h.keys = store
-	h.accountStatus = func() accountInfo {
-		id, _ := db.CheckMode("control")
-		return store.accountInfo(id)
-	}
-	h.installation = func() error {
-		id, err := db.CheckMode("control")
-		if err != nil {
-			return err
-		}
-		return store.checkWriter(id)
-	}
+	h.RemoteCommand = h.sshCommand
 	h.KeyEditor = h.editMemberKey
 	return h
 }
@@ -87,20 +66,23 @@ func allocate(tx *sql.Tx, id string) error {
 }
 
 type Access struct {
-	MemberID    string `json:"member_id"`
-	Username    string `json:"username"`
-	TailscaleID string `json:"tailscale_id"`
-	InviteID    string `json:"invite_id"`
-	InviteURL   string `json:"invite_url"`
-	InviteState string `json:"invite_state"`
-	AcceptedBy  string `json:"accepted_by"`
-	KeyState    string `json:"key_state"`
-	Error       string `json:"error"`
+	MemberID     string `json:"member_id"`
+	Username     string `json:"username"`
+	TailscaleID  string `json:"tailscale_id"`
+	InviteID     string `json:"invite_id"`
+	InviteURL    string `json:"invite_url"`
+	InviteState  string `json:"invite_state"`
+	AcceptedBy   string `json:"accepted_by"`
+	KeyState     string `json:"key_state"`
+	Error        string `json:"error"`
+	ShareHost    string `json:"share_host"`
+	ShareSSHPort int    `json:"share_ssh_port"`
+	StatusPort   int    `json:"status_port"`
 }
 
 func (h *Handler) Access(id string) (Access, error) {
 	var a Access
-	err := h.DB.SQL.QueryRow(`SELECT a.member_id,m.username,COALESCE(a.tailscale_id,''),a.invite_id,a.invite_url,a.invite_state,a.accepted_by,a.key_state,a.error FROM member_access a JOIN members m ON m.id=a.member_id WHERE a.member_id=?`, id).Scan(&a.MemberID, &a.Username, &a.TailscaleID, &a.InviteID, &a.InviteURL, &a.InviteState, &a.AcceptedBy, &a.KeyState, &a.Error)
+	err := h.DB.SQL.QueryRow(`SELECT a.member_id,m.username,COALESCE(a.tailscale_id,''),a.invite_id,a.invite_url,a.invite_state,a.accepted_by,a.key_state,a.error,COALESCE(b.ssh_host,''),COALESCE(b.ssh_port,0),COALESCE(b.status_port,0) FROM member_access a JOIN members m ON m.id=a.member_id LEFT JOIN bastion_tailscale b ON b.id=a.tailscale_id WHERE a.member_id=?`, id).Scan(&a.MemberID, &a.Username, &a.TailscaleID, &a.InviteID, &a.InviteURL, &a.InviteState, &a.AcceptedBy, &a.KeyState, &a.Error, &a.ShareHost, &a.ShareSSHPort, &a.StatusPort)
 	return a, err
 }
 func (h *Handler) Apply(ctx context.Context, id, key string, remove bool) error {
@@ -164,7 +146,7 @@ func (h *Handler) Apply(ctx context.Context, id, key string, remove bool) error 
 		if remove {
 			value = ""
 		}
-		err = h.KeyEditor(id, value)
+		err = h.KeyEditor(ctx, id, value)
 		if err == nil {
 			state := "ready"
 			if remove {
@@ -274,18 +256,15 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 	if u.Role != "admin" {
 		return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
 	}
-	if r.Method == "POST" && r.URL.Path == "/api/bastion/install" {
-		return h.installFromWeb(w, r, u.Username)
-	}
 	if r.Method == "GET" && r.URL.Path == "/api/bastion/keys" {
-		keys, err := h.keyPool()
-		return 200, map[string]any{"keys": keys}, err
+		keys, problem, err := h.keyPool(r.Context())
+		return 200, map[string]any{"keys": keys, "error": problem}, err
 	}
 	if r.Method == "POST" && r.URL.Path == "/api/bastion/keys/sync" {
 		if err := httpapi.DecodeBody(w, r, &struct{}{}); err != nil {
 			return 0, nil, err
 		}
-		err := h.SyncKeys()
+		err := h.SyncKeys(r.Context())
 		if err == nil {
 			err = platform.Audit(h.DB.SQL, u.Username, "bastion.key.sync", JumpUser)
 		}
@@ -295,7 +274,11 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 		if err := httpapi.DecodeBody(w, r, &struct{}{}); err != nil {
 			return 0, nil, err
 		}
-		err := h.cleanFreeKey(strings.TrimPrefix(r.URL.Path, "/api/bastion/keys/"), u.Username)
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/bastion/keys/"), "/")
+		if len(parts) != 2 {
+			return 0, nil, httpapi.NewError(400, "需指定 share node 和公钥条目")
+		}
+		err := h.cleanFreeKey(r.Context(), parts[0], parts[1], u.Username)
 		return 200, map[string]bool{"ok": err == nil}, err
 	}
 	if tailscale.IsRoute(r.URL.Path) {
@@ -334,17 +317,11 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 		for _, a := range assignments {
 			delete(a, "invite_before")
 		}
-		installationError := ""
-		if err := h.installation(); err != nil {
-			installationError = err.Error()
-		}
-		keys, poolErr := h.keyPool()
-		poolError := ""
+		keys, problem, poolErr := h.keyPool(r.Context())
 		if poolErr != nil {
-			poolError = poolErr.Error()
-			keys = []poolKey{}
+			return 0, nil, poolErr
 		}
-		return 200, map[string]any{"tailscale": t, "assignments": assignments, "key_pool": map[string]any{"keys": keys, "error": poolError}, "jump_installation": map[string]any{"ready": installationError == "", "error": installationError, "web": h.installInfo(), "account": h.accountStatus(), "data_directory": h.DB.Directory}}, e
+		return 200, map[string]any{"tailscale": t, "assignments": assignments, "key_pool": map[string]any{"keys": keys, "error": problem}}, e
 	}
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/bastion/"), "/")
 	if len(parts) == 3 && parts[0] == "members" && (parts[2] == "refresh" || parts[2] == "resolve-invite") && r.Method == "POST" {
@@ -385,49 +362,12 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.Us
 			return 200, map[string]bool{"ok": e == nil}, e
 		}
 		if r.Method == "PUT" {
-			var req struct {
-				Enabled *bool `json:"enabled"`
+			var req shareUpdate
+			if err := httpapi.DecodeBody(w, r, &req); err != nil {
+				return 0, nil, err
 			}
-			if e := httpapi.DecodeBody(w, r, &req); e != nil {
-				return 0, nil, e
-			}
-			if req.Enabled == nil {
-				return 0, nil, httpapi.NewError(400, "需提供 enabled")
-			}
-			name := ""
-			if !*req.Enabled {
-				if e := h.DB.SQL.QueryRow("SELECT name FROM bastion_tailscale WHERE id=?", parts[1]).Scan(&name); e != nil {
-					if e == sql.ErrNoRows {
-						return 0, nil, httpapi.NewError(404, "节点池资源不存在")
-					}
-					return 0, nil, e
-				}
-			}
-			if *req.Enabled {
-				devices, e := h.Tailscale.Devices(r.Context())
-				if e != nil {
-					return 0, nil, e
-				}
-				for _, d := range devices {
-					if d.NodeID == parts[1] && !d.IsExternal && d.Authorized {
-						name = d.Hostname
-						if name == "" {
-							name = d.Name
-						}
-					}
-				}
-				if name == "" {
-					return 0, nil, httpapi.NewError(400, "请选择当前网络中已授权的自有节点")
-				}
-			}
-			e := h.DB.Transaction(func(tx *sql.Tx) error {
-				_, e := tx.Exec("INSERT INTO bastion_tailscale VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,name=CASE WHEN excluded.name='' THEN name ELSE excluded.name END", parts[1], name, *req.Enabled)
-				if e != nil {
-					return e
-				}
-				return platform.Audit(tx, u.Username, "bastion.resource.update", parts[1])
-			})
-			return 200, map[string]bool{"ok": e == nil}, e
+			err := h.updateShare(r.Context(), parts[1], req, u.Username)
+			return 200, map[string]bool{"ok": err == nil}, err
 		}
 	}
 	return 0, nil, httpapi.NewError(404, "接口不存在")

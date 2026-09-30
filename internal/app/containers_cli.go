@@ -51,8 +51,8 @@ func newContainerHandler(db *platform.Database) *containers.Handler {
 }
 
 func containersCLI(ctx context.Context, args []string) error {
-	if len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
-		fmt.Fprint(os.Stderr, `用法：
+	if len(args) == 0 || len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
+		fmt.Fprint(os.Stdout, `用法：
   project-alpha containers import [选项] [容器名或完整 ID ...]
 
 子命令：
@@ -66,6 +66,7 @@ func containersCLI(ctx context.Context, args []string) error {
 		return fmt.Errorf("usage: project-alpha containers import [--data-dir DIR] [--endpoint unix:///path] [--base-dir /docker] [--dry-run] [CONTAINER ...]")
 	}
 	p := flag.NewFlagSet("project-alpha containers import", flag.ContinueOnError)
+	p.SetOutput(os.Stdout)
 	p.Usage = func() {
 		fmt.Fprint(p.Output(), `用法：
   project-alpha containers import [选项] [容器名或完整 ID ...]

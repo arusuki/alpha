@@ -24,7 +24,8 @@ func TestWritableLayersAndWholeDiskDoNotDoubleCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = f.WriteAt([]byte("x"), 32*1024*1024); err != nil {
+	const sparseOffset = 32 * 1024 * 1024
+	if _, err = f.WriteAt([]byte("x"), sparseOffset); err != nil {
 		t.Fatal(err)
 	}
 	f.Close()
@@ -40,32 +41,33 @@ func TestWritableLayersAndWholeDiskDoNotDoubleCount(t *testing.T) {
 	containers := []Container{{ID: "running", State: "running", UpperPath: &upper, SizeRW: &logical}, {ID: "stopped", State: "exited"}}
 	summary, warnings := writableLayers(containers, tree)
 	w := containers[0].WritableLayer
-	for _, apparent := range []bool{false, true} {
-		args := []string{"-s", "-B1"}
-		if apparent {
-			args = append(args, "--apparent-size")
-		}
-		raw, err := exec.Command("du", append(args, upper)...).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		want, _ := strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
-		got := w.Allocated
-		if apparent {
-			got = w.Apparent
-		}
-		if got == nil || *got != want {
-			t.Fatalf("apparent %v: %+v, du %d", apparent, w, want)
-		}
+	raw, err := exec.Command("du", "-s", "-B1", upper).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Allocated == nil || *w.Allocated != want {
+		t.Fatalf("allocated: %+v, du %d", w, want)
+	}
+	// Directory st_size is excluded regardless of the installed du version.
+	const wantApparent = int64(sparseOffset + 1)
+	if w.Apparent == nil || *w.Apparent != wantApparent {
+		t.Fatalf("apparent: %+v, want %d", w, wantApparent)
 	}
 	if w.Status != "complete" || summary["complete"] != 1 || summary["unknown"] != 1 || len(warnings) != 1 || containers[1].WritableLayer.Allocated != nil {
 		t.Fatalf("invalid layers: %+v %+v", w, summary)
 	}
-	raw, err := exec.Command("du", "-s", "-B1", root).Output()
+	raw, err = exec.Command("du", "-s", "-B1", root).Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, _ := strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
+	want, err = strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if tree.Allocated != want {
 		t.Fatalf("writable layer counted twice: %d != %d", tree.Allocated, want)
 	}

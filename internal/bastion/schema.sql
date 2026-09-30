@@ -1,5 +1,9 @@
 CREATE TABLE bastion_tailscale (
- id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1))
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+ ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL CHECK(ssh_port BETWEEN 1 AND 65535),
+ status_port INTEGER NOT NULL CHECK(status_port BETWEEN 1024 AND 65535),
+ control_url TEXT NOT NULL,
+ UNIQUE(ssh_host,status_port)
 );
 CREATE TABLE member_access (
  member_id TEXT PRIMARY KEY REFERENCES members(id),

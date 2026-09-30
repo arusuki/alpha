@@ -14,6 +14,7 @@ import (
 
 	web "project-alpha/dist"
 	"project-alpha/internal/bastion"
+	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
@@ -26,40 +27,34 @@ type stringFlags []string
 func (s *stringFlags) String() string     { return fmt.Sprint([]string(*s)) }
 func (s *stringFlags) Set(v string) error { *s = append(*s, v); return nil }
 func Run(ctx context.Context, args []string) error {
-	if len(args) == 2 && args[0] == "bastion" && args[1] == "install-helper" {
-		return bastion.ServeInstallHelper(ctx, os.Stdin, os.Stdout)
-	}
-	if len(args) == 3 && args[0] == "bastion" && (args[1] == "prepare-control" || args[1] == "sync-control-keys") {
-		if os.Geteuid() == 0 {
-			return fmt.Errorf("总控目录必须以普通服务用户初始化")
-		}
-		db, err := platform.OpenDatabase(args[2], cluster.Initialize)
-		if err != nil {
-			return err
-		}
-		defer db.SQL.Close()
-		id, err := db.CheckMode("control")
-		if err != nil {
-			return err
-		}
-		if args[1] == "sync-control-keys" {
-			if err = bastion.NewHandler(db).SyncKeys(); err != nil {
-				return err
-			}
-		}
-		_, err = fmt.Fprintln(os.Stdout, id)
-		return err
+	if len(args) > 0 && args[0] == "share-node" {
+		return bastion.InitializeCLI(ctx, args[1:], os.Stdout)
 	}
 	if len(args) > 0 && args[0] == "bastion" {
 		return bastion.CLI(ctx, args[1:], os.Stdout)
 	}
-	if len(args) == 1 && args[0] == "cleanup-helper" {
+	if len(args) > 0 && args[0] == "cleanup-helper" {
+		if internalHelp(args[1:], os.Stdout, "cleanup-helper", "", "从标准输入接收清理请求，将结果写入标准输出。") {
+			return nil
+		}
+		if len(args) != 1 {
+			return fmt.Errorf("cleanup-helper does not accept arguments")
+		}
 		return storage.ServeCleanupHelper(ctx, os.Stdin, os.Stdout)
 	}
-	if len(args) == 1 && args[0] == "scan-helper" {
+	if len(args) > 0 && args[0] == "scan-helper" {
+		if internalHelp(args[1:], os.Stdout, "scan-helper", "", "从标准输入接收存储扫描请求，将结果写入标准输出。") {
+			return nil
+		}
+		if len(args) != 1 {
+			return fmt.Errorf("scan-helper does not accept arguments")
+		}
 		return storage.ServeScanHelper(ctx, os.Stdin, os.Stdout)
 	}
 	if len(args) > 0 && args[0] == "worker" {
+		if internalHelp(args[1:], os.Stdout, "worker", " <数据目录> <任务 ID> <父进程 PID>", "执行独立存储扫描任务；服务角色请使用 serve --worker。") {
+			return nil
+		}
 		if len(args) != 4 {
 			return fmt.Errorf("worker requires directory, job ID and parent PID")
 		}
@@ -78,38 +73,21 @@ func Run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "containers" {
 		return containersCLI(ctx, args[1:])
 	}
-	if len(args) > 0 && args[0] == "serve" {
+	serving := len(args) > 0 && args[0] == "serve"
+	if serving {
 		args = args[1:]
 	}
 	p := flag.NewFlagSet("project-alpha", flag.ContinueOnError)
+	p.SetOutput(os.Stdout)
 	p.Usage = func() {
-		fmt.Fprint(p.Output(), `用法：
-  project-alpha [serve] [服务选项]
-  project-alpha <子命令> [选项]
-
-子命令：
-  serve              启动总控（默认）、API-only worker 或公网 registry
-  containers import  扫描并接管已有 Docker 容器，写入所在节点的 worker 数据目录
-  bastion init       添加或重装固定 alpha-jump 跳板；日常运行免 sudo
-  bastion adopt      接管已有 alpha-jump、工具和 data
-  bastion release    取消接管，保留账号、工具、data 和现有授权
-  bastion delete     删除 alpha-jump 账号，保留工具和 data
-  scan               独立扫描存储并导出 JSON 快照
-  process            采集容器进程或回放事件，导出 JSON 进程树
-
-示例：
-  project-alpha --control --data-dir ./control-data
-  project-alpha --worker --data-dir ./node-data --host 0.0.0.0 --port 8766
-  project-alpha containers import --data-dir ./node-data --dry-run
-  project-alpha containers import --data-dir ./node-data
-
-使用 project-alpha <子命令> --help 查看详细选项，例如：
-  project-alpha containers import --help
-
-服务选项（仅适用于默认启动或 serve）：
-`)
+		if !serving {
+			printHelp(p.Output())
+			return
+		}
+		fmt.Fprint(p.Output(), serveHelp)
 		p.PrintDefaults()
 	}
+	version := p.Bool("version", false, "显示版本并退出")
 	directory := os.Getenv("PROJECT_ALPHA_DATA_DIR")
 	if directory == "" {
 		directory = "data"
@@ -135,6 +113,10 @@ func Run(ctx context.Context, args []string) error {
 	}
 	if p.NArg() != 0 {
 		return fmt.Errorf("unexpected arguments: %v", p.Args())
+	}
+	if *version {
+		fmt.Fprintln(os.Stdout, buildinfo.String("project-alpha"))
+		return nil
 	}
 	if *port < 0 || *port > 65535 {
 		return fmt.Errorf("invalid port")

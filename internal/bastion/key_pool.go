@@ -1,13 +1,15 @@
 package bastion
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
@@ -20,26 +22,23 @@ type poolMember struct {
 	Status    string `json:"status"`
 	PublicKey string `json:"-"`
 }
-
 type poolKey struct {
 	ID          string       `json:"id"`
+	NodeID      string       `json:"node_id"`
+	NodeName    string       `json:"node_name"`
 	PublicKey   string       `json:"public_key"`
 	Fingerprint string       `json:"fingerprint"`
 	State       string       `json:"state"`
 	Members     []poolMember `json:"members"`
 }
 
-// Membership is indexed by normalized public-key content, independently of
-// the pool's entry IDs or the control that originally published those entries.
-func poolMembers(q platform.Queryer) ([]poolMember, error) {
-	rows, err := q.Query(`SELECT m.id,m.username,m.ssh_public_key,m.status FROM members m
- LEFT JOIN member_access a ON a.member_id=m.id
- WHERE m.status='active' OR COALESCE(a.key_state,'pending')<>'deleted' ORDER BY m.username,m.id`)
+func poolMembers(q platform.Queryer, node string) ([]poolMember, error) {
+	rows, err := q.Query(`SELECT m.id,m.username,m.ssh_public_key,m.status FROM members m JOIN member_access a ON a.member_id=m.id WHERE a.tailscale_id=? AND (m.status='active' OR a.key_state<>'deleted') ORDER BY m.username,m.id`, node)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []poolMember{}
+	out := []poolMember{}
 	for rows.Next() {
 		var m poolMember
 		if err = rows.Scan(&m.ID, &m.Username, &m.PublicKey, &m.Status); err != nil {
@@ -49,27 +48,25 @@ func poolMembers(q platform.Queryer) ([]poolMember, error) {
 		if err != nil {
 			return nil, fmt.Errorf("使用者 %s 的公钥无效: %w", m.Username, err)
 		}
-		result = append(result, m)
+		out = append(out, m)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
-
 func keyReferences(members []poolMember, key string) []poolMember {
-	refs := []poolMember{}
-	for _, member := range members {
-		if member.PublicKey == key {
-			refs = append(refs, member)
+	out := []poolMember{}
+	for _, m := range members {
+		if m.PublicKey == key {
+			out = append(out, m)
 		}
 	}
-	return refs
+	return out
 }
-
-func indexPool(v keySnapshot, members []poolMember) []poolKey {
+func indexPool(s ShareNode, v keySnapshot, members []poolMember) []poolKey {
 	index := map[string][]poolMember{}
 	for _, member := range members {
 		index[member.PublicKey] = append(index[member.PublicKey], member)
 	}
-	result := make([]poolKey, 0, len(v.Keys))
+	out := make([]poolKey, 0, len(v.Keys))
 	for id, key := range v.Keys {
 		blob, _ := base64.StdEncoding.DecodeString(strings.Fields(key)[1])
 		digest := sha256.Sum256(blob)
@@ -77,20 +74,19 @@ func indexPool(v keySnapshot, members []poolMember) []poolKey {
 		if refs == nil {
 			refs = []poolMember{}
 		}
-		entry := poolKey{ID: id, PublicKey: key, Fingerprint: "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:]), State: "free", Members: refs}
-		if len(entry.Members) > 0 {
-			entry.State = "used"
+		state := "free"
+		if len(refs) > 0 {
+			state = "used"
 		}
-		result = append(result, entry)
+		out = append(out, poolKey{id, s.ID, s.Name, key, "SHA256:" + base64.RawStdEncoding.EncodeToString(digest[:]), state, refs})
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
-	return result
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
-
 func ensurePoolKeys(v *keySnapshot, keys ...string) {
 	present := map[string]bool{}
-	for _, existing := range v.Keys {
-		present[existing] = true
+	for _, key := range v.Keys {
+		present[key] = true
 	}
 	for _, key := range keys {
 		if present[key] {
@@ -98,7 +94,7 @@ func ensurePoolKeys(v *keySnapshot, keys ...string) {
 		}
 		for {
 			id := platform.RandomHex(16)
-			if _, exists := v.Keys[id]; !exists {
+			if _, ok := v.Keys[id]; !ok {
 				v.Keys[id] = key
 				present[key] = true
 				break
@@ -106,53 +102,74 @@ func ensurePoolKeys(v *keySnapshot, keys ...string) {
 		}
 	}
 }
-
-func (s keyStore) snapshot(control string) (keySnapshot, error) {
-	r, c, err := s.open()
+func (h *Handler) keyPool(ctx context.Context) ([]poolKey, string, error) {
+	shares, err := h.shares()
 	if err != nil {
-		return keySnapshot{}, err
+		return nil, "", err
 	}
-	defer r.Close()
-	if c.ControlID != control || c.ServiceUID != os.Geteuid() {
-		return keySnapshot{}, fmt.Errorf("请先接管已有账号，再查看和管理公钥池")
+	ctx, cancel := context.WithTimeout(ctx, 13*time.Second)
+	defer cancel()
+	keys := make([][]poolKey, len(shares))
+	problems := make([]string, len(shares))
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i, s := range shares {
+		wg.Go(func() {
+			select {
+			case slots <- struct{}{}:
+				defer func() { <-slots }()
+			case <-ctx.Done():
+				problems[i] = s.Name + ": SSH 查询超时"
+				return
+			}
+			reply, e := h.RemoteCommand(ctx, s, commandRequest{Operation: "inspect"})
+			if e != nil {
+				problems[i] = s.Name + ": " + e.Error()
+				return
+			}
+			members, e := poolMembers(h.DB.SQL, s.ID)
+			if e != nil {
+				problems[i] = s.Name + ": " + e.Error()
+				return
+			}
+			keys[i] = indexPool(s, keySnapshot{Version: reply.Version, Keys: reply.Keys}, members)
+		})
 	}
-	k, err := openKeys(r, c)
-	if err != nil {
-		return keySnapshot{}, err
+	wg.Wait()
+	out := []poolKey{}
+	errors := []string{}
+	for i := range shares {
+		out = append(out, keys[i]...)
+		if problems[i] != "" {
+			errors = append(errors, problems[i])
+		}
 	}
-	defer k.Close()
-	return loadSnapshot(k, c)
+	return out, strings.Join(errors, "；"), nil
 }
-
-func (h *Handler) keyPool() ([]poolKey, error) {
-	id, err := h.DB.CheckMode("control")
-	if err != nil {
-		return nil, err
+func (h *Handler) editMemberKey(ctx context.Context, member, key string) error {
+	var node string
+	if err := h.DB.SQL.QueryRow("SELECT COALESCE(tailscale_id,'') FROM member_access WHERE member_id=?", member).Scan(&node); err != nil {
+		return err
 	}
-	v, err := h.keys.snapshot(id)
-	if err != nil {
-		return nil, err
+	if node == "" {
+		if key == "" {
+			return nil
+		}
+		return fmt.Errorf("尚未分配 share node，无法发布跳板公钥")
 	}
-	members, err := poolMembers(h.DB.SQL)
-	if err != nil {
-		return nil, err
-	}
-	return indexPool(v, members), nil
-}
-
-func (h *Handler) editMemberKey(member, key string) error {
-	id, err := h.DB.CheckMode("control")
+	s, err := h.share(node)
 	if err != nil {
 		return err
 	}
-	return h.DB.Transaction(func(tx *sql.Tx) error {
-		if key != "" {
-			key, err = sshkeys.Normalize(key)
-			if err != nil {
-				return err
-			}
-			return h.keys.update(id, func(v *keySnapshot) error { ensurePoolKeys(v, key); return nil })
+	if key != "" {
+		key, err = sshkeys.Normalize(key)
+		if err != nil {
+			return err
 		}
+		_, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: []string{key}})
+		return err
+	}
+	return h.DB.Transaction(func(tx *sql.Tx) error {
 		var revoked string
 		if err = tx.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", member).Scan(&revoked); err != nil {
 			return err
@@ -161,87 +178,89 @@ func (h *Handler) editMemberKey(member, key string) error {
 		if err != nil {
 			return err
 		}
-		members, err := poolMembers(tx)
+		members, err := poolMembers(tx, node)
 		if err != nil {
 			return err
 		}
-		return h.keys.update(id, func(v *keySnapshot) error {
-			for _, other := range keyReferences(members, revoked) {
-				if other.ID != member {
-					return nil
-				}
+		for _, other := range keyReferences(members, revoked) {
+			if other.ID != member {
+				return nil
 			}
-			for entry, existing := range v.Keys {
-				if existing == revoked {
-					delete(v.Keys, entry)
-				}
-			}
-			return nil
-		})
+		}
+		_, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "remove", Key: revoked})
+		return err
 	})
 }
-
-// SyncKeys adds missing current members' keys without removing free entries.
-// It is also called by the installer as the ordinary service user.
-func (h *Handler) SyncKeys() error {
+func (h *Handler) SyncKeys(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	id, err := h.DB.CheckMode("control")
+	shares, err := h.shares()
 	if err != nil {
 		return err
 	}
-	return h.DB.Transaction(func(tx *sql.Tx) error {
-		members, err := poolMembers(tx)
-		if err != nil {
-			return err
-		}
-		if err = h.keys.update(id, func(v *keySnapshot) error {
+	problems := []string{}
+	for _, s := range shares {
+		err = h.DB.Transaction(func(tx *sql.Tx) error {
+			members, e := poolMembers(tx, s.ID)
+			if e != nil {
+				return e
+			}
 			keys := []string{}
 			for _, m := range members {
 				if m.Status == "active" {
 					keys = append(keys, m.PublicKey)
 				}
 			}
-			ensurePoolKeys(v, keys...)
-			return nil
-		}); err != nil {
-			return err
+			if len(keys) == 0 {
+				return nil
+			}
+			if _, e = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: keys}); e != nil {
+				return e
+			}
+			_, e = tx.Exec("UPDATE member_access SET key_state='ready',updated_at=? WHERE tailscale_id=? AND member_id IN (SELECT id FROM members WHERE status='active')", platform.Now(), s.ID)
+			return e
+		})
+		if err != nil {
+			problems = append(problems, s.Name+": "+err.Error())
 		}
-		_, err = tx.Exec("UPDATE member_access SET key_state='ready',updated_at=? WHERE member_id IN (SELECT id FROM members WHERE status='active')", platform.Now())
-		return err
-	})
+	}
+	if len(problems) > 0 {
+		return httpapi.NewError(502, strings.Join(problems, "；"))
+	}
+	return nil
 }
-
-func (h *Handler) cleanFreeKey(entry, actor string) error {
+func (h *Handler) cleanFreeKey(ctx context.Context, node, entry, actor string) error {
 	if !sshkeys.ID.MatchString(entry) {
 		return httpapi.NewError(400, "公钥池条目标识无效")
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	id, err := h.DB.CheckMode("control")
+	s, err := h.share(node)
+	if err == sql.ErrNoRows {
+		return httpapi.NewError(404, "分享节点不存在")
+	}
 	if err != nil {
 		return err
 	}
-	// Registration and member updates serialize with this transaction. A key
-	// that acquired a user since the page loaded must not be cleaned as free.
 	return h.DB.Transaction(func(tx *sql.Tx) error {
-		members, err := poolMembers(tx)
-		if err != nil {
-			return err
+		reply, e := h.RemoteCommand(ctx, s, commandRequest{Operation: "inspect"})
+		if e != nil {
+			return e
 		}
-		if err = h.keys.update(id, func(v *keySnapshot) error {
-			key, exists := v.Keys[entry]
-			if !exists {
-				return httpapi.NewError(404, "公钥条目已不存在，请刷新")
-			}
-			if len(keyReferences(members, key)) > 0 {
-				return httpapi.NewError(409, "该公钥已有使用者关联，不能按 free 清理")
-			}
-			delete(v.Keys, entry)
-			return nil
-		}); err != nil {
-			return err
+		key, ok := reply.Keys[entry]
+		if !ok {
+			return httpapi.NewError(404, "公钥条目已不存在，请刷新")
 		}
-		return platform.Audit(tx, actor, "bastion.key.clean", entry)
+		members, e := poolMembers(tx, node)
+		if e != nil {
+			return e
+		}
+		if len(keyReferences(members, key)) > 0 {
+			return httpapi.NewError(409, "该公钥已有使用者关联，不能按 free 清理")
+		}
+		if _, e = h.RemoteCommand(ctx, s, commandRequest{Operation: "clean", Entry: entry}); e != nil {
+			return e
+		}
+		return platform.Audit(tx, actor, "bastion.key.clean", node+"/"+entry)
 	})
 }

@@ -2,8 +2,11 @@ package cluster
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -138,4 +141,11 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 	}
 	wg.Wait()
 	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "control": resources.Control, "access": resources.Access, "nodes": out, "checked_at": platform.Now()}, nil
+}
+
+func memberStatusURL(a bastion.Access) string {
+	if a.ShareHost == "" || a.StatusPort == 0 {
+		return ""
+	}
+	return (&url.URL{Scheme: "http", Host: net.JoinHostPort(a.ShareHost, strconv.Itoa(a.StatusPort)), Path: "/status/" + a.Username}).String()
 }

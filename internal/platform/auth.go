@@ -56,7 +56,7 @@ func (d *Database) Users() ([]object, error) {
 }
 func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, setup bool) (object, error) {
 	for key := range value {
-		if key != "username" && key != "password" && key != "role" && !(setup && (key == "internal_ip" || key == "web_scheme" || key == "web_port")) {
+		if key != "username" && key != "password" && key != "role" && !(setup && key == "internal_ip") {
 			return nil, httpapi.NewError(400, "账号字段无效")
 		}
 	}
@@ -77,18 +77,8 @@ func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, se
 	if (role != "admin" && role != "viewer") || (setup && role != "admin") {
 		return nil, httpapi.NewError(400, "角色无效")
 	}
-	settings := ControlSettings{Revision: 1, InternalIP: httpapi.FieldString(value, "internal_ip"), WebScheme: "http", WebPort: 8765}
+	settings := ControlSettings{Revision: 1, InternalIP: httpapi.FieldString(value, "internal_ip")}
 	if setup {
-		if raw, ok := value["web_scheme"]; ok {
-			if string(raw) == "null" || json.Unmarshal(raw, &settings.WebScheme) != nil {
-				return nil, httpapi.NewError(400, "总控网页协议无效")
-			}
-		}
-		if raw, ok := value["web_port"]; ok {
-			if string(raw) == "null" || json.Unmarshal(raw, &settings.WebPort) != nil {
-				return nil, httpapi.NewError(400, "总控网页端口无效")
-			}
-		}
 		if err := settings.validate(); err != nil {
 			return nil, err
 		}
@@ -107,7 +97,7 @@ func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, se
 			if n > 0 {
 				return httpapi.NewError(409, "管理员已初始化，请登录")
 			}
-			if _, err := tx.Exec("INSERT INTO control_settings VALUES(1,?,?,?,?)", settings.Revision, settings.InternalIP, settings.WebScheme, settings.WebPort); err != nil {
+			if _, err := tx.Exec("INSERT INTO control_settings VALUES(1,?,?)", settings.Revision, settings.InternalIP); err != nil {
 				return err
 			}
 		}

@@ -68,7 +68,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 `username` 必须以小写字母开头，为 3–32 位小写字母、数字、下划线或短横线，不能是 `data`。`schema_revision` 使用刚读取的版本，`profile` 必须是对象，没有附加字段时传 `{}`。
 
-`ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥发布到固定 `alpha-jump` 的专用授权清单，并写入各 node 容器。跳板需先完成一次 sudo 初始化，后续公钥管理免 sudo。
+`ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
 
 成功返回 `201`（资源后台创建）：
 

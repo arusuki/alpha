@@ -5,8 +5,9 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/project-alpha
-ExecStart=/opt/project-alpha/bin/project-alpha --control --data-dir /var/lib/project-alpha-control --host 127.0.0.1 --port 8765
-# Must match bastion init --service-user; use an existing ordinary service user.
+# Listen on an internal address reachable from share nodes.
+ExecStart=/opt/project-alpha/bin/project-alpha --control --data-dir /var/lib/project-alpha-control --host 0.0.0.0 --port 8765
+# Use an existing ordinary service user with SSH access to share nodes.
 User=project-alpha
 UMask=0077
 StateDirectory=project-alpha-control
@@ -15,8 +16,8 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
 KillMode=control-group
-# Bastion account operations use password-authenticated sudo.
-NoNewPrivileges=false
+# Share node accounts and proxy are initialized separately on those hosts.
+NoNewPrivileges=true
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

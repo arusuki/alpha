@@ -44,7 +44,7 @@ Docker 可写层条目保留报告中的物理路径作为确认范围与结果�
 
 每批只启动一次 `/usr/bin/sudo -S -k`，忽略且不更新 sudo 的凭据缓存。密码只在当前请求与后台任务内存中短暂持有；识别到 sudo 密码提示后通过匿名 stdin 管道发送一次，随后清空可变字节缓冲区。辅助程序就绪后才发送本批路径，它不会接收密码。密码不进入命令行参数、环境变量、数据库、审计、模型上下文、临时文件、浏览器存储或错误结果；sudo/PAM 的原始 stderr 直接丢弃，使用固定认证错误提示，避免回显泄漏。认证失败不自动重发，下次提交必须重新输入。窗口在提交、关闭及退出登录时清空密码，禁用自动填充。
 
-删除在所选 worker 上执行。worker 服务账号需具备执行 `cleanup-helper` 的 sudo 权限；以普通账号运行时，systemd 单元须允许提权（`NoNewPrivileges=false`）。默认 worker 单元以 root 运行。总控的 `NoNewPrivileges` 设置用于其本机跳板账号操作。密码对应 worker 系统账号，与平台登录账号独立。认证最多等待 30 秒；取消或服务退出会关闭控制管道，辅助程序检测 EOF 后停止。
+删除在所选 worker 上执行。worker 服务账号需具备执行 `cleanup-helper` 的 sudo 权限；以普通账号运行时，systemd 单元须允许提权（`NoNewPrivileges=false`）。默认 worker 单元以 root 运行。总控通过远程接口执行任务，可以保持 `NoNewPrivileges=true`。密码对应 worker 系统账号，与平台登录账号独立。认证最多等待 30 秒；取消或服务退出会关闭控制管道，辅助程序检测 EOF 后停止。
 
 ## HTTP 接口
 

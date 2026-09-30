@@ -36,7 +36,8 @@ func TestAccountingMatchesDU(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := filepath.Join(nested, "weights")
-	mustWrite(t, f, []byte(strings.Repeat("x", 12345)))
+	weights := []byte(strings.Repeat("x", 12345))
+	mustWrite(t, f, weights)
 	if err := os.Link(f, filepath.Join(root, "hardlink")); err != nil {
 		t.Fatal(err)
 	}
@@ -47,32 +48,27 @@ func TestAccountingMatchesDU(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = sparse.WriteAt([]byte("x"), 32*1024*1024); err != nil {
+	const sparseOffset = 32 * 1024 * 1024
+	if _, err = sparse.WriteAt([]byte("x"), sparseOffset); err != nil {
 		t.Fatal(err)
 	}
 	sparse.Close()
 	tree := scanForTest(t, defaultConfig(), []string{root, nested, nested})
-	for _, apparent := range []bool{false, true} {
-		args := []string{"-s", "-B1"}
-		if apparent {
-			args = append(args, "--apparent-size")
-		}
-		args = append(args, root)
-		raw, err := exec.Command("du", args...).Output()
-		if err != nil {
-			t.Fatal(err)
-		}
-		expected, err := strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		actual := tree.Allocated
-		if apparent {
-			actual = tree.Apparent
-		}
-		if actual != expected {
-			t.Fatalf("apparent=%v: got %d, du=%d", apparent, actual, expected)
-		}
+	raw, err := exec.Command("du", "-s", "-B1", root).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := strconv.ParseInt(strings.Fields(string(raw))[0], 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree.Allocated != expected {
+		t.Fatalf("allocated: got %d, du=%d", tree.Allocated, expected)
+	}
+	// Count each inode once and exclude directory metadata from logical size.
+	wantApparent := int64(len(weights)+len(nested)) + sparseOffset + 1
+	if tree.Apparent != wantApparent {
+		t.Fatalf("apparent: got %d, want %d", tree.Apparent, wantApparent)
 	}
 	if len(tree.Children) != 1 || tree.Apparent <= tree.Allocated+30*1024*1024 {
 		t.Fatal("overlap or sparse accounting failed")
