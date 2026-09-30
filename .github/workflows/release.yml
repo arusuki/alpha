@@ -89,6 +89,12 @@ jobs:
           go-version-file: go.mod
           # Do not reuse CGO build caches produced on newer glibc hosts.
           cache: false
+      - name: Configure Git for container builds
+        run: |
+          # checkout's safe.directory setting uses its temporary HOME. Go invokes
+          # Git later under the container HOME, with a host-owned workspace.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --porcelain
       - name: Build and package
         env:
           REF_TYPE: ${{ github.ref_type }}
