@@ -67,18 +67,28 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    # Hosted Ubuntu 20.04 runners are retired; compile against its userspace.
+    container: ubuntu:20.04
     timeout-minutes: 30
     env:
       GOOS: linux
       GOARCH: ${{ matrix.arch }}
     steps:
+      - name: Install Ubuntu 20.04 build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates git binutils tar gzip
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
-          cache: true
+          # Do not reuse CGO build caches produced on newer glibc hosts.
+          cache: false
       - name: Build and package
         env:
           REF_TYPE: ${{ github.ref_type }}
@@ -98,6 +108,13 @@ jobs:
           mkdir -p "$stage/bin" release
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/project-alpha" ./cmd/project-alpha
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
+          for binary in "$stage"/bin/*; do
+            required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\\1/p' | sort -V | tail -n1)"
+            if [[ -n "$required" && "$(printf '%s\\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
+              echo "::error::$binary requires glibc $required (maximum supported: 2.31)"
+              exit 1
+            fi
+          done
           cp README.md "$stage/"
           cp -R docs deploy "$stage/"
           printf 'version=%s\ncommit=%s\nos=linux\narch=%s\ngo=%s\n' \

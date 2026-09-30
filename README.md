@@ -44,7 +44,9 @@ git push origin v0.1.0
 
 压缩包包含 `bin/project-alpha`、`bin/rootless-docker`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
 
-二进制在 Ubuntu 24.04 上原生编译，启用 CGO 以支持 SQLite；运行环境使用 glibc 2.39 或更新版本（例如 Ubuntu 24.04），不直接支持 Alpine/musl。使用发布包无需安装 Go 或 GCC；Docker 等功能仍需对应的运行时依赖。较旧的 Linux 发行版可按“启动”章节从源码构建。
+二进制在 Ubuntu 20.04 容器内按对应架构原生编译，启用 CGO 以支持 SQLite；运行环境使用 glibc 2.31 或更新版本（例如 Ubuntu 20.04），不直接支持 Alpine/musl。使用发布包无需安装 Go 或 GCC；Docker 等功能仍需对应的运行时依赖。更旧的 Linux 发行版可按“启动”章节从源码构建。
+
+GitHub 已停止提供 Ubuntu 20.04 托管 runner，因此底层使用 Ubuntu 24.04 runner，但编译器、头文件、链接库和打包后程序检查均在 `ubuntu:20.04` 容器内执行。CI 会检查容器 glibc 版本和二进制的 GLIBC 符号要求，拒绝超过 2.31 的构建；发布构建不复用宿主机的 Go/CGO 缓存。
 
 下载对应架构的压缩包和校验文件后，例如：
 
