@@ -70,11 +70,11 @@ CLI 与 API 使用同一套配置校验：`max_depth` 为 0–32，`max_nodes` �
 
 ## 容器创建与接管
 
-“容器管理”统一替代 `generate_dockercompose.py` 的日常创建入口，直接调用 Docker，无需生成或执行 Compose 文件。管理员可在网页创建、启停、重启、删除和解除接管；已有容器使用命令行扫描导入；只读账号可查看管理记录和连接信息，无需先进行存储扫描。
+“容器管理”直接调用 Docker，无需生成或执行 Compose 文件。管理员可在网页创建、启停、重启、删除和解除接管；已有容器使用命令行扫描导入；只读账号可查看管理记录和连接信息，无需先进行存储扫描。
 
-先在页面配置本机 Docker Unix socket、默认镜像、数据根目录（默认 `/docker`）、SSH 起始端口、主机地址及可选 ProxyJump。原 `config.ini` 的 `DOCKERFILE_IMAGE`、`START_PORT`、`IP`、`PROXYJUMP` 分别填写这些字段。原脚本的 `HOSTNAME` 仅是 SSH 客户端别名，可自行添加到本机 SSH 配置，不参与容器管理。
+先在页面配置本机 Docker Unix socket、默认镜像、数据根目录（默认 `/docker`）、SSH 起始端口、主机地址及可选 ProxyJump。
 
-创建保留脚本的 `docker-<名称>` 主机名、host IPC、TTY、`unless-stopped`、无限 memlock、NVIDIA GPU（all 或 1–7）、bridge/host 网络，以及以下可写 bind 挂载：
+创建容器时使用 `docker-<名称>` 主机名、host IPC、TTY、`unless-stopped`、无限 memlock、NVIDIA GPU（all 或 1–7）、bridge/host 网络，以及以下可写 bind 挂载：
 
 - `<数据根>/<名称>/workspace` → `/workspace`
 - `<数据根>/<名称>/home` → `/home`
