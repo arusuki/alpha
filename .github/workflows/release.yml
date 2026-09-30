@@ -1,0 +1,182 @@
+name: Linux CI and Release
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # go-sqlite3 requires CGO; disabling it produces an unusable database driver.
+  CGO_ENABLED: '1'
+  GOFLAGS: -mod=readonly
+
+jobs:
+  check:
+    name: Test and vet
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify dependencies
+        run: |
+          go mod download
+          go mod verify
+      - name: Go tests
+        run: go test -race ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Frontend tests
+        run: |
+          for test in tests/test_*.js; do
+            node "$test"
+          done
+
+  build:
+    name: Build linux/${{ matrix.arch }}
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # Hosted Ubuntu 20.04 runners are retired; compile against its userspace.
+    container: ubuntu:20.04
+    timeout-minutes: 30
+    env:
+      GOOS: linux
+      GOARCH: ${{ matrix.arch }}
+    steps:
+      - name: Install Ubuntu 20.04 build dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential ca-certificates git binutils tar gzip
+          test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          # Do not reuse CGO build caches produced on newer glibc hosts.
+          cache: false
+      - name: Configure Git for container builds
+        run: |
+          # checkout's safe.directory setting uses its temporary HOME. Go invokes
+          # Git later under the container HOME, with a host-owned workspace.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git status --porcelain
+      - name: Build and package
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version="dev-${GITHUB_SHA:0:12}"
+          if [[ "$REF_TYPE" == tag ]]; then
+            version="$REF_NAME"
+          fi
+          # Keep tag names safe for archive paths.
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+            echo "::error::Unsupported version/tag name: $version"
+            exit 1
+          fi
+          package="project-alpha_${version}_linux_${GOARCH}"
+          stage="$RUNNER_TEMP/$package"
+          mkdir -p "$stage/bin" release
+          go build -trimpath -ldflags="-s -w" -o "$stage/bin/project-alpha" ./cmd/project-alpha
+          go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
+          for binary in "$stage"/bin/*; do
+            required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n1)"
+            if [[ -n "$required" && "$(printf '%s\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
+              echo "::error::$binary requires glibc $required (maximum supported: 2.31)"
+              exit 1
+            fi
+          done
+          cp README.md "$stage/"
+          cp -R docs deploy "$stage/"
+          printf 'version=%s\ncommit=%s\nos=linux\narch=%s\ngo=%s\n' \
+            "$version" "$GITHUB_SHA" "$GOARCH" "$(go env GOVERSION)" > "$stage/BUILD_INFO"
+          tar -C "$RUNNER_TEMP" -czf "release/$package.tar.gz" "$package"
+          # Exercise the actual packaged executables on the matching native runner.
+          mkdir -p "$RUNNER_TEMP/package-check"
+          tar -xzf "release/$package.tar.gz" -C "$RUNNER_TEMP/package-check"
+          "$RUNNER_TEMP/package-check/$package/bin/project-alpha" --help
+          "$RUNNER_TEMP/package-check/$package/bin/rootless-docker" --help
+          cd release
+          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
+          sha256sum --check "$package.tar.gz.sha256"
+      - name: Upload Linux package
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: linux-${{ matrix.arch }}
+          path: release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          pattern: linux-*
+          path: release
+          merge-multiple: true
+      - name: Verify release assets
+        working-directory: release
+        run: |
+          for checksum in *.sha256; do
+            sha256sum --check "$checksum"
+          done
+          sha256sum *.tar.gz > SHA256SUMS
+      - name: Create release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/*.tar.gz release/SHA256SUMS --clobber
+          else
+            flags=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" release/*.tar.gz release/SHA256SUMS \
+              --verify-tag --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
+          fi
