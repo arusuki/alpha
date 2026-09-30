@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -136,6 +138,98 @@ func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	var hash string
 	if err = s.SQL.QueryRow("SELECT code_hash FROM member_invitations WHERE id=?", i.ID).Scan(&hash); err != nil || hash == i.Code || hash != hashCode(i.Code) {
 		t.Fatal("invitation not hashed")
+	}
+}
+
+func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
+	s := testStore(t)
+	i, err := s.CreateInvitation("共享", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext string
+	if err = s.SQL.QueryRow("SELECT code_ciphertext FROM member_invitations WHERE id=?", i.ID).Scan(&ciphertext); err != nil || strings.Contains(ciphertext, i.Code) {
+		t.Fatalf("invitation code not encrypted: %v", err)
+	}
+	keyPath := filepath.Join(s.Directory, invitationKeyFile)
+	db, err := platform.OpenDatabase(s.Directory, Initialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	code, err := (&Store{db}).InvitationCode(i.ID)
+	if err != nil || code != i.Code {
+		t.Fatalf("cannot recover code after reopening: %v", err)
+	}
+	if err = os.Rename(keyPath, keyPath+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InvitationCode(i.ID)
+	expectError(t, err, 500)
+	_, err = s.CreateInvitation("missing key", 1, "operator")
+	expectError(t, err, 500)
+	if _, err = os.Stat(keyPath); !os.IsNotExist(err) {
+		t.Fatalf("lost key was replaced: %v", err)
+	}
+	if err = os.Rename(keyPath+".saved", keyPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.RegisterWith(Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "shared", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InvitationCode(i.ID)
+	expectError(t, err, 400)
+	i, err = s.CreateInvitation("作废", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InvitationCode(i.ID)
+	expectError(t, err, 400)
+}
+
+func TestInvitationCodeIntegrityAndIndependentCreation(t *testing.T) {
+	s := testStore(t)
+	i, err := s.CreateInvitation("old", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.CreateInvitation("other", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext string
+	if err = s.SQL.QueryRow("SELECT code_ciphertext FROM member_invitations WHERE id=?", i.ID).Scan(&ciphertext); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SQL.Exec("UPDATE member_invitations SET code_ciphertext=(SELECT code_ciphertext FROM member_invitations WHERE id=?) WHERE id=?", other.ID, i.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InvitationCode(i.ID)
+	expectError(t, err, 500)
+	if _, err = s.SQL.Exec("UPDATE member_invitations SET code_ciphertext=?,code_hash=? WHERE id=?", ciphertext, hashCode(strings.Repeat("0", 48)), i.ID); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.InvitationCode(i.ID)
+	expectError(t, err, 500)
+	if !strings.Contains(err.Error(), "摘要与密文不匹配") {
+		t.Fatal(err)
+	}
+	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SQL.Exec("UPDATE member_invitations SET code_ciphertext='broken' WHERE id=?", i.ID); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.CreateInvitation("new", 1, "operator")
+	if err != nil {
+		t.Fatalf("corrupt retired invitation blocked creation: %v", err)
+	}
+	code, err := s.InvitationCode(fresh.ID)
+	if err != nil || code != fresh.Code {
+		t.Fatalf("new invitation cannot be recovered: %v", err)
 	}
 }
 
@@ -381,6 +475,23 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	}
 	invitation := invitations[0]
 	invitation.Code = match[1]
+	keyPath := filepath.Join(s.Directory, invitationKeyFile)
+	if err = os.Rename(keyPath, keyPath+".saved"); err != nil {
+		t.Fatal(err)
+	}
+	w = call("POST", invitationPage+"/create", object{"quota": 1}, token, csrf, nil)
+	expect(500, w)
+	if !strings.Contains(w.Body.String(), "invitation-code.key 丢失") || !strings.Contains(w.Body.String(), "恢复原密钥") || strings.Contains(w.Body.String(), invitation.Code) {
+		t.Fatalf("missing actionable key error: %s", w.Body.String())
+	}
+	if err = os.Rename(keyPath+".saved", keyPath); err != nil {
+		t.Fatal(err)
+	}
+	w = call("GET", invitationPage+"/select", nil, token, csrf, nil)
+	expect(200, w)
+	if !strings.Contains(w.Body.String(), invitation.ID) || !strings.Contains(w.Body.String(), "cohort") || strings.Contains(w.Body.String(), invitation.Code) {
+		t.Fatalf("unsafe invitation selector: %s", w.Body.String())
+	}
 	update := object{"id": invitation.ID, "label": `  新备注 <img src=x onerror=alert(1)> "  `}
 	expect(401, call("POST", invitationPage+"/update", update, "", "", nil))
 	expect(403, call("POST", invitationPage+"/update", update, token, "", nil))
@@ -434,6 +545,11 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	expect(403, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, viewer, vs.CSRF, nil))
 	expect(403, call("POST", invitationPage+"/update", update, viewer, vs.CSRF, nil))
 	expect(200, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, token, csrf, nil))
+	w = call("GET", invitationPage+"/select", nil, token, csrf, nil)
+	expect(200, w)
+	if strings.Contains(w.Body.String(), invitation.ID) {
+		t.Fatal("revoked invitation offered for sharing")
+	}
 	req.Username = "bob"
 	expect(400, call("POST", "/api/members/register", req, "", "", nil))
 	// Registration throttling is independent of platform login attempts.

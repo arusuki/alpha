@@ -8,11 +8,14 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"unicode/utf8"
 
+	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/sshkeys"
@@ -127,6 +130,39 @@ func (s *Store) SaveSchema(next Schema, actor string) (Schema, error) {
 
 func hashCode(code string) string { h := sha256.Sum256([]byte(code)); return hex.EncodeToString(h[:]) }
 
+const invitationKeyFile = "invitation-code.key"
+
+func invitationCodeError(err error) error {
+	if errors.Is(err, os.ErrNotExist) {
+		return httpapi.NewError(500, "邀请码加密密钥 "+invitationKeyFile+" 丢失；请恢复原密钥文件或使用新数据目录")
+	}
+	return httpapi.NewError(500, "邀请码加密密钥或密文不可用；请检查或恢复数据目录中的 "+invitationKeyFile+"（权限须为 0600）及密文，或使用新数据目录")
+}
+
+// InvitationCode is used only when an administrator requests a registry link.
+// Listing invitations never decrypts or exposes their codes.
+func (s *Store) InvitationCode(id string) (string, error) {
+	var ciphertext, hash string
+	err := s.SQL.QueryRow("SELECT code_ciphertext,code_hash FROM member_invitations WHERE id=? AND revoked=0 AND used<quota", id).Scan(&ciphertext, &hash)
+	if err == sql.ErrNoRows {
+		return "", httpapi.NewError(400, "邀请码不存在、已用尽或已作废，请重新选择")
+	}
+	if err != nil {
+		return "", err
+	}
+	code, err := credentials.Decrypt(s.Directory, invitationKeyFile, "member.invitation/"+id, ciphertext)
+	if err != nil {
+		return "", invitationCodeError(err)
+	}
+	if !codePattern.MatchString(code) {
+		return "", httpapi.NewError(500, "邀请码密文内容无效；请恢复原数据或使用新数据目录")
+	}
+	if hashCode(code) != hash {
+		return "", httpapi.NewError(500, "邀请码摘要与密文不匹配；请恢复原数据或使用新数据目录")
+	}
+	return code, nil
+}
+
 // CheckInvitation never consumes a slot; RegisterWith rechecks it transactionally.
 func (s *Store) CheckInvitation(code string) error {
 	if !codePattern.MatchString(code) {
@@ -146,7 +182,19 @@ func (s *Store) CreateInvitation(label string, quota int, actor string) (Invitat
 		return Invitation{}, httpapi.NewError(400, "quota 必须为 1–100000 的整数，备注最多 100 个字符")
 	}
 	err := s.Transaction(func(tx *sql.Tx) error {
-		if _, err := tx.Exec("INSERT INTO member_invitations(id,code_hash,label,quota,created_by,created_at) VALUES(?,?,?,?,?,?)", i.ID, hashCode(i.Code), label, quota, actor, i.CreatedAt); err != nil {
+		var existing bool
+		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM member_invitations)").Scan(&existing); err != nil {
+			return err
+		}
+		encrypt := credentials.Encrypt
+		if existing {
+			encrypt = credentials.EncryptExisting
+		}
+		ciphertext, err := encrypt(s.Directory, invitationKeyFile, "member.invitation/"+i.ID, i.Code)
+		if err != nil {
+			return invitationCodeError(err)
+		}
+		if _, err := tx.Exec("INSERT INTO member_invitations(id,code_hash,code_ciphertext,label,quota,created_by,created_at) VALUES(?,?,?,?,?,?,?)", i.ID, hashCode(i.Code), ciphertext, label, quota, actor, i.CreatedAt); err != nil {
 			return err
 		}
 		return platform.Audit(tx, actor, "member.invitation.create", fmt.Sprintf("%s / quota=%d", i.ID, quota))

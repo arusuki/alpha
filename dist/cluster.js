@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
-const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:''};
+const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0};
 const admin=()=>platform.user?.role==='admin';
 function configure(){
   const central=!platform.nodeID;
@@ -57,7 +57,7 @@ function renderNodes(){
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
   const active=document.activeElement;
-  const focus=container.contains(active)?['href','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
+  const focus=container.contains(active)?['href','data-share-registry','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
   container.innerHTML=html;
   state.nodesHTML=html;
   if(focus){const [attr,value]=focus;const target=[...container.querySelectorAll(`[${attr}]`)].find(el=>el.getAttribute(attr)===value);(target||$('clusterSearch')).focus({preventScroll:true});}
@@ -65,12 +65,51 @@ function renderNodes(){
 function renderRegistryNode(n,index){
   const connection=n.connection;
   const status=n.online?'已连接':({connecting:'连接中',reconnecting:'重连中',disconnected:'未连接'}[connection?.state]||'未连接');
-  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${n.error?`<div class="node-unavailable"><p>${esc(n.error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑地址与令牌</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
+  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${n.error?`<div class="node-unavailable"><p>${esc(n.error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button class="node-open" data-share-registry="${n.id}" aria-label="生成 ${esc(n.name)} 的共享注册链接">共享链接 ↗</button><button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
 }
 function nodeKindControls(){
   const registry=$('nodeKind').value==='registry';
   $('nodeURL').placeholder=registry?'https://register.example.com':'http://10.0.0.11:8765';
   $('nodeKindHint').textContent=registry?'公网注册入口：总控主动连接，支持多个入口各自设置令牌。公网地址需使用 HTTPS。':'计算节点：提供容器、存储扫描与进程管理。';
+}
+function clearShareResult(){
+  $('registryShareURL').value='';$('registryShareResult').hidden=true;
+  $('registryShareCopy').disabled=true;$('registryShareStatus').textContent='';$('registryShareError').textContent='';
+}
+function resetShare(){
+  state.shareSequence++;state.sharing=null;clearShareResult();
+  $('registryShareNode').textContent='';$('registryShareHint').textContent='';
+  $('registryShareInvitation').innerHTML='';$('registryShareInvitation').disabled=true;
+}
+async function shareRegistry(id){
+  if(!admin())return;
+  const node=state.data?.nodes.find(n=>n.id===id&&n.kind==='registry');if(!node)return;
+  resetShare();state.sharing=id;
+  const sequence=state.shareSequence;
+  $('registryShareNode').textContent=`${node.name} · ${node.url}`;
+  $('registryShareInvitation').innerHTML='<option value="">正在读取邀请码…</option>';
+  $('registryShareDialog').showModal();
+  try{
+    const options=await window.MembersUI.invitationOptions();if(sequence!==state.shareSequence)return;
+    $('registryShareInvitation').innerHTML=options;
+    const available=$('registryShareInvitation').options.length>1;
+    $('registryShareInvitation').disabled=!available;
+    $('registryShareHint').textContent=available?'选择邀请码后自动生成注册链接。':'暂无可用邀请码，点击加号创建。';
+  }catch(error){if(sequence===state.shareSequence)$('registryShareError').textContent=error.message;}
+}
+async function generateShare(){
+  clearShareResult();
+  const id=state.sharing,invitationID=$('registryShareInvitation').value;
+  const sequence=++state.shareSequence;
+  if(!id||!invitationID||!admin())return;
+  $('registryShareInvitation').disabled=true;$('registryShareStatus').textContent='正在生成注册链接…';
+  try{
+    const result=await api(`/api/cluster/nodes/${id}/registration-link`,{method:'POST',body:JSON.stringify({invitation_id:invitationID})});
+    if(sequence!==state.shareSequence)return;
+    $('registryShareURL').value=result.url;$('registryShareResult').hidden=false;$('registryShareCopy').disabled=false;
+    $('registryShareStatus').textContent='链接已生成，可复制并发给使用者。';
+  }catch(error){if(sequence===state.shareSequence){$('registryShareStatus').textContent='';$('registryShareError').textContent=error.message;}}
+  finally{if(sequence===state.shareSequence)$('registryShareInvitation').disabled=false;}
 }
 function renderAllocations(){
   const data=state.data;if(!data)return;
@@ -152,7 +191,8 @@ window.ClusterUI={configure,refresh,unavailable,connected,reset(){
   $('allocationResultCount').textContent='';$('allocationStatus').textContent='';delete $('allocationStatus').dataset.state;
   $('clusterHealth').textContent='正在连接集群…';$('clusterHealth').parentElement.dataset.state='empty';$('clusterChecked').textContent='正在获取节点状态…';
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter==='all')));
-  for(const id of ['nodeDialog','nodeRemoveDialog','nodeUnavailableDialog'])if($(id).open)$(id).close();
+  resetShare();
+  for(const id of ['nodeDialog','nodeRemoveDialog','nodeUnavailableDialog','registryShareDialog'])if($(id).open)$(id).close();
   $('nodeToken').value='';$('clusterMemberOptions').innerHTML='';$('allocationRows').innerHTML='';$('clusterNodes').innerHTML='<p class="cluster-empty">正在读取节点…</p>';$('nodeContextStatus').textContent='';
 }};
 $('nodeUnavailableRetry').addEventListener('click',retryNode);
@@ -171,10 +211,24 @@ for(const id of ['nodeDialog','nodeRemoveDialog'])$(id).addEventListener('cancel
 $('clusterNodes').addEventListener('click',e=>{
   if(e.target.closest('[data-add-node]')){edit();return;}
   if(e.target.closest('[data-clear-nodes]')){state.filter='all';$('clusterSearch').value='';renderNodes();$('clusterSearch').focus();return;}
+  const share=e.target.closest('[data-share-registry]');if(share){shareRegistry(share.dataset.shareRegistry);return;}
   const editButton=e.target.closest('[data-edit-node]');if(editButton){edit(editButton.dataset.editNode);return;}
   const remove=e.target.closest('[data-remove-node]');if(!remove||!admin()||state.busy)return;
   state.removing=state.data.nodes.find(n=>n.id===remove.dataset.removeNode);if(!state.removing)return;
   $('nodeRemoveDescription').textContent=state.removing.kind==='registry'?`移除 ${state.removing.name} 并断开注册连接？此入口将无法办理注册；registry 保存的总控绑定与会话仍会保留。`:`从总控移除 ${state.removing.name}？`;$('nodeRemoveError').textContent='';$('nodeRemoveDialog').showModal();
+});
+$('registryShareInvitation').addEventListener('change',generateShare);
+$('registryShareClose').addEventListener('click',()=>{resetShare();$('registryShareDialog').close();});
+$('registryShareDialog').addEventListener('cancel',resetShare);
+$('registryShareDialog').addEventListener('close',()=>{if(state.sharing)resetShare();});
+$('registryShareCreate').addEventListener('click',()=>{
+  resetShare();$('registryShareDialog').close();showPage('members');
+  $('memberInvitationForm').scrollIntoView({behavior:'instant',block:'center'});$('memberInvitationLabel').focus({preventScroll:true});
+});
+$('registryShareCopy').addEventListener('click',async()=>{
+  const url=$('registryShareURL').value,sequence=state.shareSequence;if(!url)return;
+  try{await navigator.clipboard.writeText(url);if(sequence===state.shareSequence)$('registryShareStatus').textContent='链接已复制。';}
+  catch(_){if(sequence===state.shareSequence){$('registryShareURL').select();$('registryShareStatus').textContent='请手动复制所选链接。';}}
 });
 $('nodeForm').addEventListener('submit',async e=>{
   e.preventDefault();if(state.busy||!admin())return;

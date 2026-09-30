@@ -229,6 +229,7 @@ func (p *peer) call(ctx context.Context, req Request) (json.RawMessage, error) {
 type Hub struct {
 	DB     *platform.Database
 	Token  string
+	Pass   string
 	mu     sync.Mutex
 	peer   *peer
 	closed bool
@@ -273,7 +274,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		httpapi.WriteJSON(w, 200, map[string]any{"id": registryID, "mode": "registry", "protocol": Protocol})
+		httpapi.WriteJSON(w, 200, map[string]any{"id": registryID, "mode": "registry", "protocol": Protocol, "registration_path": "/registry/" + h.Pass + "/"})
 		return
 	}
 	if r.Header.Get("Sec-WebSocket-Protocol") != protocol || r.Header.Get("X-Alpha-Registry") != registryID {

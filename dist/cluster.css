@@ -107,6 +107,14 @@
 .node-context small{color:var(--muted);font-size:.66rem}
 .node-context small:empty{display:none}
 #nodeDialog,#nodeRemoveDialog{width:min(520px,calc(100vw - 32px))}
+#registryShareDialog{width:min(620px,calc(100vw - 32px))}
+#registryShareNode{overflow-wrap:anywhere;margin:10px 0 20px}
+.registry-invitation-picker{display:flex;gap:10px;align-items:end}
+.registry-invitation-picker label{flex:1;min-width:0}
+.registry-invitation-picker select{min-width:0}
+#registryShareCreate{font-size:1.2rem;min-height:40px;flex-shrink:0}
+#registryShareHint,#registryShareResult,#registryShareStatus{margin-top:14px}
+#registryShareURL{font-family:monospace}
 #nodeDialog label{display:grid;gap:8px;margin:16px 0}
 #nodeDialog form>p,#nodeRemoveDialog form>p{font-size:.8rem;color:var(--muted);margin-top:10px;line-height:1.7}
 @media(min-width:1700px){.control-room .main-content{padding-left:65px;padding-right:65px}.cluster-hero{min-height:370px}}

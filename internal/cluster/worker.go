@@ -34,9 +34,10 @@ type Inventory struct {
 	Active     any         `json:"active"`
 }
 type Info struct {
-	Protocol int    `json:"protocol"`
-	ID       string `json:"id"`
-	Mode     string `json:"mode"`
+	Protocol         int    `json:"protocol"`
+	ID               string `json:"id"`
+	Mode             string `json:"mode"`
+	RegistrationPath string `json:"registration_path,omitempty"`
 }
 type Worker struct {
 	ID, Token string
@@ -90,7 +91,7 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/worker/info" && r.Method == "GET" {
-		httpapi.WriteJSON(w, 200, Info{Protocol, h.ID, "worker"})
+		httpapi.WriteJSON(w, 200, Info{Protocol: Protocol, ID: h.ID, Mode: "worker"})
 		return
 	}
 	if r.Header.Get("X-Alpha-Node") != h.ID {

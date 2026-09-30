@@ -26,6 +26,7 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 	code := ""
 	switch {
 	case r.Method == "GET" && r.URL.Path == invitationPage:
+	case r.Method == "GET" && r.URL.Path == invitationPage+"/select":
 	case r.Method == "POST" && (r.URL.Path == invitationPage+"/create" || r.URL.Path == invitationPage+"/update" || r.URL.Path == invitationPage+"/revoke"):
 		typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || typ != "application/x-www-form-urlencoded" {
@@ -78,7 +79,11 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 		return 0, nil, err
 	}
 	var body bytes.Buffer
-	if err = invitationTemplate.Execute(&body, struct {
+	view := "invitations"
+	if r.URL.Path == invitationPage+"/select" {
+		view = "invitation-options"
+	}
+	if err = invitationTemplate.ExecuteTemplate(&body, view, struct {
 		Invitations []Invitation
 		Code        string
 	}{rows, code}); err != nil {

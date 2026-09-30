@@ -52,7 +52,7 @@ type Server struct {
 }
 
 func NewServer(db *platform.Database, pass, token string, hosts []string, secure bool) *Server {
-	s := &Server{DB: db, Hub: &Hub{DB: db, Token: token}, Pass: pass, Secure: secure,
+	s := &Server{DB: db, Hub: &Hub{DB: db, Token: token, Pass: pass}, Pass: pass, Secure: secure,
 		hosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}, attempts: map[string]attempt{}, streams: make(chan struct{}, 128)}
 	for _, host := range hosts {
 		s.hosts[strings.ToLower(host)] = true

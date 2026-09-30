@@ -1,5 +1,4 @@
 """Real registry/control processes; synthetic provisioning results, no external services."""
-import hashlib
 import json
 import os
 import re
@@ -47,13 +46,9 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
         registry_token = (root / 'registry' / 'registry-token').read_text().strip()
         assert re.fullmatch('[a-f0-9]{64}', registry_token)
         control, control_url = start('control', ['--control', '--data-dir', str(root / 'control'), '--port', '0'])
-        code = secrets.token_hex(24)
-        sql('control', 'INSERT INTO member_invitations(id,code_hash,label,quota,created_by,created_at) VALUES(?,?,?,?,?,?)',
-            (secrets.token_hex(16), hashlib.sha256(code.encode()).hexdigest(), 'browser', 1, 'test', time.time()))
         fields = [dict(key='group', label='课题组', type='select', required=True, options=['A组', 'B组']),
                   dict(key='note', label='<img src=x onerror=alert(1)>', type='text', required=False)]
         sql('control', 'UPDATE member_registration_schema SET fields=?', (json.dumps(fields),))
-        entry = registry_url + '/registry/Abcd1234/' + code
 
         with sync_playwright() as p:
             launch = dict(headless=True, args=['--no-sandbox'])
@@ -90,6 +85,39 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             expect(admin.locator('#clusterOnline')).to_have_text('1 / 1')
             expect(admin.locator('#clusterContainers')).to_have_text('0')
             assert sql('control', 'SELECT kind,token FROM cluster_nodes')[0] == ('registry', registry_token)
+            card.locator('[data-share-registry]').click()
+            expect(admin.locator('#registryShareHint')).to_contain_text('暂无可用邀请码')
+            expect(admin.locator('#registryShareInvitation')).to_be_disabled()
+            admin.locator('#registryShareCreate').click()
+            expect(admin.locator('#registryShareDialog')).not_to_be_visible()
+            expect(admin.locator('#page-members')).to_be_visible()
+            expect(admin.locator('#memberInvitationLabel')).to_be_focused()
+            invitation_label = 'browser </option><img src=x onerror=alert(1)> " & <'
+            admin.locator('#memberInvitationLabel').fill(invitation_label)
+            admin.locator('#memberCreateInvitation').click()
+            expect(admin.locator('#memberInvitationDialog')).to_be_visible()
+            code = admin.locator('#memberInvitationCode').input_value()
+            admin.locator('#memberInvitationClose').click()
+            admin.locator('.platform-nav [data-page="cluster"]').click()
+            card.locator('[data-share-registry]').click()
+            expect(admin.locator('#registryShareInvitation')).to_be_enabled()
+            invitation_id = sql('control', 'SELECT id FROM member_invitations')[0][0]
+            expect(admin.locator(f'#registryShareInvitation option[value="{invitation_id}"]')).to_have_text(
+                f'{invitation_label} · 剩余 1 / 1 · {invitation_id}')
+            admin.locator('#registryShareInvitation').select_option(invitation_id)
+            entry = registry_url + '/registry/Abcd1234/' + code
+            expect(admin.locator('#registryShareURL')).to_have_value(entry)
+            expect(admin.locator('#registryShareCopy')).to_be_enabled()
+            context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=control_url)
+            admin.locator('#registryShareCopy').click()
+            expect(admin.locator('#registryShareStatus')).to_have_text('链接已复制。')
+            assert admin.evaluate('navigator.clipboard.readText()') == entry
+            admin.set_viewport_size(dict(width=390, height=844))
+            assert admin.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            admin.screenshot(path='/tmp/project-alpha-registry-share-mobile.png', full_page=True)
+            admin.set_viewport_size(dict(width=1280, height=1000))
+            admin.locator('#registryShareClose').click()
+            expect(admin.locator('#registryShareURL')).to_have_value('')
             card.locator('[data-edit-node]').click()
             expect(admin.locator('#nodeKind')).to_be_disabled()
             expect(admin.locator('#nodeToken')).to_have_attribute('placeholder', '••••••')
@@ -105,6 +133,12 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             registry.wait(timeout=15)
             expect(card.locator('.node-status')).to_have_text('重连中', timeout=15000)
             expect(admin.locator('#clusterPartial')).to_be_hidden()
+            card.locator('[data-share-registry]').click()
+            expect(admin.locator('#registryShareInvitation')).to_be_enabled()
+            admin.locator('#registryShareInvitation').select_option(invitation_id)
+            expect(admin.locator('#registryShareError')).not_to_be_empty()
+            expect(admin.locator('#registryShareCopy')).to_be_disabled()
+            admin.locator('#registryShareClose').click()
             environment['PROJECT_ALPHA_REGISTRY_TOKEN'] = secrets.token_hex(32)
             registry, restarted_url = start('registry', ['--registry', '--data-dir', str(root / 'registry'), '--port', registry_url.rsplit(':', 1)[1]])
             assert restarted_url == registry_url
@@ -122,6 +156,12 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             assert restarted_control_url == control_url
             admin.reload()
             expect(card.locator('.node-status')).to_have_text('已连接', timeout=15000)
+            card.locator('[data-share-registry]').click()
+            expect(admin.locator('#registryShareInvitation')).to_be_enabled()
+            admin.locator('#registryShareInvitation').select_option(invitation_id)
+            expect(admin.locator('#registryShareURL')).to_have_value(entry)
+            admin.screenshot(path='/tmp/project-alpha-registry-share-desktop.png', full_page=True)
+            admin.locator('#registryShareClose').click()
             admin.set_viewport_size(dict(width=390, height=844))
             assert admin.evaluate('document.documentElement.scrollWidth <= innerWidth')
             expect(card.locator('[data-edit-node]')).to_be_visible()
@@ -154,6 +194,54 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             expect(page.locator('#registration')).to_be_hidden()
             assert sql('control', 'SELECT count(*) FROM members')[0][0] == 1
             assert sql('control', 'SELECT used FROM member_invitations')[0][0] == 1
+            card.locator('[data-share-registry]').click()
+            expect(admin.locator('#registryShareHint')).to_contain_text('暂无可用邀请码')
+            assert admin.locator('#registryShareInvitation option').count() == 1
+            admin.locator('#registryShareClose').click()
+
+            # Responses arriving after a dialog closes must not reveal a link.
+            extra = context.request.post(control_url + '/admin/member-invitations/create',
+                form=dict(label='stale response', quota='1'), headers={'X-CSRF-Token': admin.evaluate('platform.csrf')})
+            assert extra.status == 200
+            extra_id = re.search(r'name="id" value="([a-f0-9]{32})"', extra.text()).group(1)
+            # Await the same API promise as the UI, after its handler has resumed.
+            admin.evaluate('''() => {
+                window.shareTestAPI = api;
+                api = (path, options) => {
+                    const result = window.shareTestAPI(path, options);
+                    if (path.endsWith('/registration-link')) window.shareTestRequest = result;
+                    return result;
+                };
+            }''')
+            for action in ['close', 'logout']:
+                pending = []
+                admin.route('**/registration-link', lambda route: pending.append(route))
+                card.locator('[data-share-registry]').click()
+                expect(admin.locator('#registryShareInvitation')).to_be_enabled()
+                with admin.expect_request('**/registration-link'):
+                    admin.locator('#registryShareInvitation').select_option(extra_id)
+                if action == 'close':
+                    admin.locator('#registryShareClose').click()
+                else:
+                    admin.evaluate("document.getElementById('logoutButton').click()")
+                    expect(admin.locator('#authPanel')).to_be_visible()
+                assert len(pending) == 1
+                with admin.expect_response('**/registration-link'):
+                    pending.pop().fulfill(status=200, content_type='application/json',
+                        body=json.dumps(dict(url=f'https://stale.example/{action}-secret')))
+                admin.evaluate('() => window.shareTestRequest')
+                expect(admin.locator('#registryShareURL')).to_have_value('')
+                expect(admin.locator('#registryShareDialog')).not_to_be_visible()
+                admin.unroute('**/registration-link')
+            admin.evaluate('''() => {
+                api = window.shareTestAPI;
+                delete window.shareTestAPI;
+                delete window.shareTestRequest;
+            }''')
+            admin.locator('#authUsername').fill('operator')
+            admin.locator('#authPassword').fill('A-test-password-123')
+            admin.locator('#authSubmit').click()
+            expect(card.locator('.node-status')).to_have_text('已连接', timeout=15000)
 
             # A gateway restart keeps both its binding and the existing browser session.
             registry.terminate()
@@ -174,7 +262,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             assert sql('registry', 'SELECT count(*) FROM registry_control')[0][0] == 1
             assert not errors, errors
             browser.close()
-        print('Registry browser checks passed: typed node creation, invalid credentials, status, masked token editing, token rotation, control/registry restart, registration progress, mobile layout and removal.')
+        print('Registry browser checks passed: share links, invitation shortcut, clipboard, unavailable and exhausted invitations, stale close/logout responses, typed nodes, credentials, restarts, registration progress, mobile layout and removal.')
     finally:
         for process in reversed(services):
             if process.poll() is None:

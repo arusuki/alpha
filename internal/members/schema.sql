@@ -3,7 +3,7 @@ CREATE TABLE member_registration_schema (
 );
 INSERT INTO member_registration_schema VALUES(1,1,'[]');
 CREATE TABLE member_invitations (
- id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+ id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE, code_ciphertext TEXT NOT NULL, label TEXT NOT NULL,
  quota INTEGER NOT NULL CHECK(quota BETWEEN 1 AND 100000),
  used INTEGER NOT NULL DEFAULT 0 CHECK(used>=0 AND used<=quota),
  revoked INTEGER NOT NULL DEFAULT 0 CHECK(revoked IN (0,1)),

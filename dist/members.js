@@ -47,6 +47,7 @@ async function task(fn){
 function clearCode(){ $('memberInvitationCode').value='';$('memberInvitationCopyStatus').textContent=''; }
 window.MembersUI={
   open(){return task(epoch=>load(epoch));},
+  invitationOptions(){return invitationPage(null,'/admin/member-invitations/select');},
   reset(){
     state.epoch++;state.schema=null;state.busy=false;
     if($('memberInvitationDialog').open)$('memberInvitationDialog').close();clearCode();
@@ -88,8 +89,8 @@ $('memberSchemaForm').addEventListener('submit',event=>{event.preventDefault();t
   renderSchema(result);$('membersStatus').textContent='注册信息配置已保存。';
 });});
 // Invitation operations submit admin forms and receive a server-rendered view.
-async function invitationPage(form=null){
-  const response=await fetch(form?form.action:'/admin/member-invitations',{credentials:'same-origin',cache:'no-store',method:form?'POST':'GET',headers:{'X-CSRF-Token':platform.csrf},...(form?{body:new URLSearchParams(new FormData(form))}:{})});
+async function invitationPage(form=null,path='/admin/member-invitations'){
+  const response=await fetch(form?form.action:path,{credentials:'same-origin',cache:'no-store',method:form?'POST':'GET',headers:{'X-CSRF-Token':platform.csrf},...(form?{body:new URLSearchParams(new FormData(form))}:{})});
   if(!response.ok){
     const error=await response.json();
     if(response.status===401&&platform.user)showAuth(false,'会话已过期，请重新登录。');

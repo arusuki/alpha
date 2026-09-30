@@ -19,20 +19,20 @@ func readKey(directory, filename string) ([]byte, error) {
 	path := filepath.Join(directory, filename)
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("API key encryption key is missing (%s); restore it or use a new data directory: %w", filename, os.ErrNotExist)
+		return nil, fmt.Errorf("credential encryption key is missing (%s); restore it or use a new data directory: %w", filename, os.ErrNotExist)
 	}
 	if err != nil {
 		return nil, err
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 {
-		return nil, fmt.Errorf("API key encryption key must be a regular file with permissions 0600: %s", path)
+		return nil, fmt.Errorf("credential encryption key must be a regular file with permissions 0600: %s", path)
 	}
 	key, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	if len(key) != 32 {
-		return nil, fmt.Errorf("invalid API key encryption key in %s; restore it or use a new data directory", path)
+		return nil, fmt.Errorf("invalid credential encryption key in %s; restore it or use a new data directory", path)
 	}
 	return key, nil
 }
@@ -91,6 +91,19 @@ func Encrypt(directory, filename, purpose, plaintext string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return encrypt(key, purpose, plaintext)
+}
+
+// EncryptExisting requires the original key file and never creates a replacement.
+func EncryptExisting(directory, filename, purpose, plaintext string) (string, error) {
+	key, err := readKey(directory, filename)
+	if err != nil {
+		return "", err
+	}
+	return encrypt(key, purpose, plaintext)
+}
+
+func encrypt(key []byte, purpose, plaintext string) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
@@ -110,11 +123,11 @@ func Encrypt(directory, filename, purpose, plaintext string) (string, error) {
 // Decrypt never recreates a missing key or accepts an unknown ciphertext format.
 func Decrypt(directory, filename, purpose, encoded string) (string, error) {
 	if !strings.HasPrefix(encoded, Prefix) {
-		return "", fmt.Errorf("invalid encrypted API key format; use a new data directory")
+		return "", fmt.Errorf("invalid encrypted credential format; use a new data directory")
 	}
 	data, err := base64.RawStdEncoding.DecodeString(strings.TrimPrefix(encoded, Prefix))
 	if err != nil {
-		return "", fmt.Errorf("invalid encrypted API key format; use a new data directory")
+		return "", fmt.Errorf("invalid encrypted credential format; use a new data directory")
 	}
 	key, err := readKey(directory, filename)
 	if err != nil {
@@ -129,11 +142,11 @@ func Decrypt(directory, filename, purpose, encoded string) (string, error) {
 		return "", err
 	}
 	if len(data) < gcm.NonceSize()+gcm.Overhead() {
-		return "", fmt.Errorf("invalid encrypted API key format; use a new data directory")
+		return "", fmt.Errorf("invalid encrypted credential format; use a new data directory")
 	}
 	plaintext, err := gcm.Open(nil, data[:gcm.NonceSize()], data[gcm.NonceSize():], []byte(purpose))
 	if err != nil {
-		return "", fmt.Errorf("cannot decrypt API key; restore %s or use a new data directory", filename)
+		return "", fmt.Errorf("cannot decrypt credential; restore %s or use a new data directory", filename)
 	}
 	return string(plaintext), nil
 }
