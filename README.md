@@ -10,6 +10,7 @@
 - `internal/platform`：平台 HTTP 入口、账号与会话、访问校验、审计和数据库基础；不依赖存储模块。
 - `internal/storage`：扫描配置、Docker 发现与辅助扫描、任务调度、快照与增量更新、共享记录读取与探索服务，以及对应 API 和数据表。
 - `internal/agent`：模型配置与凭据、Responses/Chat Completions 适配、分析会话、工具定义与编排，以及独立 API 和数据表。
+- `internal/members`：独立的机器使用者、注册 schema、邀请码页面管理和公开注册 API。
 - `internal/containers`：命令行扫描导入、创建配置、启停与删除，以及管理记录和审计。
 - `internal/process`：订阅 Tetragon 进程事件，常驻维护并按容器导出活动进程森林。
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
@@ -44,7 +45,7 @@ go build -o bin/project-alpha ./cmd/project-alpha
 
 SQLite 保存账号、配置和任务；Agent API Key 加密后存入 SQLite，密钥保存在数据目录的 `agent-api-key.key`。扫描结果保存在 `data/results/`。目录增量更新按节点写入 SQLite，取消时保留已提交的明细。历史记录可在网页删除；备份时停止服务并复制整个数据目录，包括密钥文件。
 
-1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v15、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
+1.0 发布前不保证任何前向或后向兼容性，包括数据库表结构、配置、API 和快照格式；不维护旧格式迁移或兼容分支。当前数据库格式为 v16、快照为 v5；格式不匹配时使用新的数据目录，重新配置并扫描。程序不会自动删除已有数据。
 
 独立扫描示例：
 
@@ -88,7 +89,13 @@ CLI 与 API 使用同一套配置校验：`max_depth` 为 0–32，`max_nodes` �
 
 所有启停/删除操作使用登记的完整 ID，并重新核实 daemon 和配置；同名替换容器不会成为操作目标。外部修改后需解除接管并通过命令行重新导入。解除接管只移除管理记录，不操作 Docker，也可用于清理已不存在的容器记录。删除要求输入完整容器名且先停止容器，不强制删除，不删除挂载目录或数据卷；容器可写层（包括未持久化的 `/root`）会丢失。操作超时后先刷新确认实际状态再重试。
 
-API、检查范围和失败恢复详见 [容器管理](docs/containers.md)。新增表使数据库格式变为 v15；旧数据目录按项目约定不迁移，请使用新数据目录。已有 Docker 容器独立于平台数据库，可通过命令行重新导入新目录。
+API、检查范围和失败恢复详见 [容器管理](docs/containers.md)。旧数据目录按项目约定不迁移，请使用新数据目录。已有 Docker 容器独立于平台数据库，可通过命令行重新导入新目录。
+
+## 集群使用者
+
+管理员通过「集群使用者」配置注册信息 schema（文本、单选、必填）、在页面生成带 quota 的邀请码，并查看使用者信息；邀请码管理不提供 JSON API。使用者通过 `GET /api/members/registration-schema` 获取表单定义，再调用 `POST /api/members/register` 提交使用者标识、邀请码和信息。每个邀请码只允许成功登记 quota 人，名额用尽后失效，失败不扣名额。
+
+这些账号属于机器使用者，独立于 Alpha 运维平台登录账号；注册不提供平台访问权限。当前只登记信息，稳定的使用者 ID 留给后续容器关联与自动创建流程，不创建容器或系统账号。接口、示例和校验规则见 [集群使用者登记](docs/members.md)。
 
 ## 独立 rootless Docker 工具
 
@@ -165,6 +172,8 @@ go test -race ./...
 go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
 ```
+
+使用者注册端到端回归：`python3 tests/test_members_browser.py` 会构建并启动使用临时数据目录的本机服务，验证管理员字段配置、邀请码页面管理、公开注册、配额、权限隔离和移动端布局；不操作 Docker。
 
 浏览器回归：安装 Playwright 和 Chromium 后运行 `python3 tests/test_live_map_browser.py`、`python3 tests/test_agent_browser.py`、`python3 tests/test_cleanup_browser.py`、`python3 tests/test_workspace_browser.py` 和 `python3 tests/test_auth_browser.py`，验证目录下钻、报告生成、追问、导出，以及登录开屏的逐笔绘制、跳过/重播、减少动态效果、总面板、模块导航、进程监控、权限和移动端布局。Agent 回归使用本机模拟模型接口，不产生真实模型调用。具备 Docker 权限和辅助镜像时，可运行 `PROJECT_ALPHA_TEST_DOCKER_MODES=1 go test -run '^TestDockerHelper(ScanModes|SlowResult)Integration$' -v ./internal/storage`，验证扫描模式及慢速接收时的结果完整性。
 

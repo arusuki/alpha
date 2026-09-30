@@ -14,6 +14,7 @@ import (
 
 	web "project-alpha/dist"
 	"project-alpha/internal/agent"
+	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/storage"
@@ -104,7 +105,7 @@ func Run(ctx context.Context, args []string) error {
 		defer watcher.Close()
 	}
 	containerHandler := newContainerHandler(db)
-	modules := Modules{Containers: containerHandler, Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
+	modules := Modules{Members: members.NewHandler(db), Containers: containerHandler, Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err

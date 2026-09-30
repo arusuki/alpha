@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/auth.css">
   <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
-  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script>
+  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/members.js" defer></script>
 </head>
 <body>
 <section id="authPanel" class="auth-panel" data-phase="ready" aria-label="project alpha 登录" hidden>
@@ -61,6 +61,7 @@
       <button class="active" data-page="dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-dashboard"/></svg>总面板</button>
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
       <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
+      <button data-page="members" data-admin><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
       <button class="account-nav" data-page="settings"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>账号管理</button>
@@ -166,6 +167,24 @@
 <div class="form-grid"><label>扫描模式<select id="cfgScanMode"><option value="normal">normal · 常规</option><option value="fast">fast · 快速</option></select><small>normal 最多使用 4 核并发；fast 尽可能使用可用 CPU 核心，会增加 CPU 占用。实际速度取决于磁盘和目录结构，保存后对新任务生效。</small></label></div>
 <div class="form-grid three"><label>明细深度<input id="cfgDepth" type="number" min="0" max="32" required></label><label>明细节点预算<input id="cfgNodes" type="number" min="100" max="100000" required></label><label>Docker 操作超时（秒）<input id="cfgTimeout" type="number" min="5" max="3600" required></label><label>容器所属用户标签<input id="cfgOwnerLabel" maxlength="128" required></label><label>定时扫描间隔（分钟）<input id="cfgInterval" type="number" min="0" max="10080" required><small>0 为关闭，启用时至少 5 分钟</small></label></div>
 <p class="form-note">限制明细深度不会减少统计总量。平台数据目录自动排除。首次启用定时扫描会启动一次扫描，此后在上次任务结束后按间隔执行。</p><div class="form-actions"><button id="saveSettings" class="primary" type="submit">保存扫描配置</button><span id="settingsStatus" role="status"></span></div></form></section>
+<section id="page-members" class="platform-page settings-stack" hidden>
+  <section class="management-panel"><div class="section-heading"><div><h2>机器使用者</h2><p>登记机器的使用者信息，供后续分配容器。注册仅登记使用者，不创建容器或平台登录账号。</p></div><button id="membersRefresh">刷新列表</button></div>
+    <p id="membersError" class="error-text" role="alert"></p><p id="membersStatus" class="form-note" role="status"></p>
+    <div class="table-scroll"><table><thead><tr><th>使用者标识</th><th>登记信息</th><th>注册时间</th></tr></thead><tbody id="membersBody"></tbody></table></div>
+  </section>
+  <section class="management-panel"><div class="section-heading"><div><h2>注册信息配置</h2><p>设置需要填写的信息。文本字段由使用者填写，单选字段从给定选项中选择；使用者标识固定必填。</p></div></div>
+    <form id="memberSchemaForm"><fieldset id="memberSchemaEditor" disabled><div id="memberSchemaFields" class="member-schema-fields"></div>
+      <div class="member-schema-tools"><button id="memberAddField" type="button">添加字段</button><button id="memberExampleFields" type="button">添加姓名、学历、组别示例</button></div>
+      <div class="member-schema-preview"><h3>表单预览</h3><div id="memberSchemaPreview" class="form-grid"></div></div>
+      <p class="form-note">保存后应用于新的注册。已登记的信息保留注册时的字段名称与选项。</p>
+      <div class="form-actions"><button id="memberSaveSchema" class="primary" type="submit">保存注册配置</button><span id="memberSchemaStatus" role="status"></span></div>
+    </fieldset></form><button id="memberReloadSchema" class="text-button" type="button">重新载入配置（放弃未保存修改）</button>
+  </section>
+  <section class="management-panel"><div class="section-heading"><div><h2>注册邀请码</h2><p>生成后将邀请码交给使用者。每次成功注册消耗一个名额，用尽后自动失效；注册失败不消耗名额。</p></div></div>
+    <form id="memberInvitationForm" class="member-invitation-form" method="post" action="/admin/member-invitations/create"><label>备注<input id="memberInvitationLabel" name="label" maxlength="100" placeholder="例如：A 组秋季入组"></label><label>可注册人数（quota）<input id="memberInvitationQuota" name="quota" type="number" min="1" max="100000" step="1" value="1" required></label><button id="memberCreateInvitation" type="submit" class="primary">生成邀请码</button></form>
+    <div id="memberInvitationsPanel"></div>
+  </section>
+</section>
 <section id="page-settings" class="platform-page" hidden>
   <div id="settings-accounts" class="settings-stack">
     <section class="management-panel"><div class="section-heading"><div><h2>当前账号</h2><p>查看登录身份，管理账号密码。</p></div><button id="passwordButton">修改密码</button></div><div class="account-summary"><strong id="settingsUsername"></strong><span id="settingsRole" class="pill"></span></div></section>
@@ -287,5 +306,6 @@
 <dialog id="deleteJobDialog" aria-labelledby="deleteJobTitle" aria-describedby="deleteJobHint"><h2 id="deleteJobTitle">删除扫描记录？</h2><p id="deleteJobSummary" class="form-note"></p><p id="deleteJobHint" class="form-note"></p><p class="form-note">仅清理平台保存的扫描数据，不会删除宿主机文件或容器。</p><p id="deleteJobError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closeDeleteJob" autofocus>取消</button><button type="button" id="confirmDeleteJob" class="danger">确认删除</button></div></dialog>
 <dialog id="ownerDialog"><form id="ownerForm"><h2>设置容器所属用户</h2><p id="ownerContainer" class="mono"></p><label>所属用户<input id="ownerInput" maxlength="100" placeholder="留空则使用容器标签"></label><p class="form-note">保存平台内的归属映射，用于所有扫描结果的展示。</p><div class="form-actions"><button type="button" id="closeOwner">取消</button><button type="submit" class="primary">保存归属</button></div></form></dialog>
 <dialog id="passwordDialog"><form id="passwordForm"><h2>修改登录密码</h2><label>原密码<input id="oldPassword" type="password" autocomplete="current-password" required maxlength="256"></label><label>新密码<input id="changedPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required></label><p class="form-note">修改后所有设备的登录会话失效，需要使用新密码重新登录。</p><p id="passwordError" class="error-text" role="alert"></p><div class="form-actions"><button type="button" id="closePassword">取消</button><button type="submit" class="primary">修改密码</button></div></form></dialog>
+<dialog id="memberInvitationDialog" aria-labelledby="memberInvitationTitle"><h2 id="memberInvitationTitle">邀请码已生成</h2><p class="form-note">邀请码仅展示这一次，请复制保存并发给使用者。关闭后可作废并重新生成。</p><label>邀请码<input id="memberInvitationCode" readonly autocomplete="off" spellcheck="false"></label><p id="memberInvitationCopyStatus" role="status"></p><div class="form-actions"><button id="memberInvitationCopy" type="button">复制邀请码</button><button id="memberInvitationClose" type="button" class="primary">已保存，关闭</button></div></dialog>
 </body>
 </html>

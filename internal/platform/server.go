@@ -39,6 +39,12 @@ type Module interface {
 	Dispatch(http.ResponseWriter, *http.Request, User) (int, any, error)
 }
 
+// PublicModule handles explicitly public routes after Host and Origin validation.
+// A zero status and nil error leave the request to the authenticated dispatcher.
+type PublicModule interface {
+	DispatchPublic(http.ResponseWriter, *http.Request) (int, any, error)
+}
+
 func NewServer(db *Database, module Module, assets fs.ReadFileFS, hosts []string, secure bool) *Server {
 	s := &Server{DB: db, Module: module, Assets: assets, AllowedHosts: map[string]bool{"localhost": true, "127.0.0.1": true, "::1": true}, SecureCookie: secure, attempts: map[string]loginAttempt{}}
 	for _, h := range hosts {
@@ -68,7 +74,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
 		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
 		"/style.css": "style.css", "/workspace.css": "workspace.css", "/workspace-art.png": "workspace-art.png",
-		"/auth.css": "auth.css", "/auth.js": "auth.js",
+		"/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js",
 	}
 	if filename, ok := assets[r.URL.Path]; r.Method == "GET" && ok {
 		body, err := s.Assets.ReadFile(filename)
@@ -199,6 +205,12 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 		s.mu.Unlock()
 		s.cookie(w, token)
 		return 200, session, nil
+	}
+	if public, ok := s.Module.(PublicModule); ok {
+		status, value, err := public.DispatchPublic(w, r)
+		if status != 0 || err != nil {
+			return status, value, err
+		}
 	}
 	session, err := db.Session(httpapi.SessionToken(r))
 	if err != nil {

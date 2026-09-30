@@ -120,6 +120,19 @@ h1 { font-weight:700; letter-spacing:-.045em; }
 .storage-overview { background:#fff; }
 .badge { background:var(--blue-soft); color:var(--blue); border-color:transparent; }
 .management-panel { background:#fff; padding:26px; }
+#memberSchemaEditor{border:0;padding:0;margin:0;min-width:0}
+.member-schema-fields{display:grid;gap:16px}
+.member-schema-field{padding:18px;border:1px solid var(--line);border-radius:12px;background:#fafaff}
+.member-field-heading,.member-schema-tools{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px}
+.member-schema-tools{justify-content:flex-start;flex-wrap:wrap;margin:18px 0}
+.member-field-options{margin-top:16px}
+.member-schema-preview{border-top:1px solid var(--line);padding-top:20px;margin-top:24px}
+.member-schema-preview h3{font-size:.9rem;margin-bottom:16px}
+.member-invitation-form{display:grid;grid-template-columns:2fr 1fr auto;gap:16px;align-items:end;margin-bottom:24px}
+#memberReloadSchema{margin-top:16px}
+#memberInvitationCode{font-family:monospace;font-size:.85rem}
+#membersBody .sub{white-space:normal;overflow-wrap:anywhere}
+@media(max-width:700px){.member-invitation-form{grid-template-columns:1fr}.member-schema-field{padding:14px}.member-schema-field .form-grid.three{grid-template-columns:1fr}}
 .section-heading p { line-height:1.8; }
 .settings-form { max-width:none; }
 .settings-form>label,.form-grid { margin-bottom:22px; }
