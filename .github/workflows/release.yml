@@ -109,8 +109,8 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/project-alpha" ./cmd/project-alpha
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
           for binary in "$stage"/bin/*; do
-            required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\\1/p' | sort -V | tail -n1)"
-            if [[ -n "$required" && "$(printf '%s\\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
+            required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n1)"
+            if [[ -n "$required" && "$(printf '%s\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
               echo "::error::$binary requires glibc $required (maximum supported: 2.31)"
               exit 1
             fi
