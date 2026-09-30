@@ -10,6 +10,7 @@ function controls(){
   for(const root of [$('page-bastion'),$('bastionMemberDialog')])root.querySelectorAll('button').forEach(e=>{if(e.id!=='bastionMemberClose')e.disabled=state.busy||e.dataset.locked==='true'||(e.dataset.accountAction&&!state.data?.jump_installation.web.available);});
 }
 function row(title,detail,actions=''){return `<article class="bastion-row"><div><strong>${esc(title)}</strong><div class="bastion-detail">${detail}</div></div><div class="actions">${actions}</div></article>`;}
+function statusTag(value){const tone=['accepted','ready'].includes(value)?'success':['failed','unknown','deleting'].includes(value)?'warning':'neutral';return `<span class="resource-tag" data-tone="${tone}">${esc(label(value))}</span>`;}
 function poolButtons(r){return `<button data-pool="tailscale" data-id="${esc(r.id)}" data-enabled="${r.enabled?'false':'true'}">${r.enabled?'停用':'启用'}</button><button data-remove-pool="tailscale" data-id="${esc(r.id)}" ${r.member_count?'disabled data-locked="true"':''}>移除</button>`;}
 function renderInstallation(){
  const install=state.data?.jump_installation;if(!install)return;
@@ -21,6 +22,7 @@ function renderInstallation(){
  $('bastionRemoveAccount').hidden=!account.managed&&!account.released&&!account.removed;
  $('bastionInstallAvailability').textContent=install.web.available?'':install.web.error;
  $('bastionJumpInstallation').textContent=install.ready?'已安装，可管理 alpha-jump 公钥。':install.error;
+ $('bastionJumpInstallation').dataset.state=install.ready?'ready':'unavailable';
 }
 function render(){
  const d=state.data;if(!d)return;
@@ -29,8 +31,8 @@ function render(){
  $('bastionKeyPoolError').textContent=pool.error;
  $('bastionKeySync').dataset.locked=String(!d.jump_installation.ready);
  $('bastionKeyPool').innerHTML=pool.keys.map(k=>row(k.fingerprint,`<strong>${k.state==='free'?'free · 未关联用户':'已关联'}</strong>${k.members.length?' · '+k.members.map(m=>esc(m.username)).join('、'):''}<details><summary>查看公钥</summary><code class="pool-public-key">${esc(k.public_key)}</code><small class="sub">条目 ${esc(k.id)}</small></details>`,k.state==='free'?`<button data-clean-key="${esc(k.id)}" ${!d.jump_installation.ready?'disabled data-locked="true"':''}>清理 free 公钥</button>`:'')).join('')||'<p class="empty">公钥池暂无条目。</p>';
- $('bastionTailscalePool').innerHTML=d.tailscale.map(r=>row(r.name,`${esc(r.id)} · ${r.enabled?'可分配':'已停用'} · ${r.member_count} 名使用者`,poolButtons(r))).join('')||'<p class="empty">尚未选择分享节点。</p>';
- $('bastionAssignments').innerHTML=d.assignments.map(r=>row(r.username,`${r.member_status==='deleting'?'正在回收 · ':''}Tailscale：${esc(label(r.invite_state))} · alpha-jump 公钥：${esc(label(r.key_state))}${r.error?`<br><span class="error-text">${esc(r.error)}</span>`:''}`,`<button data-member="${esc(r.member_id)}">查看资源</button>`)).join('')||'<p class="empty">暂无使用者资源。</p>';
+ $('bastionTailscalePool').innerHTML=d.tailscale.map(r=>row(r.name,`<div class="resource-inline"><span class="resource-tag" ${r.enabled?'data-tone="success"':''}>${r.enabled?'可分配':'已停用'}</span><span>${r.member_count} 名使用者</span></div><small class="sub mono">${esc(r.id)}</small>`,poolButtons(r))).join('')||'<p class="empty">尚未选择分享节点，查询节点后可加入分享池。</p>';
+ $('bastionAssignments').innerHTML=d.assignments.map(r=>`<article class="bastion-assignment"><div class="bastion-member-name"><strong>${esc(r.username)}</strong>${r.member_status==='deleting'?'<small class="sub">正在回收</small>':''}</div><div class="bastion-member-state"><span>Tailscale 邀请</span>${statusTag(r.invite_state)}</div><div class="bastion-member-state"><span>alpha-jump 公钥</span>${statusTag(r.key_state)}</div><button data-member="${esc(r.member_id)}">查看资源 <span aria-hidden="true">↗</span></button>${r.error?`<p class="error-text">${esc(r.error)}</p>`:''}</article>`).join('')||'<p class="empty">暂无使用者资源。完成注册后，可在这里查看授权和分配情况。</p>';
 }
 async function task(fn){if(state.busy||platform.user?.role!=='admin')return;const epoch=state.epoch;state.busy=true;controls();$('bastionError').textContent='';$('bastionMemberError').textContent='';try{await fn(epoch);}catch(e){if(epoch===state.epoch)$(state.member?'bastionMemberError':'bastionError').textContent=e.message;}finally{if(epoch===state.epoch){state.busy=false;controls();}}}
 async function load(epoch,settings=false){const [data,cfg]=await Promise.all([api('/api/bastion/resources'),settings?api('/api/tailscale/settings'):null]);if(epoch!==state.epoch)return;state.data=data;if(cfg){state.settings=cfg;$('bastionTailnet').value=cfg.tailnet;$('bastionTokenStatus').textContent=cfg.has_api_token?'已保存 API Key · 版本 '+cfg.revision:'尚未配置 API Key';}render();}

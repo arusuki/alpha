@@ -1,13 +1,13 @@
 # 跳板机与使用者资源
 
-总控「跳板机管理」维护 Tailscale 分享节点池和固定 `alpha-jump` 账号。注册时发布成员公钥并分配容器，删除成员时回收。数据库格式及旧数据处理见 [README](../README.md#配置与数据)。
+总控「跳板机管理」维护 Tailscale 分享节点池和固定 `alpha-jump` 账号。注册时发布成员公钥并分配容器，删除成员时回收。数据库格式及旧数据处理见 [运行与配置](operations.md#配置与数据)。
 
 ## 配置
 
 1. 保存 Tailscale API Key（`tskey-api-…`）和 Tailnet（`-` 为凭据所属网络），从已授权的自有节点中选择分享节点。总控无需 Tailscale 客户端；按关联人数最少优先分配，停用只影响新分配。
 2. 安装 OpenSSH，以普通系统用户运行 control，在网页添加或接管 `alpha-jump`。安装时使用页面所示服务用户的 sudo 密码，用户和数据目录由服务端确定。
 3. 在每个 worker 的容器管理中配置镜像、数据目录、Docker endpoint、起始端口及 SSH 地址。注册容器使用默认镜像、bridge 网络、全部 GPU 和自动端口。
-4. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](../README.md#公网-registry) 注册。
+4. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。
 
 ## 跳板账号
 

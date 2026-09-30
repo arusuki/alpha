@@ -2,7 +2,7 @@
 
 `storage.Service` 是 Web 和 Agent 共用的业务入口：`Snapshot` 读取公开快照，`Changes` 读取版本差量，`Query` 查询目录和用量，`Explore` 在原记录上启动增量探索。服务不保存模型配置、会话或工具调用历史。
 
-Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，供 Host 清理前复核。格式版本与不兼容数据的处理见 [README](../README.md#配置与数据)。
+Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，供 Host 清理前复核。格式版本与不兼容数据的处理见 [运行与配置](operations.md#配置与数据)。
 
 ## Web 接口
 

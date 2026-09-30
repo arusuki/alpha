@@ -35,6 +35,10 @@ function render(){
   $('clusterPartial').hidden=!data.partial;
   $('clusterPartial').textContent='部分计算节点不可用，容器统计仅包含可访问的 worker。';
   renderNodes();
+  $('allocationContainerCount').textContent=data.container_count;
+  $('allocationOwnerCount').textContent=data.members.filter(m=>m.count&&m.username).length;
+  $('allocationNodeCount').textContent=data.nodes.filter(n=>n.kind!=='registry'&&n.online).length;
+  $('allocationStatus').dataset.state=data.partial?'partial':'ready';
   $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'计算节点统计完整。')+` ${data.container_count} 个容器记录 · ${dateTime(data.checked_at)}`;
   renderAllocations();
 }
@@ -73,7 +77,10 @@ function renderAllocations(){
   const query=$('allocationSearch').value.trim().toLowerCase();
   const expanded=new Set([...$('allocationRows').querySelectorAll('details[open]')].map(el=>el.dataset.owner));
   const rows=data.members.filter(m=>!query||[m.username,...m.nodes.flatMap(n=>[n.name,...n.containers.flatMap(c=>[c.name,c.id])])].join(' ').toLowerCase().includes(query));
-  $('allocationRows').innerHTML=rows.map(m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||expanded.has(m.username)?'open':''}><summary><strong>${esc(m.username||'未归属')}</strong><span>${m.count} 个容器 · ${m.nodes.length} 个节点${admin()&&!m.registered&&m.username?' · 未登记使用者':''}</span></summary>${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers">${esc(n.name)} ↗</a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th>容器</th><th>记录来源</th><th>扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td>${c.managed?'已接管':'扫描发现'}</td><td>${esc(c.state||'尚无扫描状态')}<small class="sub">${esc(c.observed_at||'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||'<p>在线节点尚无该使用者的容器记录。</p>'}</details>`).join('')||'<p class="empty">没有匹配的使用者或容器。</p>';
+  $('allocationResultCount').textContent=query?`${rows.length} / ${data.members.length}`:data.members.length;
+  $('allocationRows').innerHTML=rows.map(m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||expanded.has(m.username)?'open':''}>
+    <summary><span class="allocation-avatar" aria-hidden="true">${esc(Array.from(m.username||'?')[0].toUpperCase())}</span><span class="allocation-identity"><strong>${esc(m.username||'未归属')}</strong><small>${!m.username?'尚未关联使用者':admin()&&!m.registered?'未登记使用者':'使用者'}</small></span><span class="allocation-counts">${m.count} 个容器 · ${m.nodes.length} 个节点</span><span class="allocation-chevron" aria-hidden="true">›</span></summary>
+    <div class="allocation-content">${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>${esc(n.name)} <span aria-hidden="true">↗</span></a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th scope="col">容器 / ID</th><th scope="col">记录来源</th><th scope="col">扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td><span class="resource-tag">${c.managed?'已接管':'扫描发现'}</span></td><td><span class="resource-tag" ${c.state==='running'?'data-tone="success"':''}>${esc(c.state||'尚无扫描状态')}</span><small class="sub">${esc(c.observed_at?dateTime(c.observed_at):'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||'<p class="empty">在线节点尚无该使用者的容器记录。</p>'}</div></details>`).join('')||`<div class="cluster-empty"><h3>${query?'没有匹配的使用者或容器':'暂无使用者容器记录'}</h3><p>${query?'试试其他使用者、节点名称或容器 ID。':'节点接入并分配容器后，可在这里查看归属。'}</p></div>`;
 }
 async function refresh(){
   if(!platform.user||platform.nodeID)return;
@@ -82,7 +89,7 @@ async function refresh(){
   const pending=(async()=>{try{
     const data=await api('/api/cluster/overview',{signal:AbortSignal.timeout(12000)});if(epoch!==state.epoch)return;
     state.data=data;$('clusterError').textContent='';render();
-  }catch(e){if(epoch===state.epoch){$('clusterError').textContent=(state.data?'刷新失败，以下保留上次结果：':'无法读取节点：')+e.message;$('clusterHealth').textContent='集群状态更新失败';$('clusterHealth').parentElement.dataset.state='partial';if(!state.data)$('clusterNodes').innerHTML='<div class="cluster-empty"><h3>暂时无法读取节点</h3><p>请使用「刷新状态」重新连接。</p></div>';$('allocationStatus').textContent=(state.data?'刷新失败，以下为上次结果：':'无法读取统计：')+e.message;}}
+  }catch(e){if(epoch===state.epoch){$('clusterError').textContent=(state.data?'刷新失败，以下保留上次结果：':'无法读取节点：')+e.message;$('clusterHealth').textContent='集群状态更新失败';$('clusterHealth').parentElement.dataset.state='partial';if(!state.data)$('clusterNodes').innerHTML='<div class="cluster-empty"><h3>暂时无法读取节点</h3><p>请使用「刷新状态」重新连接。</p></div>';$('allocationStatus').dataset.state='partial';$('allocationStatus').textContent=(state.data?'刷新失败，以下为上次结果：':'无法读取统计：')+e.message;}}
   finally{if(epoch===state.epoch){state.pending=null;$('clusterNodes').setAttribute('aria-busy','false');$('clusterRefresh').disabled=false;$('allocationsRefresh').disabled=false;}}})();
   state.pending=pending;$('clusterNodes').setAttribute('aria-busy','true');$('clusterRefresh').disabled=true;$('allocationsRefresh').disabled=true;return pending;
 }
@@ -141,7 +148,8 @@ window.ClusterUI={configure,refresh,unavailable,connected,reset(){
   state.epoch++;state.opening=false;state.unavailableTarget=null;$('nodeUnavailableRetry').disabled=false;state.data=null;state.pending=null;state.editing=null;state.removing=null;state.filter='all';state.nodesHTML='';busy(false);
   document.body.classList.remove('control-room');
   $('clusterSearch').value='';$('allocationSearch').value='';$('clusterError').textContent='';$('clusterPartial').hidden=true;$('clusterNodeCount').textContent='';
-  for(const id of ['clusterOnline','clusterContainers','clusterOwners'])$(id).textContent='—';
+  for(const id of ['clusterOnline','clusterContainers','clusterOwners','allocationContainerCount','allocationOwnerCount','allocationNodeCount'])$(id).textContent='—';
+  $('allocationResultCount').textContent='';$('allocationStatus').textContent='';delete $('allocationStatus').dataset.state;
   $('clusterHealth').textContent='正在连接集群…';$('clusterHealth').parentElement.dataset.state='empty';$('clusterChecked').textContent='正在获取节点状态…';
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter==='all')));
   for(const id of ['nodeDialog','nodeRemoveDialog','nodeUnavailableDialog'])if($(id).open)$(id).close();

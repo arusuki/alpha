@@ -2,7 +2,7 @@
 
 ## 运行模式和数据归属
 
-同一二进制有三种互斥服务模式：默认 `--control`，`--worker` 启动计算节点，`--registry` 启动公网使用者注册入口。在总控网页添加 worker 或 registry 节点。control 按持久化配置主动向一个或多个 registry 建立长连接；registry 首次认证后持久绑定该 control，拒绝其他 control。公网部署见 [registry 启动说明](../README.md#公网-registry)。
+同一二进制有三种互斥服务模式：默认 `--control`，`--worker` 启动计算节点，`--registry` 启动公网使用者注册入口。在总控网页添加 worker 或 registry 节点。control 按持久化配置主动向一个或多个 registry 建立长连接；registry 首次认证后持久绑定该 control，拒绝其他 control。公网部署见 [registry 启动说明](operations.md#公网-registry)。
 
 | 内容 | 总控 | node / worker |
 | --- | --- | --- |
@@ -37,7 +37,7 @@
 
 节点令牌以明文保存在权限为 0600 的总控 SQLite 中，不返回给浏览器，不进入审计。编辑节点时令牌留空表示保留；更换 URL 仍须对应原实例 ID。节点重建数据库产生新身份，需要添加为新节点，防止旧链接误操作另一台机器。worker 存在使用者分配资源记录时拒绝移除节点，须先回收关联资源。无引用时移除节点仅断开总控注册，保留 node 数据和任务；重新添加同一实例会恢复访问。
 
-registry 的启动和令牌规则见 [README](../README.md#公网-registry)。通过网页添加、编辑和移除，每个节点独立重连；重启总控后恢复连接。握手核对 registry 实例 ID，远端重建须添加为新节点。移除不清除远端绑定或注册会话。
+registry 的启动和令牌规则见 [公网注册说明](operations.md#公网-registry)。通过网页添加、编辑和移除，每个节点独立重连；重启总控后恢复连接。握手核对 registry 实例 ID，远端重建须添加为新节点。移除不清除远端绑定或注册会话。
 
 registry 卡片显示连接状态、错误和最近通信时间，参与在线节点计数；容器统计、分配和计算 API 仅使用 worker，registry 离线不影响统计完整性。
 
@@ -86,4 +86,4 @@ Agent 后台任务直接检查总控中的管理员权限和节点注册；每�
 
 ## 验证
 
-运行 `go test -race ./...`，以及 `python3 tests/test_cluster_browser.py`、`python3 tests/test_registry_browser.py`。依赖和其他回归入口见 [README](../README.md#验证)。
+运行 `go test -race ./...`，以及 `python3 tests/test_cluster_browser.py`、`python3 tests/test_registry_browser.py`。依赖和其他回归入口见 [开发与验证](development.md#验证)。

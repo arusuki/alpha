@@ -6,9 +6,9 @@
 
 “使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册后自动分配分享节点、添加 alpha-jump 公钥，并在各 node 创建一个公钥登录容器；失败项可由使用者后续通过 API 补申请。详见 [跳板机与使用者资源](bastion.md)。
 
-公网用户可通过 [registry](../README.md#公网-registry) 注册同一类集群使用者：访问 `/registry/<8位 REG_PASS>/<邀请码>`，经 control 校验后填写表单并查看资源分配进度和 Tailscale 分享链接。registry 不创建平台管理员或只读账号；control 不需要对公网开放入站端口。
+公网用户可通过 [registry](operations.md#公网-registry) 注册同一类集群使用者：访问 `/registry/<8位 REG_PASS>/<邀请码>`，经 control 校验后填写表单并查看资源分配进度和 Tailscale 分享链接。registry 不创建平台管理员或只读账号；control 不需要对公网开放入站端口。
 
-数据格式与旧数据处理见 [README](../README.md#配置与数据)。
+数据格式与旧数据处理见 [运行与配置](operations.md#配置与数据)。
 
 ## 管理接口
 
