@@ -26,7 +26,7 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 	code := ""
 	switch {
 	case r.Method == "GET" && r.URL.Path == invitationPage:
-	case r.Method == "POST" && (r.URL.Path == invitationPage+"/create" || r.URL.Path == invitationPage+"/revoke"):
+	case r.Method == "POST" && (r.URL.Path == invitationPage+"/create" || r.URL.Path == invitationPage+"/update" || r.URL.Path == invitationPage+"/revoke"):
 		typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || typ != "application/x-www-form-urlencoded" {
 			return 0, nil, httpapi.NewError(415, "请通过管理员页面提交邀请码表单")
@@ -36,10 +36,14 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 			return 0, nil, httpapi.NewError(400, "邀请码表单无效或过大")
 		}
 		create := r.URL.Path == invitationPage+"/create"
+		update := r.URL.Path == invitationPage+"/update"
 		for key, values := range r.PostForm {
-			if len(values) != 1 || (create && key != "label" && key != "quota") || (!create && key != "id") {
+			if len(values) != 1 || (create && key != "label" && key != "quota") || (update && key != "id" && key != "label") || (!create && !update && key != "id") {
 				return 0, nil, httpapi.NewError(400, "邀请码表单字段无效")
 			}
+		}
+		if update && !r.PostForm.Has("label") {
+			return 0, nil, httpapi.NewError(400, "邀请码表单缺少备注字段")
 		}
 		if create {
 			quota, err := strconv.Atoi(r.PostForm.Get("quota"))
@@ -56,7 +60,13 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 			if !invitationID.MatchString(id) {
 				return 0, nil, httpapi.NewError(400, "邀请码标识无效")
 			}
-			if err := h.store.RevokeInvitation(id, actor); err != nil {
+			var err error
+			if update {
+				err = h.store.UpdateInvitationLabel(id, r.PostForm.Get("label"), actor)
+			} else {
+				err = h.store.RevokeInvitation(id, actor)
+			}
+			if err != nil {
 				return 0, nil, err
 			}
 		}

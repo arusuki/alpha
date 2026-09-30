@@ -47,7 +47,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.locator('#authSubmit').click()
                 page.locator('.platform-nav [data-page="members"]').click()
                 expect(page.locator('#memberSchemaEditor')).to_be_enabled()
-                assert '暂无使用者' in page.locator('#membersBody').inner_text()
+                expect(page.locator('#membersBody')).to_contain_text('暂无使用者')
                 page.locator('#memberExampleFields').click()
                 assert page.locator('[data-member-field]').count() == 3
                 page.locator('#memberAddField').click()
@@ -69,6 +69,17 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert len(code) == 48
                 page.locator('#memberInvitationClose').click()
                 assert page.locator('#memberInvitationCode').input_value() == ''
+                invitation_label = page.locator('[data-update-invitation] input[name="label"]')
+                expect(invitation_label).to_have_value('A组入组')
+                invitation_label.fill('  新备注 <img src=x onerror=alert(1)> "  ')
+                page.locator('[data-update-invitation] button').click()
+                expect(page.locator('#membersStatus')).to_have_text('邀请码备注已保存。')
+                expect(invitation_label).to_have_value('新备注 <img src=x onerror=alert(1)> "')
+                assert page.locator('#memberInvitationsPanel img').count() == 0
+                assert page.locator('#memberInvitationDialog').is_hidden()
+                page.locator('#membersRefresh').click()
+                expect(page.locator('#membersRefresh')).to_be_enabled()
+                expect(invitation_label).to_have_value('新备注 <img src=x onerror=alert(1)> "')
                 payload = dict(username='alice', invitation_code=code, ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f', schema_revision=schema['revision'],
                                profile=dict(full_name='<img src=x onerror=alert(1)>', degree='博士', group='A组'))
                 registered = public.post('/api/members/register', data=payload)
@@ -94,6 +105,13 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.locator('#membersRefresh').click()
                 expect(page.locator('#memberInvitationsBody')).to_contain_text('名额已用尽')
                 assert page.locator('[data-revoke-invitation]').count() == 0
+                invitation_label.fill('')
+                page.locator('[data-update-invitation] button').click()
+                expect(page.locator('[data-update-invitation] button')).to_be_enabled()
+                page.locator('#membersRefresh').click()
+                expect(page.locator('#membersRefresh')).to_be_enabled()
+                expect(invitation_label).to_have_value('')
+                expect(page.locator('#memberInvitationsBody')).to_contain_text('名额已用尽')
                 # Refresh lists preserves unsaved schema edits; concurrent saves are rejected.
                 page.locator('[data-field-label]').first.fill('姓名草稿')
                 page.locator('#membersRefresh').click()
@@ -119,6 +137,11 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.locator('#memberInvitationClose').click()
                 page.locator('[data-revoke-invitation] button').click()
                 expect(page.locator('#memberInvitationsBody')).to_contain_text('已作废')
+                revoked_row = page.locator('#memberInvitationsBody tr').filter(has_text='已作废')
+                revoked_row.locator('input[name="label"]').fill('已作废的备注')
+                revoked_row.locator('[data-update-invitation] button').click()
+                expect(revoked_row.locator('input[name="label"]')).to_have_value('已作废的备注')
+                expect(page.locator('#membersStatus')).to_have_text('邀请码备注已保存。')
                 payload.update(invitation_code=revoked_code, schema_revision=3)
                 assert public.post('/api/members/register', data=payload).status == 400
                 page.screenshot(path='/tmp/project-alpha-members-desktop.png', full_page=True)

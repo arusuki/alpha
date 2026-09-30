@@ -135,6 +135,9 @@ h1 { font-weight:700; letter-spacing:-.045em; }
 .member-schema-preview{border-top:1px solid var(--line);padding-top:20px;margin-top:24px}
 .member-schema-preview h3{font-size:.9rem;margin-bottom:16px}
 .member-invitation-form{display:grid;grid-template-columns:2fr 1fr auto;gap:16px;align-items:end;margin-bottom:24px}
+.member-invitation-label-form{display:flex;gap:8px;align-items:center;min-width:280px}
+.member-invitation-label-form input[name=label]{flex:1;min-width:0}
+.member-invitation-label-form button{flex-shrink:0}
 #memberReloadSchema{margin-top:16px}
 #memberInvitationCode{font-family:monospace;font-size:.85rem}
 #membersBody .sub{white-space:normal;overflow-wrap:anywhere}

@@ -5,7 +5,7 @@ const admin=()=>platform.user?.role==='admin';
 function controls(){
   $('memberSchemaEditor').disabled=state.busy||!state.schema;
   for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation'])$(id).disabled=state.busy;
-  document.querySelectorAll('[data-revoke-invitation] button').forEach(el=>el.disabled=state.busy);
+  document.querySelectorAll('[data-revoke-invitation] button,[data-update-invitation] button').forEach(el=>el.disabled=state.busy);
 }
 function fields(){
   return [...$('memberSchemaFields').querySelectorAll('[data-member-field]')].map(row=>{
@@ -106,7 +106,7 @@ function submitInvitation(event){
     if(issued){
       clearCode();$('memberInvitationCode').value=issued.value;issued.remove();$('memberInvitationDialog').showModal();
       $('membersStatus').textContent='邀请码已生成，请复制保存并发给使用者。';
-    }else $('membersStatus').textContent='邀请码已作废，已登记的使用者不受影响。';
+    }else $('membersStatus').textContent=form.matches('[data-update-invitation]')?'邀请码备注已保存。':'邀请码已作废，已登记的使用者不受影响。';
   });
 }
 $('memberInvitationForm').addEventListener('submit',submitInvitation);

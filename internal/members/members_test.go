@@ -139,6 +139,81 @@ func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	}
 }
 
+func TestInvitationLabelUpdates(t *testing.T) {
+	s := testStore(t)
+	for _, status := range []string{"active", "exhausted", "revoked"} {
+		t.Run(status, func(t *testing.T) {
+			i, err := s.CreateInvitation("原备注", 1, "operator")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if status == "exhausted" {
+				_, err = s.RegisterWith(Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "exhausted", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
+			} else if status == "revoked" {
+				err = s.RevokeInvitation(i.ID, "operator")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := s.Invitations()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var before Invitation
+			for _, row := range rows {
+				if row.ID == i.ID {
+					before = row
+				}
+			}
+			for _, label := range []string{"  新备注  ", strings.Repeat("名", 100), "   "} {
+				if err := s.UpdateInvitationLabel(i.ID, label, "editor"); err != nil {
+					t.Fatal(err)
+				}
+				expectError(t, s.UpdateInvitationLabel(i.ID, strings.Repeat("名", 101), "editor"), 400)
+				rows, err = s.Invitations()
+				if err != nil {
+					t.Fatal(err)
+				}
+				found := false
+				for _, after := range rows {
+					if after.ID == i.ID {
+						found = true
+						if after.Label != strings.TrimSpace(label) || after.Status != status {
+							t.Fatalf("bad update: %+v", after)
+						}
+						after.Label = before.Label
+						if after != before {
+							t.Fatalf("label update changed invitation metadata: %+v -> %+v", before, after)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("updated invitation disappeared")
+				}
+			}
+		})
+	}
+	expectError(t, s.UpdateInvitationLabel(strings.Repeat("0", 32), "missing", "editor"), 404)
+	var audits int
+	if err := s.SQL.QueryRow("SELECT count(*) FROM audit WHERE action='member.invitation.update' AND actor='editor'").Scan(&audits); err != nil || audits != 9 {
+		t.Fatalf("missing update audits: %d %v", audits, err)
+	}
+	i, err := s.CreateInvitation("保留备注", 1, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SQL.Exec("CREATE TRIGGER fail_invitation_audit BEFORE INSERT ON audit WHEN NEW.action='member.invitation.update' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.UpdateInvitationLabel(i.ID, "不应保存", "editor"); err == nil {
+		t.Fatal("expected audit failure")
+	}
+	var label string
+	if err = s.SQL.QueryRow("SELECT label FROM member_invitations WHERE id=?", i.ID).Scan(&label); err != nil || label != i.Label {
+		t.Fatalf("failed audit retained label update: %q %v", label, err)
+	}
+}
+
 func TestSchemaValidationAndConflicts(t *testing.T) {
 	s := testStore(t)
 	cases := []Schema{
@@ -306,6 +381,23 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	}
 	invitation := invitations[0]
 	invitation.Code = match[1]
+	update := object{"id": invitation.ID, "label": `  新备注 <img src=x onerror=alert(1)> "  `}
+	expect(401, call("POST", invitationPage+"/update", update, "", "", nil))
+	expect(403, call("POST", invitationPage+"/update", update, token, "", nil))
+	expect(415, call("POST", invitationPage+"/update", update, token, csrf, map[string]string{"Content-Type": "application/json"}))
+	for _, invalid := range []object{
+		{"id": invitation.ID}, {"label": "missing id"}, {"id": "bad", "label": "bad id"},
+		{"id": invitation.ID, "label": strings.Repeat("名", 101)},
+		{"id": invitation.ID, "label": "unexpected quota", "quota": 3},
+	} {
+		expect(400, call("POST", invitationPage+"/update", invalid, token, csrf, nil))
+	}
+	expect(404, call("POST", invitationPage+"/update", object{"id": strings.Repeat("0", 32), "label": "missing"}, token, csrf, nil))
+	w = call("POST", invitationPage+"/update", update, token, csrf, nil)
+	expect(200, w)
+	if !strings.Contains(w.Body.String(), "新备注 &lt;img") || strings.Contains(w.Body.String(), "<img") || strings.Contains(w.Body.String(), invitation.Code) || strings.Contains(w.Body.String(), "data-issued-invitation") {
+		t.Fatalf("unsafe invitation update view: %s", w.Body.String())
+	}
 	for _, method := range []string{"GET", "POST", "DELETE"} {
 		expect(404, call(method, "/api/members/invitations", object{"quota": 1}, token, csrf, nil))
 	}
@@ -340,6 +432,7 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	}
 	expect(403, call("PUT", "/api/members/registration-schema", exampleSchema(), viewer, vs.CSRF, nil))
 	expect(403, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, viewer, vs.CSRF, nil))
+	expect(403, call("POST", invitationPage+"/update", update, viewer, vs.CSRF, nil))
 	expect(200, call("POST", invitationPage+"/revoke", object{"id": invitation.ID}, token, csrf, nil))
 	req.Username = "bob"
 	expect(400, call("POST", "/api/members/register", req, "", "", nil))

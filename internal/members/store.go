@@ -177,6 +177,27 @@ func (s *Store) Invitations() ([]Invitation, error) {
 	}
 	return out, rows.Err()
 }
+func (s *Store) UpdateInvitationLabel(id, label, actor string) error {
+	label = strings.TrimSpace(label)
+	if utf8.RuneCountInString(label) > 100 {
+		return httpapi.NewError(400, "备注最多 100 个字符")
+	}
+	return s.Transaction(func(tx *sql.Tx) error {
+		result, err := tx.Exec("UPDATE member_invitations SET label=? WHERE id=?", label, id)
+		if err != nil {
+			return err
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return httpapi.NewError(404, "邀请码不存在")
+		}
+		return platform.Audit(tx, actor, "member.invitation.update", id)
+	})
+}
+
 func (s *Store) RevokeInvitation(id, actor string) error {
 	return s.Transaction(func(tx *sql.Tx) error {
 		var revoked bool
