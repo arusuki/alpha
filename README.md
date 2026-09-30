@@ -23,6 +23,39 @@ worker 启动时生成并打印连接令牌，以 0600 权限保存到数据目�
 
 在总控“添加节点”填写 worker 名称、API 根地址和令牌，进入节点后配置扫描。浏览器请求由总控认证并代理。总控首页管理 Agent、集群使用者和账号；节点页面提供存储、容器和进程管理。部署及接口见 [集群管理](docs/cluster.md)。
 
+## Linux Release 与 CI
+
+[Linux CI and Release](.github/workflows/release.yml) 在推送到 `master`、向 `master` 提交 PR 或手动运行时，执行 Go race 测试、`go vet` 和前端 JavaScript 测试，再构建 Linux amd64 / arm64 安装包。普通构建的安装包可在 Actions 页面的 Artifacts 下载，保留 14 天；不会创建 Release。
+
+发布时，在包含此工作流的提交上创建并推送版本标签，例如：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`v*` 标签通过全部检查和双架构构建后，自动创建 GitHub Release 并上传：
+
+- `project-alpha_<标签>_linux_amd64.tar.gz`
+- `project-alpha_<标签>_linux_arm64.tar.gz`
+- `SHA256SUMS`
+
+带连字符的标签（例如 `v0.2.0-rc.1`）标记为预发布。失败后可在 Actions 重跑；已有 Release 的同名附件会被替换。手动运行只生成 Artifacts，不发布 Release。使用仓库内置的 `GITHUB_TOKEN`，无需额外配置 Secret。
+
+压缩包包含 `bin/project-alpha`、`bin/rootless-docker`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
+
+二进制在 Ubuntu 24.04 上原生编译，启用 CGO 以支持 SQLite；运行环境使用 glibc 2.39 或更新版本（例如 Ubuntu 24.04），不直接支持 Alpine/musl。使用发布包无需安装 Go 或 GCC；Docker 等功能仍需对应的运行时依赖。较旧的 Linux 发行版可按“启动”章节从源码构建。
+
+下载对应架构的压缩包和校验文件后，例如：
+
+```bash
+# 仅校验已下载的架构；同时下载两种架构时也可去掉 --ignore-missing。
+sha256sum --check --ignore-missing SHA256SUMS
+tar -xzf project-alpha_v0.1.0_linux_amd64.tar.gz
+cd project-alpha_v0.1.0_linux_amd64
+./bin/project-alpha --control --data-dir ./control-data
+```
+
 ## 公网 registry
 
 公网注册使用 registry，总控主动建立出站连接：
