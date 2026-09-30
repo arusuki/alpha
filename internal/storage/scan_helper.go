@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -311,38 +310,84 @@ func cleanupHelperLease(path string) error {
 	return os.Remove(path)
 }
 
-// Only startup failures before the first progress frame may fall back to host
-// scanning in auto mode. A failed or cancelled running scan is never published.
-func scanViaDocker(ctx context.Context, request helperRequest, progress func(object) error) (result *physicalScan, started bool, err error) {
+const defaultHelperImage = "alpine:latest"
+
+// A first pull is a network operation and may outlast the per-command Docker
+// timeout, so it gets its own budget. It stays cancellable through ctx.
+const helperPullTimeout = 600
+
+// dockerImageMissing reports whether an image inspect failed because the image is
+// absent locally. Only that cause may be answered with a pull: an unreachable
+// daemon, a denied socket or a missing Docker client fails inspect for a different
+// reason, and pulling would fail the same way while dressing the real cause up as
+// a missing image.
+func dockerImageMissing(err error) bool {
+	return strings.Contains(strings.ToLower(err.Error()), "no such image")
+}
+
+func validateHelperImage(raw string) (string, error) {
+	if id := strings.TrimSpace(raw); helperImagePattern.MatchString(id) {
+		return id, nil
+	}
+	return "", fmt.Errorf("invalid helper image ID")
+}
+
+// resolveHelperImage returns the local ID of the read-only scan image, pulling it
+// once when it is absent. A missing image fails the scan instead of degrading to
+// a host scan: a non-root service user cannot read paths such as /var/lib/docker,
+// so that fallback silently under-reports disk usage.
+func resolveHelperImage(ctx context.Context, imageName string, inspectTimeout int, progress func(object) error) (string, error) {
+	raw, err := runDocker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", imageName}, inspectTimeout)
+	if err == nil {
+		return validateHelperImage(raw)
+	}
+	if !dockerImageMissing(err) {
+		return "", fmt.Errorf("无法通过 Docker 确认只读扫描镜像 %s（可用 PROJECT_ALPHA_SCAN_HELPER_IMAGE 指定已有镜像）：%w", imageName, err)
+	}
+	if progress != nil {
+		if err := progress(object{"phase": "preparing", "path": "本机不存在只读扫描镜像，正在拉取 " + imageName, "entries": 0, "preparation_done": 0, "preparation_total": 2}); err != nil {
+			return "", err
+		}
+	}
+	if _, err = runDocker(ctx, []string{"pull", imageName}, helperPullTimeout); err != nil {
+		return "", fmt.Errorf("只读扫描需要镜像 %s，本机不存在且拉取失败（可用 PROJECT_ALPHA_SCAN_HELPER_IMAGE 指定已有镜像）：%w", imageName, err)
+	}
+	raw, err = runDocker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", imageName}, inspectTimeout)
+	if err != nil {
+		return "", fmt.Errorf("只读扫描镜像 %s 拉取后仍无法确认：%w", imageName, err)
+	}
+	return validateHelperImage(raw)
+}
+
+// scanViaDocker runs the read-only helper container and returns the scan it
+// produced. Failures are returned as they are: the caller does not fall back to a
+// host scan, because a non-root service user cannot fully read the same paths.
+func scanViaDocker(ctx context.Context, request helperRequest, progress func(object) error) (result *physicalScan, err error) {
 	imageName := os.Getenv("PROJECT_ALPHA_SCAN_HELPER_IMAGE")
 	if imageName == "" {
-		imageName = "ubuntu:latest"
+		imageName = defaultHelperImage
 	}
-	imageRaw, err := runDocker(ctx, []string{"image", "inspect", "--format", "{{.Id}}", imageName}, request.Config.DockerTimeout)
+	imageID, err := resolveHelperImage(ctx, imageName, request.Config.DockerTimeout, progress)
 	if err != nil {
-		return nil, false, fmt.Errorf("只读扫描需要本机镜像 %s（可用 PROJECT_ALPHA_SCAN_HELPER_IMAGE 指定）：%w", imageName, err)
-	}
-	imageID := strings.TrimSpace(imageRaw)
-	if !helperImagePattern.MatchString(imageID) {
-		return nil, false, fmt.Errorf("invalid helper image ID")
+		return nil, err
 	}
 	if progress != nil {
 		if err := progress(object{"phase": "preparing", "path": "扫描镜像已确认，正在启动只读辅助容器", "preparation_done": 1, "preparation_total": 2}); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if strings.HasSuffix(executable, " (deleted)") {
-		return nil, false, fmt.Errorf("扫描程序已被替换，请重启服务后再扫描")
+		return nil, fmt.Errorf("扫描程序已被替换，请重启服务后再扫描")
 	}
 	token := platform.RandomHex(16)
 	lease, _ := ctx.Value(helperLeaseKey{}).(string)
 	if lease != "" {
 		if err := atomicWrite(lease, token); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	defer func() {
@@ -375,14 +420,14 @@ func scanViaDocker(ctx context.Context, request helperRequest, progress func(obj
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	if err = cmd.Start(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	defer stdin.Close()
 	// Bound startup independently of the potentially hours-long filesystem scan.
@@ -438,7 +483,6 @@ func scanViaDocker(ctx context.Context, request helperRequest, progress func(obj
 			event.Progress["directory_update"] = event.DirectoryUpdate
 		}
 		if event.Progress != nil {
-			started = true
 			startup.Stop()
 			if progress != nil {
 				if decodeErr = progress(event.Progress); decodeErr != nil {
@@ -467,18 +511,18 @@ func scanViaDocker(ctx context.Context, request helperRequest, progress func(obj
 	stdin.Close()
 	heartbeat.Wait()
 	if ctx.Err() != nil {
-		return nil, started, ctx.Err()
+		return nil, ctx.Err()
 	}
 	if decodeErr != nil && decodeErr != io.EOF {
-		return nil, started, fmt.Errorf("helper stream: %w", decodeErr)
+		return nil, fmt.Errorf("helper stream: %w", decodeErr)
 	}
 	if waitErr != nil {
-		return nil, started, fmt.Errorf("只读辅助扫描失败：%w: %s", waitErr, stderr.String())
+		return nil, fmt.Errorf("只读辅助扫描失败：%w: %s", waitErr, stderr.String())
 	}
 	if result == nil || result.Tree == nil || result.Backend != "docker" {
-		return nil, started, fmt.Errorf("helper did not return a complete scan")
+		return nil, fmt.Errorf("helper did not return a complete scan")
 	}
-	return result, started, nil
+	return result, nil
 }
 
 type limitedBuffer struct{ bytes.Buffer }
@@ -494,28 +538,20 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 
+// collectRequest scans the requested paths. Docker-enabled non-root scans always
+// use the read-only helper: a missing image, a failed pull or a helper that will
+// not start fails the task instead of silently falling back to a host scan the
+// service user cannot fully read. Choose the "host" backend to scan without Docker.
 func collectRequest(ctx context.Context, request helperRequest, progress func(object) error) (*physicalScan, error) {
 	c, paths := request.Config, request.Paths
 	useDocker := !c.NoDocker && len(paths) > 0 && (c.ScanBackend == "docker" || (c.ScanBackend == "auto" && os.Geteuid() != 0))
-	var warning *Warning
-	if useDocker {
-		if progress != nil {
-			if err := progress(object{"phase": "preparing", "path": "正在确认只读扫描镜像", "entries": 0, "preparation_done": 0, "preparation_total": 2}); err != nil {
-				return nil, err
-			}
-		}
-		result, started, err := scanViaDocker(ctx, request, progress)
-		if err == nil {
-			return result, nil
-		}
-		if started || c.ScanBackend == "docker" || ctx.Err() != nil || errors.Is(err, context.Canceled) {
+	if !useDocker {
+		return scanPhysical(ctx, request, progress, false)
+	}
+	if progress != nil {
+		if err := progress(object{"phase": "preparing", "path": "正在确认只读扫描镜像", "entries": 0, "preparation_done": 0, "preparation_total": 2}); err != nil {
 			return nil, err
 		}
-		warning = &Warning{"Docker 辅助扫描", "未能启动只读辅助容器，改用宿主机权限扫描；权限不足部分仍会标为未知。" + err.Error()}
 	}
-	result, err := scanPhysical(ctx, request, progress, false)
-	if err == nil && warning != nil {
-		result.Warnings = append(result.Warnings, *warning)
-	}
-	return result, err
+	return scanViaDocker(ctx, request, progress)
 }

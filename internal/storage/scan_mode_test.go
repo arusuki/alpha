@@ -152,7 +152,7 @@ func TestDockerHelperScanModesIntegration(t *testing.T) {
 			defer cancel()
 			observedParallelism, peakThreads, checkedLimit := 0, 0, false
 			startedAt := time.Now()
-			result, started, err := scanViaDocker(ctx, helperRequest{Version: 1, Config: c, Paths: []string{root}, Mounts: mountTable()}, func(progress object) error {
+			result, err := scanViaDocker(ctx, helperRequest{Version: 1, Config: c, Paths: []string{root}, Mounts: mountTable()}, func(progress object) error {
 				if n, ok := progress["gomaxprocs"].(json.Number); ok {
 					observedParallelism, _ = strconv.Atoi(string(n))
 				}
@@ -193,7 +193,7 @@ func TestDockerHelperScanModesIntegration(t *testing.T) {
 				checkedLimit = true
 				return nil
 			})
-			if err != nil || !started || result == nil {
+			if err != nil || result == nil {
 				t.Fatalf("helper failed: %v", err)
 			}
 			if result.ErrorCount != 0 || result.Tree.Files != files {

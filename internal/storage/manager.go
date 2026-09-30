@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -157,8 +158,11 @@ func (m *Manager) startPlanLocked(actor, trigger string, plan scanPlan) (object,
 	// Apply to this job's isolated process before runtime initialization, covering
 	// host scans, discovery and summarization without changing the web service.
 	cmd.Env = append(cmd.Environ(), "GOMAXPROCS="+strconv.Itoa(plan.Config.scanParallelism()))
-	cmd.Stdout = m.logfile
-	cmd.Stderr = m.logfile
+	// Mirror worker output to the server's stderr so scan failures and other
+	// worker diagnostics are visible on the console, not only in this job's
+	// worker.log.
+	cmd.Stdout = io.MultiWriter(m.logfile, os.Stderr)
+	cmd.Stderr = io.MultiWriter(m.logfile, os.Stderr)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err = cmd.Start(); err != nil {
 		return fail(err)
@@ -435,6 +439,7 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 		if len(message) > 4000 {
 			message = message[:4000]
 		}
+		log.Printf("扫描失败 [%s] %s", id, message)
 		if _, updateErr := db.SQL.Exec("UPDATE jobs SET status='failed',finished_at=?,error=? WHERE id=? AND status='running'", platform.Now(), message, id); updateErr != nil {
 			return fmt.Errorf("%v; record failure: %w", err, updateErr)
 		}

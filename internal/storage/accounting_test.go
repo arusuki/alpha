@@ -220,7 +220,7 @@ func TestScanCLIWritesWritableLayerAndDiskReconciliation(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
 	t.Setenv("DOCKER_CONTEXT", "")
 	output := filepath.Join(t.TempDir(), "snapshot.json")
-	if err := ScanCLI(context.Background(), []string{"--include-docker-root", "--root", root, "--max-depth", "0", "--max-nodes", "100", "--output", output}); err != nil {
+	if err := ScanCLI(context.Background(), []string{"--include-docker-root", "--root", root, "--scan-backend", "host", "--max-depth", "0", "--max-nodes", "100", "--output", output}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(output)

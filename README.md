@@ -35,8 +35,8 @@ go build -o bin/project-alpha ./cmd/project-alpha
 
 - 数据目录默认 `data/`，通过 `--data-dir` 或 `PROJECT_ALPHA_DATA_DIR` 指定。
 - Docker 归属标签默认 `project-alpha.owner`，可在扫描配置中修改，也可在网页设置容器归属。
-- 扫描方式：`host` 使用服务自身权限，`docker` 使用只读辅助容器；默认 `auto` 在启用 Docker 的普通用户下优先使用辅助容器，否则直接扫描。自动模式仅在辅助容器尚未开始扫描时允许回退。
-- 辅助容器默认使用本机已有的 `ubuntu:latest`，通过 `PROJECT_ALPHA_SCAN_HELPER_IMAGE` 指定含 `/usr/sbin/chroot` 的镜像，不自动拉取。服务与 Docker daemon 必须共享宿主机路径视图。
+- 扫描方式：`host` 使用服务自身权限，`docker` 使用只读辅助容器；默认 `auto` 在启用 Docker 的普通用户下使用辅助容器，否则直接扫描。辅助容器不可用时任务直接失败，不再回退到权限不足的宿主机扫描。
+- 辅助容器默认使用 `alpine:latest`（其中的 `/usr/sbin/chroot` 用于进入宿主机根），可用 `PROJECT_ALPHA_SCAN_HELPER_IMAGE` 指定其它镜像。本机不存在该镜像时会自动 `docker pull` 一次；拉取失败或辅助容器无法启动时任务报错，不会静默降级。服务与 Docker daemon 必须共享宿主机路径视图。
 - 扫描模式：默认 `normal` 最多使用 4 路 Go 并发，`fast` 使用进程可见的全部逻辑 CPU。目录遍历为串行，速度仍受磁盘 I/O 限制。
 
 管理员可在“存储 → 诊断清理”分别选择 Host 或容器完整报告，让 Agent 提取各自报告的全部路径和说明；提取结果与状态按来源隔离，共用筛选、勾选、确认和后台删除界面。Host 清理只接受经扫描记录核实、整棵子树均未关联容器的物理路径，混合目录须先下钻。清理会保留所选目录本身和权限（包括 `/tmp` 的 sticky bit），跳过 socket、字符设备并保留其所在目录，结果显示跳过数量。容器可写层通过 `docker exec` 清理，要求容器内有 Python 3（含 ctypes）；容器停止、暂停、只读或缺少依赖时在删除前报错。已结束的提取记录可单独删除并从原报告重新提取，不影响实际磁盘内容。每次删除需在确认窗口输入服务账号的 sudo 密码，仅通过内存管道用于本批提权，不保存密码或复用 sudo 授权；处理结果持久保存，清理后需重新扫描更新空间统计。

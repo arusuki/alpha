@@ -273,9 +273,18 @@ func TestDockerHelperProtocolAndCleanup(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), helperLeaseKey{}, lease), 400*time.Millisecond)
 			defer cancel()
 			request := helperRequest{Version: 1, Config: defaultConfig(), Paths: []string{"/a path with spaces"}, Mounts: []MountInfo{}}
-			progress := 0
-			r, started, err := scanViaDocker(ctx, request, func(object) error { progress++; return nil })
-			if mode == "success" && (err != nil || !started || r == nil || progress != 2) {
+			// progress counts every frame scanViaDocker forwards; helperFrames
+			// counts only the ones the container itself produced, which is the
+			// signal that the scan actually started.
+			progress, helperFrames := 0, 0
+			r, err := scanViaDocker(ctx, request, func(v object) error {
+				progress++
+				if v["entries"] != nil {
+					helperFrames++
+				}
+				return nil
+			})
+			if mode == "success" && (err != nil || r == nil || progress != 2 || helperFrames != 1) {
 				t.Fatalf("valid helper failed: %v %+v", err, r)
 			}
 			if mode != "success" && (err == nil || r != nil) {
@@ -288,8 +297,10 @@ func TestDockerHelperProtocolAndCleanup(t *testing.T) {
 			} else if _, err := os.Stat(filepath.Join(dir, "ack")); !os.IsNotExist(err) {
 				t.Fatal("failed result was acknowledged")
 			}
-			if mode == "startup-fail" && started {
-				t.Fatal("startup marked as running")
+			// A startup failure must never be reported as a running scan: the
+			// helper produced no frame before it exited.
+			if mode == "startup-fail" && helperFrames != 0 {
+				t.Fatal("startup failure was reported as a running scan")
 			}
 			if mode == "wait" && ctx.Err() != context.DeadlineExceeded {
 				t.Fatal("unexpected cancellation")
@@ -327,7 +338,7 @@ func TestDockerHelperSlowResultIntegration(t *testing.T) {
 	c := defaultConfig()
 	c.MaxDepth = 1
 	paused := false
-	result, started, err := scanViaDocker(ctx, helperRequest{Version: 1, Config: c, Paths: []string{root}, Mounts: mountTable()}, func(progress object) error {
+	result, err := scanViaDocker(ctx, helperRequest{Version: 1, Config: c, Paths: []string{root}, Mounts: mountTable()}, func(progress object) error {
 		if paused || numberInt64(progress["preparation_done"]) != 2 {
 			return nil
 		}
@@ -353,8 +364,8 @@ func TestDockerHelperSlowResultIntegration(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || !started || !paused || result == nil {
-		t.Fatalf("slow receiver failed: started=%v paused=%v err=%v", started, paused, err)
+	if err != nil || !paused || result == nil {
+		t.Fatalf("slow receiver failed: paused=%v err=%v", paused, err)
 	}
 	if result.ErrorCount != 0 || result.Tree.Files != files || len(result.Tree.Children) != 1 || len(result.Tree.Children[0].Children) != files {
 		t.Fatalf("incomplete result: errors=%d files=%d", result.ErrorCount, result.Tree.Files)
@@ -413,5 +424,117 @@ func TestMountedImageViewIsNotCountedAlongsideBackingFile(t *testing.T) {
 	}
 	if tree.Files != 1 || snapshotNodes(tree)[view].Kind != "excluded" {
 		t.Fatal("mounted image was charged a second time")
+	}
+}
+
+// installMissingHelperImageDocker installs a fake CLI where the helper image is
+// absent: image inspect fails the way the real daemon reports a missing image and
+// image pull exits according to pullFails. Every invocation is appended to the
+// returned log file.
+func installMissingHelperImageDocker(t *testing.T, pullFails bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	pullExit := "0"
+	if pullFails {
+		pullExit = "1"
+	}
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$1" >> '%s'
+case "$1" in
+  image) echo "Error response from daemon: No such image: $5" >&2; exit 1;;
+  pull) exit %s;;
+  *) exit 1;;
+esac
+`, calls, pullExit)
+	mustWrite(t, filepath.Join(dir, "docker"), []byte(script))
+	if err := os.Chmod(filepath.Join(dir, "docker"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	return calls
+}
+
+// The helper image is pulled once when absent. A failed pull must fail the scan
+// rather than silently degrade to an unprivileged host scan.
+func TestHelperImagePulledOnMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		pullFails bool
+		want      string
+	}{
+		{"pull fails", true, "拉取失败"},
+		{"pull succeeds but image still missing", false, "拉取后仍无法确认"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := installMissingHelperImageDocker(t, tc.pullFails)
+			var frames []object
+			_, err := resolveHelperImage(context.Background(), defaultHelperImage, 5, func(v object) error {
+				frames = append(frames, v)
+				return nil
+			})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("missing image was accepted: %v", err)
+			}
+			// A pull can be slow, so it must announce itself to the progress UI.
+			if len(frames) != 1 || frames[0]["phase"] != "preparing" || !strings.Contains(fmt.Sprint(frames[0]["path"]), "正在拉取") {
+				t.Fatalf("pull progress was not reported: %#v", frames)
+			}
+			raw, readErr := os.ReadFile(calls)
+			if readErr != nil || strings.Count(string(raw), "pull") != 1 {
+				t.Fatalf("expected exactly one pull attempt: %v %q", readErr, raw)
+			}
+		})
+	}
+}
+
+// installBrokenDocker installs a fake CLI whose daemon is unreachable, the way a
+// stopped service or a denied socket reports itself.
+func installBrokenDocker(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "$1" >> '%s'
+echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2
+exit 1
+`, calls)
+	mustWrite(t, filepath.Join(dir, "docker"), []byte(script))
+	if err := os.Chmod(filepath.Join(dir, "docker"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	return calls
+}
+
+// An unreachable daemon must be reported as such, not mistaken for a missing
+// image: pulling cannot help and its error would hide the real cause.
+func TestDockerUnavailableIsNotPulled(t *testing.T) {
+	calls := installBrokenDocker(t)
+	var frames []object
+	_, err := resolveHelperImage(context.Background(), defaultHelperImage, 5, func(v object) error {
+		frames = append(frames, v)
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "无法通过 Docker 确认") || !strings.Contains(err.Error(), "Cannot connect to the Docker daemon") {
+		t.Fatalf("unreachable daemon was misreported: %v", err)
+	}
+	if len(frames) != 0 {
+		t.Fatalf("a pull was announced against an unreachable daemon: %#v", frames)
+	}
+	raw, readErr := os.ReadFile(calls)
+	if readErr != nil || strings.Contains(string(raw), "pull") {
+		t.Fatalf("a pull was attempted against an unreachable daemon: %v %q", readErr, raw)
+	}
+}
+
+// A Docker-backend scan must not fall back to host scanning when the helper
+// cannot be prepared, which hides unreadable paths behind a partial result.
+func TestDockerBackendDoesNotFallBackToHost(t *testing.T) {
+	installMissingHelperImageDocker(t, true)
+	c := defaultConfig()
+	c.ScanBackend = "docker"
+	if _, err := collectRequest(context.Background(), helperRequest{Version: 1, Config: c, Paths: []string{t.TempDir()}, Mounts: []MountInfo{}}, nil); err == nil {
+		t.Fatal("broken helper fell back to a host scan")
 	}
 }

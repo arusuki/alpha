@@ -269,7 +269,7 @@ func TestIncludeDockerRoot(t *testing.T) {
 	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
 	t.Setenv("DOCKER_CONTEXT", "")
 	c := defaultConfig()
-	c.IncludeDockerRoot = true
+	c.IncludeDockerRoot, c.ScanBackend = true, "host"
 	result, err := buildSnapshot(context.Background(), c, nil)
 	if err != nil {
 		t.Fatal(err)
