@@ -325,7 +325,7 @@ function scheduleAgentPoll(){
 function connectAgentStream(){
   if(agentView.stream||!agentAllowed()||!$('agentDialog').open||!agentBusy(agentView.session))return;
   const epoch=agentView.epoch,selection=agentView.selection;
-  const source=new EventSource(`/api/agent/sessions/${agentView.session.id}/events?after=${agentView.cursor}`);agentView.stream=source;
+  const source=new EventSource(apiURL(`/api/agent/sessions/${agentView.session.id}/events?after=${agentView.cursor}`));agentView.stream=source;
   const current=()=>epoch===agentView.epoch&&selection===agentView.selection&&agentView.stream===source&&agentAllowed();
   $('agentConnection').textContent='正在连接实时进度';
   source.addEventListener('open',()=>{if(current())$('agentConnection').textContent='实时连接已建立';});

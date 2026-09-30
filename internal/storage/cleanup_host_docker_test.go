@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -58,7 +59,17 @@ func TestHostDockerMockProcess(t *testing.T) {
 		if mode == "bind" || mode == "volume" {
 			mount = "/srv/cache/child"
 		}
-		fmt.Fprintln(os.Stdout, httpapi.JSONText(object{"id": id, "upper": "/layers/upper", "log_path": "/logs/container.log", "mounts": []object{{"Source": mount}}}))
+		kind := "bind"
+		if mode == "volume" {
+			kind = "volume"
+		}
+		mounts := []object{{"Type": kind, "Source": mount}}
+		if strings.HasPrefix(mode, "mounts=") {
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(mode, "mounts=")), &mounts); err != nil {
+				os.Exit(2)
+			}
+		}
+		fmt.Fprintln(os.Stdout, httpapi.JSONText(object{"id": id, "name": "/daps-runner", "upper": "/layers/upper", "log_path": "/logs/container.log", "mounts": mounts}))
 	default:
 		os.Exit(2)
 	}
@@ -116,7 +127,7 @@ func TestHostDockerPreflightProtectsLiveSources(t *testing.T) {
 	} {
 		t.Run(tc.mode, func(t *testing.T) {
 			endpoint := "unix:///run/user/1000/docker.sock"
-			protected, err := checkLiveDockerHostPaths(context.Background(), []string{tc.target}, endpoint, "/daemon-root", "daemon-01", fakeHostDockerCommand(t, tc.mode, endpoint))
+			protected, err := checkLiveDockerHostPaths(context.Background(), []string{tc.target}, endpoint, "/daemon-root", "daemon-01", nil, fakeHostDockerCommand(t, tc.mode, endpoint))
 			if tc.status == 0 {
 				if err != nil || !slices.Contains(protected, "/daemon-root") || !slices.Contains(protected, "/srv/other") || !slices.Contains(protected, "/layers/upper") || !slices.Contains(protected, "/logs/container.log") {
 					t.Fatalf("live Docker paths were not protected: %v %v", protected, err)
@@ -131,13 +142,98 @@ func TestHostDockerPreflightProtectsLiveSources(t *testing.T) {
 	}
 }
 
+func TestHostDockerPreflightFilesystemEntranceBinds(t *testing.T) {
+	for _, tc := range []struct {
+		name, entrance, target, kind string
+		extra                        string
+		unrecorded                   bool
+		status                       int
+	}{
+		{name: "root access", entrance: "/", target: "/home/whr/.cache", kind: "bind"},
+		{name: "partition access", entrance: "/data", target: "/data/home/cache", kind: "bind"},
+		{name: "arbitrary partition", entrance: "/mnt/my partition", target: "/mnt/my partition/cache", kind: "bind"},
+		{name: "unverified entrance", entrance: "/data", target: "/data/home/cache", kind: "bind", unrecorded: true, status: 409},
+		{name: "volume still owns partition", entrance: "/data", target: "/data/home/cache", kind: "volume", status: 409},
+		{name: "unknown mount still protected", entrance: "/data", target: "/data/home/cache", status: 409},
+		{name: "nested bind still owns subtree", entrance: "/data", target: "/data/home/cache", kind: "bind", extra: "/data/home", status: 409},
+		{name: "child bind still protects parent", entrance: "/", target: "/home/whr/.cache", kind: "bind", extra: "/home/whr/.cache/models", status: 409},
+		{name: "daemon root still protected", entrance: "/daemon-root", target: "/daemon-root/images", kind: "bind", status: 409},
+		{name: "upper still protected", entrance: "/layers/upper", target: "/layers/upper/tmp", kind: "bind", status: 409},
+		{name: "log still protected", entrance: "/logs/container.log", target: "/logs/container.log", kind: "bind", status: 409},
+	} {
+		for _, rw := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/rw=%t", tc.name, rw), func(t *testing.T) {
+				entrances := stringSet{}
+				if !tc.unrecorded {
+					entrances[tc.entrance] = true
+				}
+				mounts := []object{{"Type": tc.kind, "Source": tc.entrance, "RW": rw}}
+				if tc.extra != "" {
+					mounts = append(mounts, object{"Type": "bind", "Source": tc.extra, "RW": rw})
+				}
+				endpoint := "unix:///run/user/1000/docker.sock"
+				protected, err := checkLiveDockerHostPaths(context.Background(), []string{tc.target}, endpoint, "/daemon-root", "daemon-01", entrances, fakeHostDockerCommand(t, "mounts="+httpapi.JSONText(mounts), endpoint))
+				if tc.status != 0 {
+					var apiErr *httpapi.Error
+					if !errors.As(err, &apiErr) || apiErr.Status != tc.status {
+						t.Fatalf("container-owned path was not rejected: %v %v", protected, err)
+					}
+					if tc.extra != "" && (!strings.Contains(err.Error(), "daps-runner") || !strings.Contains(err.Error(), tc.extra)) {
+						t.Fatalf("rejection omitted the container and actual source: %v", err)
+					}
+					return
+				}
+				if err != nil || slices.Contains(protected, tc.entrance) || !slices.Contains(protected, "/layers/upper") {
+					t.Fatalf("access-only bind claimed the Host or weakened upper protection: %v %v", protected, err)
+				}
+				if err := validateCleanupLocation(protected, nil, []MountInfo{{Path: tc.entrance, FS: "ext4"}}, tc.target); err != nil {
+					t.Fatalf("helper protections still block the unrelated Host path: %v", err)
+				}
+				if err := validateCleanupLocation(protected, nil, []MountInfo{{Path: tc.entrance, FS: "ext4"}}, tc.entrance); err == nil {
+					t.Fatal("filesystem entrance itself became deletable")
+				}
+			})
+		}
+	}
+}
+
+func TestHostDockerPreflightEntranceAlias(t *testing.T) {
+	base := t.TempDir()
+	entrance, alias := filepath.Join(base, "partition"), filepath.Join(base, "alias")
+	ordinary := filepath.Join(entrance, "ordinary")
+	if err := os.MkdirAll(ordinary, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(entrance, alias); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := "unix:///run/user/1000/docker.sock"
+	mode := "mounts=" + httpapi.JSONText([]object{{"Type": "bind", "Source": alias}})
+	check := func() ([]string, error) {
+		return checkLiveDockerHostPaths(context.Background(), []string{ordinary}, endpoint, "/daemon-root", "daemon-01", stringSet{entrance: true}, fakeHostDockerCommand(t, mode, endpoint))
+	}
+	if protected, err := check(); err != nil || slices.Contains(protected, alias) || slices.Contains(protected, entrance) {
+		t.Fatalf("partition alias claimed the Host: %v %v", protected, err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(ordinary, alias); err != nil {
+		t.Fatal(err)
+	}
+	var apiErr *httpapi.Error
+	if _, err := check(); !errors.As(err, &apiErr) || apiErr.Status != 409 {
+		t.Fatalf("retargeted ordinary bind was treated as access-only: %v", err)
+	}
+}
+
 func TestHostDockerPreflightSocketAndDeadline(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "missing.sock")
 	endpoint := "unix://" + missing
-	if protected, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "", "", fakeHostDockerCommand(t, "ok", endpoint)); err != nil || len(protected) != 0 {
+	if protected, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "", "", nil, fakeHostDockerCommand(t, "ok", endpoint)); err != nil || len(protected) != 0 {
 		t.Fatalf("missing Docker socket should use snapshot protections: %v %v", protected, err)
 	}
-	if _, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "/daemon-root", "daemon-01", fakeHostDockerCommand(t, "ok", endpoint)); err == nil {
+	if _, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "/daemon-root", "daemon-01", nil, fakeHostDockerCommand(t, "ok", endpoint)); err == nil {
 		t.Fatal("Docker snapshot was accepted without a live daemon at the checked socket")
 	}
 	regular := filepath.Join(t.TempDir(), "docker.sock")
@@ -145,15 +241,15 @@ func TestHostDockerPreflightSocketAndDeadline(t *testing.T) {
 		t.Fatal(err)
 	}
 	regularEndpoint := "unix://" + regular
-	if _, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, regularEndpoint, "", "", fakeHostDockerCommand(t, "ok", regularEndpoint)); err == nil {
+	if _, err := validateLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, regularEndpoint, "", "", nil, fakeHostDockerCommand(t, "ok", regularEndpoint)); err == nil {
 		t.Fatal("non-socket Docker endpoint was accepted")
 	}
-	if _, err := checkLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "/other-daemon-root", "daemon-01", fakeHostDockerCommand(t, "ok", endpoint)); err == nil {
+	if _, err := checkLiveDockerHostPaths(context.Background(), []string{"/srv/cache"}, endpoint, "/other-daemon-root", "daemon-01", nil, fakeHostDockerCommand(t, "ok", endpoint)); err == nil {
 		t.Fatal("Host deletion accepted a different Docker daemon than the snapshot")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := checkLiveDockerHostPaths(ctx, []string{"/srv/cache"}, endpoint, "/daemon-root", "daemon-01", fakeHostDockerCommand(t, "slow", endpoint)); err == nil {
+	if _, err := checkLiveDockerHostPaths(ctx, []string{"/srv/cache"}, endpoint, "/daemon-root", "daemon-01", nil, fakeHostDockerCommand(t, "slow", endpoint)); err == nil {
 		t.Fatal("Docker preflight ignored its deadline")
 	}
 }
@@ -178,7 +274,7 @@ func TestHostDockerPreflightRejectsRetargetedDataRootAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	endpoint := "unix:///run/user/1000/docker.sock"
-	_, err := checkLiveDockerHostPaths(context.Background(), []string{filepath.Join(base, "safe")}, endpoint, oldRoot, "daemon-01", fakeHostDockerCommand(t, "root_alias="+alias, endpoint))
+	_, err := checkLiveDockerHostPaths(context.Background(), []string{filepath.Join(base, "safe")}, endpoint, oldRoot, "daemon-01", nil, fakeHostDockerCommand(t, "root_alias="+alias, endpoint))
 	var apiErr *httpapi.Error
 	if !errors.As(err, &apiErr) || apiErr.Status != 409 {
 		t.Fatalf("retargeted Docker data root was accepted: %v", err)

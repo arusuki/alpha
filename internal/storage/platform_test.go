@@ -215,7 +215,7 @@ func TestJobsHistoryAndPersistence(t *testing.T) {
 
 func TestSnapshotWorkerAssets(t *testing.T) {
 	p := newTestPlatform(t)
-	for _, path := range []string{"/snapshot.js", "/snapshot-cache.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js", "/dashboard.js", "/process.js", "/agent.js"} {
+	for _, path := range []string{"/snapshot.js", "/snapshot-cache.js", "/snapshot-loader.js", "/snapshot-worker.js", "/usage.js", "/dashboard.js", "/process.js", "/agent.js", "/cluster.js"} {
 		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 		w := httptest.NewRecorder()
 		p.s.ServeHTTP(w, r)
@@ -226,7 +226,7 @@ func TestSnapshotWorkerAssets(t *testing.T) {
 			t.Fatalf("unexpected script body: %s", path)
 		}
 	}
-	for path, contentType := range map[string]string{"/workspace.css": "text/css", "/workspace-art.png": "image/png"} {
+	for path, contentType := range map[string]string{"/workspace.css": "text/css", "/cluster.css": "text/css"} {
 		r := httptest.NewRequest(http.MethodGet, "http://127.0.0.1"+path, nil)
 		w := httptest.NewRecorder()
 		p.s.ServeHTTP(w, r)

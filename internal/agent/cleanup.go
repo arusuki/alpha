@@ -37,7 +37,7 @@ func (a *Manager) cleanupReports(userID string) (object, error) {
  c.session_id AS cleanup_id,cs.status AS cleanup_status,c.phase FROM agent_reports r
  JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id
  LEFT JOIN agent_cleanups c ON c.report_id=r.message_id LEFT JOIN agent_sessions cs ON cs.id=c.session_id
- WHERE s.user_id=? ORDER BY m.id DESC`, userID)
+ WHERE s.user_id=? AND s.node_id=? ORDER BY m.id DESC`, userID, a.db.NodeID)
 	return object{"reports": rows}, err
 }
 
@@ -101,7 +101,7 @@ func (a *Manager) startCleanup(reportID int64, userID, actor string) (object, er
 	}
 	var report, manifestText, reportScope string
 	var snapshot sql.NullString
-	err := a.db.SQL.QueryRow(`SELECT m.content,r.entries,s.snapshot_id,s.report_scope FROM agent_reports r JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id WHERE r.message_id=? AND s.user_id=?`, reportID, userID).Scan(&report, &manifestText, &snapshot, &reportScope)
+	err := a.db.SQL.QueryRow(`SELECT m.content,r.entries,s.snapshot_id,s.report_scope FROM agent_reports r JOIN agent_messages m ON m.id=r.message_id JOIN agent_sessions s ON s.id=m.session_id WHERE r.message_id=? AND s.user_id=? AND s.node_id=?`, reportID, userID, a.db.NodeID).Scan(&report, &manifestText, &snapshot, &reportScope)
 	if err == sql.ErrNoRows {
 		return nil, httpapi.NewError(404, "完整报告不存在")
 	}
@@ -137,7 +137,7 @@ func (a *Manager) startCleanup(reportID int64, userID, actor string) (object, er
 		id = platform.RandomHex(16)
 	}
 	err = a.db.Transaction(func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,snapshot_id,provider,model,report_scope) VALUES(?,?,'报告目录提取','queued',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status='queued',error=NULL,updated_at=excluded.updated_at,provider=excluded.provider,model=excluded.model`, id, userID, platform.Now(), platform.Now(), snapshot, config.Protocol, config.Model, reportScope)
+		_, err := tx.Exec(`INSERT INTO agent_sessions(id,user_id,node_id,title,status,created_at,updated_at,snapshot_id,provider,model,report_scope) VALUES(?,?,?,'报告目录提取','queued',?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status='queued',error=NULL,updated_at=excluded.updated_at,provider=excluded.provider,model=excluded.model`, id, userID, a.db.NodeID, platform.Now(), platform.Now(), snapshot, config.Protocol, config.Model, reportScope)
 		if err != nil {
 			return err
 		}
@@ -244,7 +244,7 @@ func (a *Manager) removeCleanup(id, userID, actor string) (object, error) {
 	}
 	var status string
 	err := a.db.SQL.QueryRow(`SELECT s.status FROM agent_cleanups c
- JOIN agent_sessions s ON s.id=c.session_id WHERE c.session_id=? AND s.user_id=?`, id, userID).Scan(&status)
+ JOIN agent_sessions s ON s.id=c.session_id WHERE c.session_id=? AND s.user_id=? AND s.node_id=?`, id, userID, a.db.NodeID).Scan(&status)
 	if err == sql.ErrNoRows {
 		return nil, httpapi.NewError(404, "提取记录不存在")
 	}

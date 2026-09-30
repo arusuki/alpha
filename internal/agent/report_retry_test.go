@@ -146,7 +146,10 @@ func TestRetryOnlyLatestFailedGroupRequest(t *testing.T) {
 
 			// No live goroutine or private checkpoint is needed after a restart.
 			p.agent.Close()
-			restarted, err := NewManager(NewStore(p.db), fixture)
+			if err := Recover(p.db); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := NewManager(NewStore(p.db), fixture, testAuthorization(p.db))
 			if err != nil {
 				t.Fatal(err)
 			}

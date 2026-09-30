@@ -153,7 +153,7 @@ function connectCleanupStream(){
   if(cleanupView.stream||!cleanupView.traceReady||!cleanupView.visible||!cleanupAllowed()||cleanupView.phase!=='extract'||!cleanupBusy())return;
   clearTimeout(cleanupView.timer);
   const epoch=cleanupView.epoch,selection=cleanupView.selection,id=cleanupView.session.id;
-  const source=new EventSource(`/api/agent/sessions/${id}/events?after=${cleanupView.cursor}`);cleanupView.stream=source;
+  const source=new EventSource(apiURL(`/api/agent/sessions/${id}/events?after=${cleanupView.cursor}`));cleanupView.stream=source;
   const current=()=>epoch===cleanupView.epoch&&selection===cleanupView.selection&&cleanupView.stream===source&&cleanupView.visible;
   $('cleanupAgentConnection').textContent='正在连接实时输出';
   source.addEventListener('open',()=>{if(current())$('cleanupAgentConnection').textContent='实时连接已建立';});

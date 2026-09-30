@@ -18,8 +18,8 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-// Version 16 adds independent machine users, registration schemas and invitations.
-const DatabaseVersion = 16
+// Version 18 moves Agent settings and node-scoped conversations to the control.
+const DatabaseVersion = 18
 
 //go:embed schema.sql
 var schema string

@@ -124,4 +124,5 @@
     hide() { stop(); seen = true; },
   };
   draw(1);
+  document.getElementById('alphaSignature').setAttribute('d', ink.getAttribute('d'));
 })();

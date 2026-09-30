@@ -1,7 +1,6 @@
 package app
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,11 +27,6 @@ func TestServiceCrashStopsWorkerAndDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	value := map[string]json.RawMessage{"username": json.RawMessage(`"administrator"`), "password": json.RawMessage(`"A-test-password-123"`)}
-	if _, err = db.CreateUser(value, "setup", true); err != nil {
-		db.SQL.Close()
-		t.Fatal(err)
-	}
 	if _, err = db.SQL.Exec("UPDATE settings SET value=json_set(value,'$.interval_minutes',5) WHERE id=1"); err != nil {
 		db.SQL.Close()
 		t.Fatal(err)
@@ -50,7 +44,8 @@ func TestServiceCrashStopsWorkerAndDocker(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build service: %v: %s", err, output)
 	}
-	server := exec.Command(executable, "serve", "--data-dir", directory, "--port", "0")
+	t.Setenv("PROJECT_ALPHA_WORKER_TOKEN", strings.Repeat("w", 32))
+	server := exec.Command(executable, "serve", "--worker", "--data-dir", directory, "--port", "0")
 	logfile, err := os.Create(filepath.Join(root, "service.log"))
 	if err != nil {
 		t.Fatal(err)

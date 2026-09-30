@@ -53,7 +53,7 @@ func (s *Handler) streamSnapshot(w http.ResponseWriter, r *http.Request, id stri
 		case <-ticker.C:
 		}
 		// Recheck revoked sessions and read only the tiny head until it changes.
-		if _, err := s.DB.Session(httpapi.SessionToken(r)); err != nil {
+		if _, err := s.DB.RequestSession(r); err != nil {
 			return 0, nil, nil
 		}
 		var head int64

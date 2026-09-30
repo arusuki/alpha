@@ -10,11 +10,11 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	web "project-alpha/dist"
-	"project-alpha/internal/agent"
-	"project-alpha/internal/members"
+	"project-alpha/internal/cluster"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/storage"
@@ -61,6 +61,9 @@ func Run(ctx context.Context, args []string) error {
 	p.StringVar(&directory, "data-dir", directory, "Persistent data directory")
 	host := p.String("host", "127.0.0.1", "Listen address")
 	port := p.Int("port", 8765, "HTTP port")
+	control := p.Bool("control", false, "Run central cluster management (default)")
+	worker := p.Bool("worker", false, "Run an API-only node")
+	workerTokenFile := p.String("worker-token-file", "", "File containing this node's shared token; otherwise PROJECT_ALPHA_WORKER_TOKEN, or generate and persist a token in the data directory")
 	secure := p.Bool("secure-cookie", false, "Use Secure session cookies for HTTPS")
 	tetragonSocket := p.String("tetragon-socket", process.DefaultSocket, "Tetragon gRPC unix socket for container process monitoring")
 	var hosts stringFlags
@@ -77,40 +80,81 @@ func Run(ctx context.Context, args []string) error {
 	if *port < 0 || *port > 65535 {
 		return fmt.Errorf("invalid port")
 	}
-	db, err := platform.OpenDatabase(directory, Initialize)
+	if *control && *worker {
+		return fmt.Errorf("--control and --worker are mutually exclusive")
+	}
+	mode := "control"
+	initialize := cluster.Initialize
+	token := ""
+	automaticToken := false
+	if *worker {
+		mode = "worker"
+		initialize = Initialize
+		token = os.Getenv("PROJECT_ALPHA_WORKER_TOKEN")
+		if *workerTokenFile != "" {
+			raw, err := os.ReadFile(*workerTokenFile)
+			if err != nil {
+				return fmt.Errorf("read worker token: %w", err)
+			}
+			token = strings.TrimSpace(string(raw))
+		} else if token == "" {
+			automaticToken = true
+		}
+		if !automaticToken && !cluster.ValidToken(token) {
+			return fmt.Errorf("worker token from --worker-token-file or PROJECT_ALPHA_WORKER_TOKEN must contain 32–256 non-whitespace ASCII characters")
+		}
+	} else if *workerTokenFile != "" {
+		return fmt.Errorf("--worker-token-file requires --worker")
+	}
+	db, err := platform.OpenDatabase(directory, initialize)
 	if err != nil {
 		return err
 	}
 	defer db.SQL.Close()
-	store := storage.NewStore(db)
-	manager, err := storage.NewManager(store)
+	identity, err := db.CheckMode(mode)
 	if err != nil {
 		return err
 	}
-	defer manager.Close()
-	storageHandler := storage.NewHandler(store, manager)
-	agentStore := agent.NewStore(db)
-	agentManager, err := agent.NewManager(agentStore, storageHandler.Service)
-	if err != nil {
-		return err
-	}
-	defer agentManager.Close()
-	// A missing Tetragon agent only disables process monitoring; the rest of the
-	// service still starts.
-	var watcher *process.Watcher
-	if source, err := process.Dial(*tetragonSocket); err != nil {
-		log.Printf("未启用容器进程监控：%v", err)
+	var handler http.Handler
+	if *worker {
+		if automaticToken {
+			token, err = loadWorkerToken(db.Directory)
+			if err != nil {
+				return fmt.Errorf("load worker token: %w", err)
+			}
+		}
+		store := storage.NewStore(db)
+		manager, err := storage.NewManager(store)
+		if err != nil {
+			return err
+		}
+		defer manager.Close()
+		storageHandler := storage.NewHandler(store, manager)
+		node := &cluster.Worker{ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
+		var watcher *process.Watcher
+		if source, err := process.Dial(*tetragonSocket); err != nil {
+			log.Printf("未启用容器进程监控：%v", err)
+		} else {
+			watcher = process.NewWatcher(ctx, source)
+			defer watcher.Close()
+		}
+		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher)}
+		handler = node
 	} else {
-		watcher = process.NewWatcher(ctx, source)
-		defer watcher.Close()
+		controlHandler, err := cluster.NewControl(db)
+		if err != nil {
+			return err
+		}
+		defer controlHandler.Close()
+		frontend := platform.NewServer(db, controlHandler, web.Assets, hosts, *secure)
+		frontend.Control = true
+		handler = frontend
 	}
-	containerHandler := newContainerHandler(db)
-	modules := Modules{Members: members.NewHandler(db), Containers: containerHandler, Storage: storageHandler, Agent: agent.NewHandler(agentStore, agentManager), Process: process.NewHandler(watcher)}
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: platform.NewServer(db, modules, web.Assets, hosts, *secure), ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 15 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 65536}
 	done := make(chan struct{})
 	defer close(done)
 	shutdownDone := make(chan struct{})
@@ -126,7 +170,10 @@ func Run(ctx context.Context, args []string) error {
 		case <-done:
 		}
 	}()
-	log.Printf("project alpha: http://%s", listener.Addr())
+	log.Printf("project alpha: http://%s (%s)", listener.Addr(), mode)
+	if automaticToken {
+		log.Printf("worker token (saved in data directory): %s", token)
+	}
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		<-shutdownDone

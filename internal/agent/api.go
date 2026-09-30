@@ -109,8 +109,8 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			sessions, err := platform.Rows(s.DB.SQL, `SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope FROM (
  SELECT id,title,status,created_at,updated_at,snapshot_id,provider,model,error,report_scope,
  ROW_NUMBER() OVER (PARTITION BY report_scope ORDER BY updated_at DESC,id DESC) AS scope_rank
- FROM agent_sessions WHERE user_id=? AND id NOT IN (SELECT session_id FROM agent_cleanups)
-) WHERE scope_rank<=50 ORDER BY updated_at DESC,id DESC`, userID)
+ FROM agent_sessions WHERE user_id=? AND node_id=? AND id NOT IN (SELECT session_id FROM agent_cleanups)
+) WHERE scope_rank<=50 ORDER BY updated_at DESC,id DESC`, userID, s.DB.NodeID)
 			return 200, object{"sessions": sessions}, err
 		}
 		if r.Method == "POST" {

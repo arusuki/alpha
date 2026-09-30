@@ -8,6 +8,10 @@ CREATE TABLE sessions (
  csrf TEXT NOT NULL, expires_at REAL NOT NULL
 );
 CREATE INDEX idx_sessions_expiry ON sessions(expires_at);
+CREATE TABLE service_identity (
+ id INTEGER PRIMARY KEY CHECK(id=1), mode TEXT NOT NULL CHECK(mode IN ('control','worker')),
+ instance_id TEXT NOT NULL
+);
 CREATE TABLE audit (
  id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, detail TEXT NOT NULL
 );

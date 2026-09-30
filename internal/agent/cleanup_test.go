@@ -332,7 +332,10 @@ func TestCleanupRestartKeepsUnconfirmedResults(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.agent.Close()
-	restarted, err := NewManager(p.agent.db, p.records)
+	if err := Recover(p.db); err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := NewManager(p.agent.db, p.records, testAuthorization(p.db))
 	if err != nil {
 		t.Fatal(err)
 	}

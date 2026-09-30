@@ -43,6 +43,15 @@ func (s *Service) deleteReportPaths(ctx context.Context, actor, id string, paths
 	if err != nil {
 		return err
 	}
+	mountFile, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return err
+	}
+	mounts, err := parseMountTable(mountFile)
+	mountFile.Close()
+	if err != nil {
+		return err
+	}
 	var liveDockerProtected []string
 	if hostOnly {
 		usage := buildUsage(snapshot)
@@ -53,22 +62,23 @@ func (s *Service) deleteReportPaths(ctx context.Context, actor, id string, paths
 				return httpapi.NewError(409, "Host 路径归属已变化或无法核实，请重新扫描后生成报告："+p)
 			}
 		}
+		// Only entrances present in both the record and the current mount table
+		// retain their access-only meaning. A removed mount cannot
+		// turn an ordinary container bind into an unprotected Host directory.
+		entrances := stringSet{}
+		recordedEntrances := snapshot.filesystemEntrances()
+		for _, mount := range mounts {
+			if recordedEntrances[mount.Path] {
+				entrances[mount.Path] = true
+			}
+		}
 		liveDockerProtected, err = validateLiveDockerHostPaths(ctx, paths,
-			httpapi.String(snapshot.Docker["endpoint"]), httpapi.String(snapshot.Docker["root_canonical"]), httpapi.String(snapshot.Docker["id"]), nil)
+			httpapi.String(snapshot.Docker["endpoint"]), httpapi.String(snapshot.Docker["root_canonical"]), httpapi.String(snapshot.Docker["id"]), entrances, nil)
 		if err != nil {
 			return err
 		}
 	}
 	config, err := s.DB.config()
-	if err != nil {
-		return err
-	}
-	mountFile, err := os.Open("/proc/self/mountinfo")
-	if err != nil {
-		return err
-	}
-	mounts, err := parseMountTable(mountFile)
-	mountFile.Close()
 	if err != nil {
 		return err
 	}

@@ -36,13 +36,9 @@ type Manager struct {
 }
 
 func NewManager(db *Store) (*Manager, error) {
-	lock, err := os.OpenFile(filepath.Join(db.Directory, "service.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	lock, err := db.LockService()
 	if err != nil {
 		return nil, err
-	}
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lock.Close()
-		return nil, fmt.Errorf("此数据目录已有管理服务正在运行: %w", err)
 	}
 	m := &Manager{db: db, lockfile: lock, stop: make(chan struct{}), stopped: make(chan struct{})}
 	leases, _ := filepath.Glob(filepath.Join(db.Directory, "results", "*", "scan-helper.json"))
@@ -286,10 +282,6 @@ func (m *Manager) tick() error {
 	if m.closed || m.process != nil {
 		return nil
 	}
-	configured, err := m.db.Configured()
-	if err != nil || !configured {
-		return err
-	}
 	s, err := m.db.config()
 	if err != nil || s.Value.IntervalMinutes == 0 {
 		return err
@@ -335,7 +327,6 @@ func (m *Manager) Close() {
 				}
 			}
 		}
-		syscall.Flock(int(m.lockfile.Fd()), syscall.LOCK_UN)
 		m.lockfile.Close()
 	})
 }

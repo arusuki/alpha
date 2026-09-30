@@ -1,20 +1,20 @@
 # 容器管理
 
-平台通过本机 Docker CLI 执行容器管理。默认 endpoint 为 `unix:///var/run/docker.sock`；显式传入 `--host`，忽略服务环境中的 `DOCKER_CONTEXT` / `DOCKER_HOST`，避免运行期间切换到其他 daemon。管理功能不依赖存储扫描或 Tetragon。服务账号必须有 Docker 权限，并与 daemon 共享宿主机文件路径视图。
+node 通过本机 Docker CLI 执行容器管理。所有网页位于总控，选择节点后使用 `/api/cluster/nodes/<节点ID>/api/containers...` 代理下述接口；node 不提供网页或独立账号。默认 endpoint 为 `unix:///var/run/docker.sock`；显式传入 `--host`，忽略服务环境中的 `DOCKER_CONTEXT` / `DOCKER_HOST`，避免运行期间切换到其他 daemon。管理功能不依赖存储扫描或 Tetragon。服务账号必须有 Docker 权限，并与 daemon 共享宿主机文件路径视图。
 
 ## 命令行导入
 
 ```bash
-./project-alpha containers import --data-dir ./data
-./project-alpha containers import --data-dir ./data --dry-run
-./project-alpha containers import --data-dir ./data --endpoint unix:///var/run/docker.sock --base-dir /docker alice bob
+./project-alpha containers import --data-dir ./node-data
+./project-alpha containers import --data-dir ./node-data --dry-run
+./project-alpha containers import --data-dir ./node-data --endpoint unix:///var/run/docker.sock --base-dir /docker alice bob
 ```
 
-导入直接读取 Docker 并登记到 `platform.sqlite3`，不需要 Web 服务或平台账号。省略容器名时使用 `docker ps -a --no-trunc --quiet` 扫描全部容器，也可在所有选项之后指定名称或完整 ID。`--data-dir` 默认取 `PROJECT_ALPHA_DATA_DIR`，否则为 `data`。`--endpoint` / `--base-dir` 默认读取已有配置；新目录默认使用本机 Docker socket 和 `/docker`。
+导入必须在对应 node 上执行，并使用该 node 的 worker 数据目录；总控数据目录会被拒绝。导入直接读取 Docker 并登记到 `platform.sqlite3`，不需要 Web 服务或平台账号。省略容器名时使用 `docker ps -a --no-trunc --quiet` 扫描全部容器，也可在所有选项之后指定名称或完整 ID。`--data-dir` 默认取 `PROJECT_ALPHA_DATA_DIR`，否则为 `data`。`--endpoint` / `--base-dir` 默认读取已有配置；新目录默认使用本机 Docker socket 和 `/docker`。
 
 通过检查的容器直接登记，所属用户默认为容器名，归属覆盖和审计与记录一起提交。显式传入的 endpoint、base_dir 在成功登记时保存；已有管理记录时不允许切换 endpoint。重复执行跳过已登记项，不覆盖记录和归属。同名替换容器必须先解除旧记录。每项输出结果和失败原因；失败项不阻止其他有效项登记，存在失败项时返回非零退出码，成功记录保留。数据库写入失败或取消会停止本次导入，此前成功记录保留。
 
-`--dry-run` 只报告可导入项、已登记项和失败项，不写入管理记录、归属、配置或审计；若数据目录是新的，仍会初始化平台数据库。格式不符要求使用新数据目录，不自动迁移或清理。建议停止平台服务后导入，再使用相同数据目录启动服务。导入成功后停止使用原 Compose 文件操作已导入容器。
+`--dry-run` 只报告可导入项、已登记项和失败项，不写入管理记录、归属、配置或审计；若数据目录是新的，仍会初始化平台数据库。格式不符要求使用新数据目录，不自动迁移或清理。建议停止 node 后导入，再使用相同数据目录和 `--worker` 启动。导入成功后停止使用原 Compose 文件操作已导入容器。
 
 网页保留创建和日常管理；不提供扫描接管表单、检查 API 或接管 API。
 
@@ -49,7 +49,7 @@
 }
 ```
 
-owner 默认使用 name，image 默认使用配置镜像，network 默认 bridge，gpus 默认 all。port 为 0 时自动分配，password 为空时使用密码学随机值。密码不能包含换行、冒号或 NUL。容器名称不能为共享目录名 `data`。没有请求参数的写操作发送 `{}`。
+owner 必须填写总控已登记的集群使用者 `username`，image 默认使用配置镜像，network 默认 bridge，gpus 默认 all。port 为 0 时自动分配，password 为空时使用密码学随机值。密码不能包含换行、冒号或 NUL。容器名称不能为共享目录名 `data`。没有请求参数的写操作发送 `{}`。
 
 ## 检查与身份约束
 
@@ -72,3 +72,5 @@ owner 默认使用 name，image 默认使用配置镜像，network 默认 bridge
 - Docker 删除成功但数据库更新失败：记录暂时保留，刷新显示容器不存在；恢复数据库后解除该记录。
 
 删除使用 `docker rm <完整ID>`，无 `--force`、无 `--volumes`。Docker 命令参数参见 [Docker create 文档](https://docs.docker.com/reference/cli/docker/container/create/) 与 [inspect 文档](https://docs.docker.com/reference/cli/docker/container/inspect/)。
+
+CLI 导入保留原有文本归属，未登记标识在总控统计中明确单列。

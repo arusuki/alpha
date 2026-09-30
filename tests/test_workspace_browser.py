@@ -160,7 +160,7 @@ try:
         assert page.locator('#containerCredentials').inner_text() == ''
         page.screenshot(path='/tmp/project-alpha-containers.png', full_page=True, animations='disabled')
         page.locator('.platform-nav [data-page="dashboard"]').click()
-        page.locator('.module-agent').click()
+        page.locator('.platform-nav [data-page="agent-settings"]').click()
         page.wait_for_function('settingsState.model !== null')
         assert page.locator('#storageNav').is_hidden()
         assert page.locator('#storageMonitor').is_hidden()
@@ -239,6 +239,9 @@ try:
         assert page.locator('#agentDialog').is_hidden()
         page.reload()
         page.wait_for_function('platform.user !== null')
+        # Module deep links now survive reloads, including links from the control.
+        assert page.locator('#page-agent-settings').is_visible()
+        page.locator('.platform-nav [data-page=dashboard]').click()
         assert page.locator('#page-dashboard').is_visible()
         page.emulate_media(reduced_motion='reduce')
         page.set_viewport_size(dict(width=390, height=844))
@@ -260,7 +263,7 @@ try:
         page.locator('#authSubmit').click()
         page.wait_for_function('platform.user?.role === "viewer"')
         assert page.locator('#page-dashboard').is_visible()
-        assert page.locator('.module-agent').is_hidden()
+        assert page.locator('.platform-nav [data-page=agent-settings]').is_hidden()
         page.evaluate('showPage("agent-settings")')
         assert page.locator('#page-agent-settings').is_hidden()
         page.locator('.module-containers').click()

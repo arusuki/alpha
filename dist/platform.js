@@ -1,12 +1,16 @@
 'use strict';
-const platform = {user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,expandDepth:3,deletedIDs:new Set(),deleteTarget:null,deleting:false};
+const platform = {control:false,nodeID:(window.location?.pathname||'').match(/^\/nodes\/([a-f0-9]{32})\/$/)?.[1]||'',user:null,csrf:'',setup:false,page:'dashboard',active:null,jobs:[],history:[],historyExhausted:false,latest:null,loaded:null,followLatest:true,config:null,poll:null,generation:0,loadSequence:0,starting:false,resultLoad:null,changesLoad:null,changesError:null,skippedAutoLoad:null,expandStarting:null,expandError:null,expandDepth:3,deletedIDs:new Set(),deleteTarget:null,deleting:false};
 const statusNames = {queued:'等待启动',running:'扫描中',cancelling:'正在取消',cancelled:'已取消',completed:'已完成',failed:'失败',interrupted:'服务中断'};
 const phaseNames = {discovering:'发现容器与数据卷',preparing:'准备扫描环境',host:'扫描 host',container:'扫描容器',directory:'扫描目录',scanning:'扫描存储',summarizing:'汇总结果',saving:'保存结果',completed:'已完成'};
 const triggerNames = {scheduled:'定时',manual:'手动','agent-full':'Agent 全盘扫描',incremental:'目录扫描'};
-const actionNames = {'member.schema':'修改使用者注册配置','member.register':'登记机器使用者','member.invitation.create':'生成注册邀请码','member.invitation.revoke':'作废注册邀请码','container.create':'创建容器','container.adopt':'接管容器','container.start':'启动容器','container.stop':'停止容器','container.restart':'重启容器','container.delete':'删除容器','container.release':'解除容器接管','container.initialize':'初始化容器密码','container.settings':'修改容器配置','scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.extract':'提取报告目录','agent.extract.delete':'删除提取记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
+const actionNames = {'cluster.node.add':'添加节点','cluster.node.update':'修改节点连接','cluster.node.remove':'移除节点连接','member.schema':'修改使用者注册配置','member.register':'登记机器使用者','member.invitation.create':'生成注册邀请码','member.invitation.revoke':'作废注册邀请码','container.create':'创建容器','container.adopt':'接管容器','container.start':'启动容器','container.stop':'停止容器','container.restart':'重启容器','container.delete':'删除容器','container.release':'解除容器接管','container.initialize':'初始化容器密码','container.settings':'修改容器配置','scan.expand':'补充扫描明细','scan.start':'启动扫描','scan.cancel':'取消扫描','scan.delete':'删除扫描记录','settings.update':'修改扫描配置','agent.extract':'提取报告目录','agent.extract.delete':'删除提取记录','storage.cleanup':'删除报告目录','agent.start':'启动 Agent 分析','agent.retry':'重试 Agent 失败请求','agent.settings':'修改模型配置','user.create':'创建账号','user.update':'修改账号权限','user.password':'修改登录密码','session.login':'登录','container.owner':'设置容器归属'};
 const dateTime = value => value ? new Date(value*1000).toLocaleString('zh-CN') : '—';
+function apiURL(path) {
+  if(path==='/api/agent/settings')return path;
+  return platform.nodeID && /^\/api\/(state|settings|jobs|owners|containers|process|agent|snapshot)([/?]|$)/.test(path) ? `/api/cluster/nodes/${platform.nodeID}${path}` : path;
+}
 async function api(path,options={}) {
-  const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,headers:{'Content-Type':'application/json','X-CSRF-Token':platform.csrf,...options.headers}});
+  const response=await fetch(apiURL(path),{credentials:'same-origin',cache:'no-store',...options,headers:{'Content-Type':'application/json','X-CSRF-Token':platform.csrf,...options.headers}});
   const data=await response.json();
   if(!response.ok) {
     if(response.status===401 && platform.user) showAuth(false,'会话已过期，请重新登录。');
@@ -23,6 +27,7 @@ function showAuth(setup,error='') {
   window.ProcessUI?.reset();
   window.ContainersUI?.reset();
   window.MembersUI?.reset();
+  window.ClusterUI?.reset();
   window.CleanupUI?.reset();
   clearTimeout(platform.poll);platform.generation++;platform.user=null;platform.csrf='';platform.setup=setup;
   $('console').hidden=true;$('sessionControls').hidden=true;$('authPanel').hidden=false;
@@ -36,7 +41,8 @@ function showAuth(setup,error='') {
   $('authError').textContent=error;
   window.AuthUI?.show({immediate:!!error});
 }
-async function enter(session) {
+async function enter(session,restorePage=false) {
+  platform.control=!!session.control;
   stopSnapshotStream();
   if(platform.resultLoad)platform.resultLoad.controller.abort();
   if(platform.changesLoad)platform.changesLoad.controller.abort();
@@ -47,6 +53,7 @@ async function enter(session) {
   window.ProcessUI?.reset();
   window.ContainersUI?.reset();
   window.MembersUI?.reset();
+  window.ClusterUI?.reset();
   window.CleanupUI?.reset();
   platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
   window.AuthUI?.hide();
@@ -57,11 +64,16 @@ async function enter(session) {
   $('sourceBadge').textContent='尚未扫描';
   $('hostInfo').textContent='尚未完成扫描 · 启用 Docker 自动发现后开始扫描';message('');
   $('firstScanHint').textContent=session.user.role==='admin'?'完成扫描后可独立分析 Host 容量；如需分析容器，请在扫描配置中启用 Docker 自动发现。':'管理员完成首次扫描后，这里会显示 Host 和容器的空间用量。';
-  showPage('dashboard',false);window.history?.replaceState(null,'','#dashboard');try{await syncState();}finally{schedulePoll();}
+  window.ClusterUI?.configure();
+  const home=platform.control&&!platform.nodeID?'cluster':'dashboard';
+  showPage(home,false);
+  if(restorePage&&window.location?.hash)showPage(window.location.hash.slice(1),false);
+  window.history?.replaceState(null,'',`#${platform.page}`);
+  try{await syncState();}catch(error){if(platform.user){message(error.message);if(platform.nodeID)window.ClusterUI?.unavailable(error.message);}}finally{schedulePoll();}
 }
 function schedulePoll() {
   clearTimeout(platform.poll);
-  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},platform.active?1000:2000);
+  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},platform.control&&!platform.nodeID?10000:platform.active?1000:2000);
 }
 function controls() {
   window.AgentUI?.controls();
@@ -73,8 +85,10 @@ function controls() {
   refreshDirectoryScan();
 }
 async function syncState() {
+  if(platform.control&&!platform.nodeID){if(["cluster","allocations"].includes(platform.page))await window.ClusterUI?.refresh();return;}
   const generation=platform.generation;
   const state=await api('/api/state');if(generation!==platform.generation)return;
+  if(platform.nodeID)window.ClusterUI?.connected();
   state.jobs=state.jobs.filter(j=>!platform.deletedIDs.has(j.id));
   if(platform.deletedIDs.has(state.latest_id))state.latest_id=null;
   platform.jobs=[...state.directory_jobs.filter(j=>!platform.deletedIDs.has(j.id)),...state.jobs];platform.latest=state.latest_id;platform.active=state.active;
@@ -188,7 +202,7 @@ function startSnapshotStream() {
   const id=snapshot.job_id;
   if(platform.stream && platform.stream.id===id)return;
   stopSnapshotStream();
-  const stream={id,generation:platform.generation,source:new EventSource(`/api/jobs/${encodeURIComponent(id)}/events?revision=${snapshot.revision}`)};
+  const stream={id,generation:platform.generation,source:new EventSource(apiURL(`/api/jobs/${encodeURIComponent(id)}/events?revision=${snapshot.revision}`))};
   platform.stream=stream;
   stream.source.addEventListener('changes',event=>{
     if(platform.stream!==stream || platform.generation!==stream.generation || !snapshot || snapshot.job_id!==id || platform.resultLoad || platform.changesLoad)return;
@@ -250,7 +264,7 @@ function loadJob(id, historical=false, preserveExplorer=false) {
       $('resultLoadingJob').textContent=`任务 ${id.slice(0,8)}`;
       renderResultLoading({stage:'download',done:0,total:null,detail:'等待服务器读取扫描结果'});
       if(!$('resultLoadingDialog').open)$('resultLoadingDialog').showModal();
-      const prepared=await SnapshotLoader.read(`/api/jobs/${encodeURIComponent(id)}/snapshot`,{changesURL:`/api/jobs/${encodeURIComponent(id)}/changes`,signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
+      const prepared=await SnapshotLoader.read(apiURL(`/api/jobs/${encodeURIComponent(id)}/snapshot`),{changesURL:apiURL(`/api/jobs/${encodeURIComponent(id)}/changes`),signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
       if(!current())return false;
       renderResultLoading({stage:'render',done:0,total:1,unit:'个视图',detail:'展示磁盘概览、容器排行与目录明细'});
       // Let the browser paint and handle cancellation before committing the new
@@ -313,12 +327,16 @@ function loadSnapshotChanges() {
 $('cancelResultLoading').addEventListener('click',cancelResultLoading);
 $('resultLoadingDialog').addEventListener('cancel',e=>{e.preventDefault();cancelResultLoading();});
 function showPage(page,navigate=true) {
-  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','members','agent-settings','settings'].includes(page))return;
+  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','containers','members','agent-settings','settings','cluster','allocations'].includes(page))return;
   if(['scan-settings','agent-settings','cleanup','members'].includes(page) && platform.user.role!=='admin')return;
+  const central=['cluster','allocations','members','agent-settings','settings'].includes(page);
+  if(platform.control&&platform.nodeID&&central){window.location.href='/#'+page;return;}
+  if(platform.control&&!platform.nodeID&&!central)return;
   const changed=platform.page!==page;
   platform.page=page;
+  $('console').dataset.page=page;
   const storage=['overview','history','cleanup','scan-settings'].includes(page);
-  const headings={members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
+  const headings={cluster:['CLUSTER OVERVIEW','集群总控','查看节点状态，进入每台主机的工作台。'],allocations:['CLUSTER / USER CONTAINERS','使用者容器','按使用者查看各节点的容器归属与数量。'],members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / ACCOUNTS','账号管理','管理工作台成员与访问权限。']};
   $('pageEyebrow').textContent=headings[page][0];$('pageTitle').textContent=headings[page][1];
   $('pageDescription').textContent=headings[page][2];$('moduleCrumb').textContent=storage?'存储':headings[page][1];
   document.title=`project alpha · ${headings[page][1]}`;
@@ -328,7 +346,7 @@ function showPage(page,navigate=true) {
   $('snapshotCachePanel').hidden=!storage;if(storage)refreshSnapshotCache();
   $('storageNav').hidden=!storage;$('storageMonitor').hidden=!['overview','history'].includes(page);
   $('scanActions').hidden=!['overview','history'].includes(page);$('hostInfo').hidden=!storage;$('dashboardRefresh').hidden=page!=='dashboard';
-  if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$('pageTitle').focus?.({preventScroll:true});}
+  if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$(page==='cluster'?'clusterTitle':'pageTitle').focus?.({preventScroll:true});}
   if(page==='overview' && changed)syncState().catch(e=>{if(platform.user)message(e.message);});
   if(page==='scan-settings' && !platform.config) loadSettings().catch(e=>message(e.message));
   if(page==='settings')window.SettingsUI.open();
@@ -336,10 +354,11 @@ function showPage(page,navigate=true) {
   if(page==='dashboard')window.DashboardUI?.render();
   if(page==='containers')window.ContainersUI?.open();
   if(page==='members')window.MembersUI?.open();
+  if(['cluster','allocations'].includes(page))window.ClusterUI?.refresh();
   if(page==='processes')window.ProcessUI?.open();else window.ProcessUI?.close();
   if(page==='cleanup')window.CleanupUI?.open();else window.CleanupUI?.close();
 }
-window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||'dashboard',false));
+window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||(platform.control&&!platform.nodeID?'cluster':'dashboard'),false));
 let cacheListSequence = 0;
 async function refreshSnapshotCache() {
   const scope=platform.user?.id, generation=platform.generation, sequence=++cacheListSequence;
@@ -535,4 +554,5 @@ document.addEventListener('click',e=>{
 document.addEventListener('change',e=>{
   const el=e.target;if(el.dataset && el.dataset.userRole)act(async()=>{try{await api(`/api/users/${el.dataset.userRole}`,{method:'PATCH',body:JSON.stringify({enabled:el.dataset.enabled==='1',role:el.value})});}finally{await loadAccounts();}},el);
 });
-(async()=>{try{const session=await api('/api/session');if(session.user)await enter(session);else showAuth(session.setup_required);}catch(error){showAuth(false,'无法连接后端：'+error.message);}})();
+// Deferred modules must finish registering before restoring a session.
+window.addEventListener('DOMContentLoaded',async()=>{try{const session=await api('/api/session');platform.control=!!session.control;if(session.user)await enter(session,true);else showAuth(session.setup_required);}catch(error){showAuth(false,'无法连接后端：'+error.message);}},{once:true});

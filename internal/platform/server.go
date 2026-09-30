@@ -25,6 +25,7 @@ type loginAttempt struct {
 	At    time.Time
 }
 type Server struct {
+	Control      bool
 	DB           *Database
 	Module       Module
 	Assets       fs.ReadFileFS
@@ -73,10 +74,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/snapshot-cache.js": "snapshot-cache.js",
 		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
 		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
-		"/style.css": "style.css", "/workspace.css": "workspace.css", "/workspace-art.png": "workspace-art.png",
-		"/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js",
+		"/style.css": "style.css", "/workspace.css": "workspace.css",
+		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js",
 	}
-	if filename, ok := assets[r.URL.Path]; r.Method == "GET" && ok {
+	assetPath := r.URL.Path
+	if s.Control && nodePageRoute.MatchString(assetPath) {
+		assetPath = "/"
+	}
+	if filename, ok := assets[assetPath]; r.Method == "GET" && ok {
 		body, err := s.Assets.ReadFile(filename)
 		if err != nil {
 			s.writeError(w, err)
@@ -154,6 +159,8 @@ func (s *Server) cookie(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{Name: "project_alpha_session", Value: token, Path: "/", MaxAge: maxAge, HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: s.SecureCookie})
 }
 
+var nodePageRoute = regexp.MustCompile(`^/nodes/[a-f0-9]{32}/$`)
+
 var userRoute = regexp.MustCompile(`^/api/users/([a-f0-9]{32})$`)
 
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, error) {
@@ -166,17 +173,17 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 			return failure(err)
 		}
 		if !configured {
-			return 200, object{"setup_required": true}, nil
+			return 200, object{"setup_required": true, "control": s.Control}, nil
 		}
 		session, err := db.Session(httpapi.SessionToken(r))
 		if err != nil {
 			var api *httpapi.Error
 			if errors.As(err, &api) && api.Status == 401 {
-				return 200, object{"setup_required": false, "user": nil}, nil
+				return 200, object{"setup_required": false, "user": nil, "control": s.Control}, nil
 			}
 			return failure(err)
 		}
-		return 200, object{"setup_required": false, "user": session.User, "csrf": session.CSRF}, nil
+		return 200, object{"setup_required": false, "user": session.User, "csrf": session.CSRF, "control": s.Control}, nil
 	}
 	if method == "POST" && (route == "/api/setup" || route == "/api/login") {
 		value, err := httpapi.RequestBody(w, r)
@@ -204,7 +211,7 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 		delete(s.attempts, ip)
 		s.mu.Unlock()
 		s.cookie(w, token)
-		return 200, session, nil
+		return 200, object{"user": session.User, "csrf": session.CSRF, "control": s.Control}, nil
 	}
 	if public, ok := s.Module.(PublicModule); ok {
 		status, value, err := public.DispatchPublic(w, r)

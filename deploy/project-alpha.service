@@ -1,17 +1,14 @@
 [Unit]
-Description=project alpha container usage monitor
-After=network.target docker.service
+Description=project alpha cluster control
+After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/opt/project-alpha
-ExecStart=/opt/project-alpha/bin/project-alpha --data-dir /var/lib/project-alpha --host 127.0.0.1 --port 8765
-# Root permits reading container upper layers and user directories on the host.
-# A service account with equivalent read permissions and Docker access can be used.
-User=root
-Group=root
+ExecStart=/opt/project-alpha/bin/project-alpha --control --data-dir /var/lib/project-alpha-control --host 127.0.0.1 --port 8765
+DynamicUser=true
 UMask=0077
-StateDirectory=project-alpha
+StateDirectory=project-alpha-control
 StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=5

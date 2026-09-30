@@ -399,7 +399,10 @@ func TestAgentRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewManager(NewStore(db), nil)
+	if err := Recover(db); err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(NewStore(db), nil, testAuthorization(db))
 	if err != nil {
 		t.Fatal(err)
 	}

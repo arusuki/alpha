@@ -21,6 +21,7 @@ const agentInstructions = `你是磁盘分析助手，用中文回答。自主�
 占用使用 allocated（实际分配字节），未知不当作零，共享路径和父子目录不重复计量。可写层按 upper_path 映射容器路径，挂载按 source → destination 映射，不计 merged。`
 
 type Manager struct {
+	authorized func(string) error
 	db         *Store
 	records    Records
 	mu         sync.Mutex
@@ -59,14 +60,11 @@ func (a *Manager) flushCompletion() error {
 	return a.flushCompletionLocked()
 }
 
-func NewManager(db *Store, records Records) (*Manager, error) {
-	if _, err := db.SQL.Exec("UPDATE agent_sessions SET status='interrupted',error='服务重启，分析已中断，可继续提问',active_job_id=NULL,updated_at=? WHERE status IN ('queued','scanning','running','cancelling')", platform.Now()); err != nil {
-		return nil, err
+func NewManager(db *Store, records Records, authorize func(string) error) (*Manager, error) {
+	if authorize == nil {
+		return nil, fmt.Errorf("Agent requires an authorization provider")
 	}
-	if _, err := db.SQL.Exec("UPDATE agent_cleanup_entries SET status='uncertain',error='服务重启，删除结果未确认；请检查实际路径后重新扫描' WHERE status='deleting'"); err != nil {
-		return nil, err
-	}
-	a := &Manager{db: db, records: records, recordGate: make(chan struct{}, 1), shutdown: make(chan struct{}), stopped: make(chan struct{})}
+	a := &Manager{db: db, records: records, authorized: authorize, recordGate: make(chan struct{}, 1), shutdown: make(chan struct{}), stopped: make(chan struct{})}
 	go func() {
 		defer close(a.stopped)
 		ticker := time.NewTicker(time.Second)
@@ -100,17 +98,8 @@ func (a *Manager) Close() {
 		}
 	})
 }
-func (a *Manager) authorized(userID string) error {
-	var role string
-	var enabled bool
-	err := a.db.SQL.QueryRow("SELECT role,enabled FROM users WHERE id=?", userID).Scan(&role, &enabled)
-	if err != nil || role != "admin" || !enabled {
-		return httpapi.NewError(403, "分析发起人的管理员权限已失效")
-	}
-	return nil
-}
 func (a *Manager) session(id, userID string) (object, error) {
-	items, err := platform.Rows(a.db.SQL, "SELECT * FROM agent_sessions WHERE id=? AND user_id=?", id, userID)
+	items, err := platform.Rows(a.db.SQL, "SELECT * FROM agent_sessions WHERE id=? AND user_id=? AND node_id=?", id, userID, a.db.NodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +174,7 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 			if len(title) > 60 {
 				title = title[:60]
 			}
-			_, err = tx.Exec("INSERT INTO agent_sessions(id,user_id,title,status,created_at,updated_at,provider,model) VALUES(?,?,?,'queued',?,?,?,?)", id, userID, string(title), platform.Now(), platform.Now(), config.Protocol, config.Model)
+			_, err = tx.Exec("INSERT INTO agent_sessions(id,user_id,node_id,title,status,created_at,updated_at,provider,model) VALUES(?,?,?,?,'queued',?,?,?,?)", id, userID, a.db.NodeID, string(title), platform.Now(), platform.Now(), config.Protocol, config.Model)
 			if err == nil && source != nil {
 				title := "容器空间分析报告"
 				if source.Scope == "host" {

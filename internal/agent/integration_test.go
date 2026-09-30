@@ -28,7 +28,15 @@ func (m testModules) Dispatch(w http.ResponseWriter, r *http.Request, u platform
 	if IsRoute(r.URL.Path) {
 		return m.agent.Dispatch(w, r, u)
 	}
-	return m.storage.Dispatch(w, r, u)
+	status, value, err := m.storage.Dispatch(w, r, u)
+	if err == nil && r.Method == "DELETE" && status == 200 {
+		if result, ok := value.(map[string]any); ok {
+			if ids, ok := result["deleted_ids"].([]string); ok {
+				err = m.agent.(*Handler).DB.ForgetRecords(ids)
+			}
+		}
+	}
+	return status, value, err
 }
 
 type testRecords struct {
@@ -109,7 +117,7 @@ func newTestPlatform(t *testing.T) *testPlatform {
 	}
 	handler := storage.NewHandler(store, m)
 	records := &testRecords{Service: handler.Service}
-	am, err := NewManager(NewStore(db), records)
+	am, err := NewManager(NewStore(db), records, testAuthorization(db))
 	if err != nil {
 		m.Close()
 		db.SQL.Close()
@@ -210,3 +218,16 @@ func waitJob(t *testing.T, db *testRecords, id string) object {
 }
 
 func activeJobStatus(s string) bool { return s == "queued" || s == "running" || s == "cancelling" }
+
+// Mirror central authorization for the in-process test server.
+func testAuthorization(db *platform.Database) func(string) error {
+	return func(id string) error {
+		var role string
+		var enabled bool
+		err := db.SQL.QueryRow("SELECT role,enabled FROM users WHERE id=?", id).Scan(&role, &enabled)
+		if err != nil || role != "admin" || !enabled {
+			return httpapi.NewError(403, "分析发起人的管理员权限已失效")
+		}
+		return nil
+	}
+}

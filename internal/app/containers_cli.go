@@ -47,5 +47,8 @@ func containersCLI(ctx context.Context, args []string) error {
 		return err
 	}
 	defer db.SQL.Close()
+	if _, err = db.CheckMode("worker"); err != nil {
+		return err
+	}
 	return newContainerHandler(db).Import(ctx, opts, os.Stdout)
 }

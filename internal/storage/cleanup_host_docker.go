@@ -19,7 +19,7 @@ const localDockerSocket = "/var/run/docker.sock"
 
 // Check the daemon used by the scan. A Docker-free scan still checks the
 // default local socket when present, and may proceed when it is absent.
-func validateLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, expectedRoot, expectedID string, command cleanupCommand) ([]string, error) {
+func validateLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, expectedRoot, expectedID string, entrances stringSet, command cleanupCommand) ([]string, error) {
 	if (expectedRoot == "") != (expectedID == "") {
 		return nil, httpapi.NewError(503, "扫描记录中的 Docker 身份不完整，Host 删除已拒绝")
 	}
@@ -45,7 +45,7 @@ func validateLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, 
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	protected, err := checkLiveDockerHostPaths(checkCtx, paths, endpoint, expectedRoot, expectedID, command)
+	protected, err := checkLiveDockerHostPaths(checkCtx, paths, endpoint, expectedRoot, expectedID, entrances, command)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -56,7 +56,7 @@ func validateLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, 
 }
 
 // Kept separate from socket detection so tests can supply a mock Docker CLI.
-func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, expectedRoot, expectedID string, command cleanupCommand) ([]string, error) {
+func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, expectedRoot, expectedID string, entrances stringSet, command cleanupCommand) ([]string, error) {
 	if _, err := dockerEndpointSocket(endpoint); err != nil {
 		return nil, httpapi.NewError(503, "Docker endpoint 无效，Host 删除已拒绝")
 	}
@@ -70,12 +70,19 @@ func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, exp
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LANG=C", "LC_ALL=C"}
 		return cmd.Output()
 	}
-	protect := func(raw string) error {
+	protect := func(raw, kind, origin string) error {
 		if raw == "" {
 			return nil
 		}
 		if !filepath.IsAbs(raw) || filepath.Clean(raw) != raw {
 			return httpapi.NewError(503, "Docker 返回无效的宿主机路径，Host 删除已拒绝")
+		}
+		// Match snapshot attribution: a bind of a filesystem entrance grants
+		// access, not ownership of every descendant. Volumes, writable layers,
+		// logs and ordinary binds still protect their entire subtrees.
+		resource := Resource{Path: fsutil.Canonical(raw), Kinds: []string{kind}}
+		if resource.accessOnly(entrances) {
+			return nil
 		}
 		for _, source := range dockerRootAliases(raw) {
 			if !seenProtected[source] {
@@ -84,7 +91,7 @@ func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, exp
 			}
 			for _, target := range paths {
 				if within(target, source) || within(source, target) {
-					return httpapi.NewError(409, "Host 路径当前由本机 Docker 使用，请重新扫描后生成报告："+target)
+					return httpapi.NewError(409, fmt.Sprintf("Host 路径当前由本机 Docker 使用（%s：%s），请重新扫描后生成报告：%s", origin, raw, target))
 				}
 			}
 		}
@@ -114,7 +121,7 @@ func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, exp
 			return nil, httpapi.NewError(409, "本机 Docker 数据目录与扫描记录不一致，请重新扫描后生成报告")
 		}
 	}
-	if err := protect(daemon.Root); err != nil {
+	if err := protect(daemon.Root, "docker-root", "Docker 数据目录"); err != nil {
 		return nil, err
 	}
 	listIDs := func() ([]string, error) {
@@ -144,7 +151,7 @@ func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, exp
 	if err != nil {
 		return nil, httpapi.NewError(503, "无法列出本机 Docker 容器，Host 删除已拒绝："+err.Error())
 	}
-	const inspectFormat = `{"id":{{json .Id}},"upper":{{json .GraphDriver.Data.UpperDir}},"log_path":{{json .LogPath}},"mounts":{{json .Mounts}}}`
+	const inspectFormat = `{"id":{{json .Id}},"name":{{json .Name}},"upper":{{json .GraphDriver.Data.UpperDir}},"log_path":{{json .LogPath}},"mounts":{{json .Mounts}}}`
 	for start := 0; start < len(ids); start += 50 {
 		batch := ids[start:min(start+50, len(ids))]
 		args := append([]string{"inspect", "--type", "container", "--format", inspectFormat}, batch...)
@@ -159,23 +166,31 @@ func checkLiveDockerHostPaths(ctx context.Context, paths []string, endpoint, exp
 		for i, line := range lines {
 			var current struct {
 				ID      string `json:"id"`
+				Name    string `json:"name"`
 				Upper   string `json:"upper"`
 				LogPath string `json:"log_path"`
 				Mounts  []struct {
+					Type   string `json:"Type"`
 					Source string `json:"Source"`
 				} `json:"mounts"`
 			}
 			if json.Unmarshal([]byte(line), &current) != nil || current.ID != batch[i] {
 				return nil, httpapi.NewError(503, "本机 Docker 容器详情格式无效，Host 删除已拒绝")
 			}
-			for _, source := range []string{current.Upper, current.LogPath} {
-				if err := protect(source); err != nil {
-					return nil, err
-				}
+			container := strings.TrimPrefix(current.Name, "/")
+			if container == "" {
+				container = current.ID
+			}
+			origin := "容器 " + container
+			if err := protect(current.Upper, "writable", origin+" 的可写层"); err != nil {
+				return nil, err
+			}
+			if err := protect(current.LogPath, "log", origin+" 的日志"); err != nil {
+				return nil, err
 			}
 			for _, mount := range current.Mounts {
 				if filepath.IsAbs(mount.Source) {
-					if err := protect(mount.Source); err != nil {
+					if err := protect(mount.Source, mount.Type, origin+" 的挂载源"); err != nil {
 						return nil, err
 					}
 				}
