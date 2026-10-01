@@ -18,7 +18,7 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-const DatabaseVersion = 31
+const DatabaseVersion = 32
 
 //go:embed schema.sql
 var schema string

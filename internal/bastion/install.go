@@ -3,7 +3,6 @@ package bastion
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,7 +17,6 @@ import (
 	"time"
 
 	"project-alpha/internal/platform"
-	"project-alpha/internal/sshkeys"
 )
 
 const sshConfigPath = "/etc/ssh/sshd_config"
@@ -31,6 +29,7 @@ const configEnd = "# END project-alpha share-node"
 func accountSSHConfig(name string) string {
 	common := `    AuthenticationMethods publickey
     PubkeyAuthentication yes
+    TrustedUserCAKeys none
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     AllowStreamLocalForwarding no
@@ -44,7 +43,9 @@ func accountSSHConfig(name string) string {
 		return "Match User alpha-jump\n" + common + `    AuthorizedKeysFile none
     AuthorizedKeysCommand /usr/local/libexec/project-alpha-jump bastion authorized-keys %u %U
     AuthorizedKeysCommandUser alpha-jump
+    DisableForwarding no
     AllowTcpForwarding local
+    PermitOpen any
     GatewayPorts no
     PermitListen none
     MaxSessions 0
@@ -271,12 +272,15 @@ func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
 	p.SetOutput(out)
 	p.Usage = func() {
 		fmt.Fprint(p.Output(), `用法：
-  sudo project-alpha share-node --control-key-file FILE --listen-host IP --control-url URL [选项]
+  sudo project-alpha share-node --listen-host IP --control-url URL [--control-key-file FILE] [选项]
+  sudo project-alpha share-node --add-control-key "ssh-ed25519 AAAA…"
+  sudo project-alpha share-node --add-control-file FILE
   sudo project-alpha share-node --uninstall [--no-reload] [--no-service]
 
 在 share node 本机初始化 alpha-worker、alpha-jump、sshd 和 HTTP 代理服务。
 初始化完成后退出；代理以 alpha-worker 运行，由 systemd 持续托管并开机启动。
-总控使用服务用户已有的 SSH 身份登录 alpha-worker，管理成员公钥。
+管理公钥可在初始化时提供，也可稍后用 --add-control-key / --add-control-file 追加。
+未配置管理公钥时 alpha-worker 不接受 SSH 登录。总控授权后管理成员公钥。
 成员使用 alpha-jump 转发 SSH，通过监听 IP 和入口端口访问总控网页。
 
 示例：
@@ -291,7 +295,10 @@ func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
 `)
 		p.PrintDefaults()
 	}
-	keyPath := p.String("control-key-file", "", "总控服务用户的 SSH 公钥文件")
+	keyPath := p.String("control-key-file", "", "可选：初始化时添加的总控 SSH 公钥文件（一行公钥）")
+	var additions controlKeyFlags
+	p.Func("add-control-key", "追加一行总控 SSH 公钥，可重复使用", additions.addKey)
+	p.Func("add-control-file", "从文件读取并追加一行总控 SSH 公钥，可重复使用", additions.addFile)
 	host := p.String("listen-host", "", "share node 的 Tailscale IP")
 	port := p.Int("status-port", 8765, "share node 总控网页入口端口")
 	noReload := p.Bool("no-reload", false, "校验配置后由管理员重载 sshd")
@@ -331,18 +338,41 @@ func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
 		defer unlock()
 		return uninstallShare(ctx, *noReload, *noService, out)
 	}
-	if *keyPath == "" || *host == "" || *controlURL == "" || *port < 1024 || *port > 65535 {
-		return fmt.Errorf("需提供 --control-key-file、--listen-host、--control-url 和 1024–65535 的 --status-port")
+	keys := []string{}
+	if *keyPath != "" {
+		if err := additions.addFile(*keyPath); err != nil {
+			return err
+		}
+	}
+	keys = mergeControlKeys(keys, additions.keys)
+	addOnly := len(additions.keys) > 0 && *keyPath == "" && *host == "" && *controlURL == ""
+	if addOnly {
+		p.Visit(func(f *flag.Flag) {
+			if f.Name != "add-control-key" && f.Name != "add-control-file" {
+				invalidFlag = f.Name
+			}
+		})
+		if invalidFlag != "" {
+			return fmt.Errorf("仅追加管理公钥时不接受 --%s", invalidFlag)
+		}
+		if os.Geteuid() != 0 {
+			return fmt.Errorf("追加管理公钥需要 sudo")
+		}
+		unlock, err := lockShareInstall()
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		if err = appendControlKeys(systemKeyStore(), keys, atomicRootFile); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, "管理公钥已添加（重复公钥自动忽略），无需重启服务。")
+		return err
+	}
+	if *host == "" || *controlURL == "" || *port < 1024 || *port > 65535 {
+		return fmt.Errorf("初始化需提供 --listen-host、--control-url 和 1024–65535 的 --status-port；管理公钥选填")
 	}
 	ip, err := platform.InternalIP(*host)
-	if err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(*keyPath)
-	if err != nil {
-		return err
-	}
-	key, err := sshkeys.Normalize(string(raw))
 	if err != nil {
 		return err
 	}
@@ -362,7 +392,7 @@ func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
 		return err
 	}
 	defer unlock()
-	return initializeShare(ctx, installation{Version: keyFormat, ControlKey: key, ControlURL: *controlURL, ListenHost: ip, StatusPort: *port}, *noReload, *noService, out)
+	return initializeShare(ctx, installation{Version: installationFormat, ControlKeys: keys, ControlURL: *controlURL, ListenHost: ip, StatusPort: *port}, *noReload, *noService, out)
 }
 func initializeShare(ctx context.Context, c installation, noReload, noService bool, out io.Writer) (result error) {
 	unit, err := sshUnit(ctx, noReload)
@@ -376,9 +406,7 @@ func initializeShare(ctx context.Context, c installation, noReload, noService bo
 			return fmt.Errorf("已有安装格式无效，原数据保留，请使用新的 share node 安装目录: %w", e)
 		}
 		r.Close()
-		if old.ControlKey != c.ControlKey {
-			return fmt.Errorf("已有分享节点由其他管理公钥持有，拒绝覆盖")
-		}
+		c.ControlKeys = mergeControlKeys(old.ControlKeys, c.ControlKeys)
 		existing = true
 		c.JumpUID, c.JumpGID, c.WorkerUID, c.WorkerGID = old.JumpUID, old.JumpGID, old.WorkerUID, old.WorkerGID
 	} else if !os.IsNotExist(err) {
@@ -535,8 +563,14 @@ func initializeShare(ctx context.Context, c installation, noReload, noService bo
 	if err != nil {
 		return err
 	}
+	unlockKeys, err := lockKeyFiles(k, c)
+	if err != nil {
+		k.Close()
+		return err
+	}
+	defer k.Close()
+	defer unlockKeys()
 	_, err = loadSnapshot(k, c)
-	k.Close()
 	if err != nil {
 		return err
 	}
@@ -565,12 +599,14 @@ func initializeShare(ctx context.Context, c installation, noReload, noService bo
 	if err = validateSSH(ctx, candidate, true); err != nil {
 		return err
 	}
-	manifest, _ := json.Marshal(c)
+	manifest, err := marshalInstallation(c)
+	if err != nil {
+		return err
+	}
 	if err = write(filepath.Join(installationDirectory, "installation.json"), manifest, 0644); err != nil {
 		return err
 	}
-	auth := "restrict " + c.ControlKey + "\n"
-	if err = write(workerKeysPath, []byte(auth), 0644); err != nil {
+	if err = write(workerKeysPath, controlAuthorizedKeys(c.ControlKeys), 0644); err != nil {
 		return err
 	}
 	if err = write(proxyUnitPath, proxyUnit(), 0644); err != nil {
@@ -602,6 +638,9 @@ func initializeShare(ctx context.Context, c installation, noReload, noService bo
 		if _, err = installRun(ctx, "systemctl", "restart", proxyUnitName); err != nil {
 			return err
 		}
+	}
+	if len(c.ControlKeys) == 0 {
+		fmt.Fprintln(out, "尚未添加管理公钥；请用 --add-control-key 或 --add-control-file 授权总控后再加入分享池。")
 	}
 	_, err = fmt.Fprintf(out, "share node 已初始化：alpha-worker 负责内部命令及 HTTP 代理，alpha-jump 负责成员访问；总控网页入口 %s -> %s。\n", netAddress(c.ListenHost, c.StatusPort), c.ControlURL)
 	return err

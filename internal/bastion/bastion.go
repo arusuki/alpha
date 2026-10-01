@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
@@ -43,10 +44,17 @@ type Handler struct {
 	mu            sync.Mutex
 	KeyEditor     func(context.Context, string, string) error
 	RemoteCommand func(context.Context, ShareNode, commandRequest) (commandReply, error)
+	sshConfig     atomic.Pointer[sshSettings]
+	sshConfigErr  error
 }
 
 func NewHandler(db *platform.Database) *Handler {
 	h := &Handler{DB: db, Tailscale: tailscale.NewHandler(db)}
+	cfg, err := h.sshSettings()
+	h.sshConfigErr = err
+	if err == nil {
+		h.sshConfig.Store(&cfg)
+	}
 	h.RemoteCommand = h.sshCommand
 	h.KeyEditor = h.editMemberKey
 	return h
@@ -255,6 +263,9 @@ func (h *Handler) Refresh(ctx context.Context, id, resolve string, absent bool, 
 func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, u platform.User) (int, any, error) {
 	if u.Role != "admin" {
 		return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/bastion/ssh") {
+		return h.dispatchSSH(w, r, u)
 	}
 	if r.Method == "GET" && r.URL.Path == "/api/bastion/keys" {
 		keys, problem, err := h.keyPool(r.Context())

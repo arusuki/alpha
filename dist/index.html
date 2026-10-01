@@ -65,7 +65,7 @@
       <button class="active" data-page="dashboard"><svg class="ui-icon" aria-hidden="true"><use href="#icon-dashboard"/></svg>总面板</button>
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
       <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
-      <button data-page="bastion" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>跳板机管理</button>
+      <button data-page="bastion" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>Share node 管理</button>
       <button data-page="members" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
@@ -103,27 +103,41 @@
       <p class="resource-footnote">同一节点按容器 ID 去重 · 容器状态取自最近一次扫描</p>
     </section>
     <section id="page-bastion" class="platform-page" hidden>
-      <div class="resource-toolbar bastion-toolbar"><p>注册时添加公钥，删除使用者时撤销授权。</p><button id="bastionRefresh">刷新资源 ↻</button></div>
+      <div class="resource-toolbar bastion-toolbar"><p>按 share node 管理账号、公钥授权和使用者。</p><button id="bastionRefresh">刷新资源 ↻</button></div>
       <p id="bastionError" class="error-text" role="alert"></p><p id="bastionStatus" role="status"></p>
-      <div class="bastion-workspace">
-        <div class="bastion-column">
-          <section class="management-panel bastion-account-panel"><div class="resource-panel-heading"><span class="resource-section-icon" aria-hidden="true"><svg class="ui-icon"><use href="#icon-user"/></svg></span><div><span class="cluster-kicker">SSH ACCESS</span><h2>跳板账号</h2></div><span class="resource-tag mono">alpha-jump</span></div>
-            <p class="resource-description">share node 使用 alpha-worker 接受总控内部命令并运行 HTTP 代理，alpha-jump 接受成员公钥并转发到计算节点。</p>
-            <p id="bastionShareSummary" class="resource-status" role="status"></p>
-            <p class="resource-footnote">在 share node 运行 share-node 初始化命令。总控服务用户需配置免密 SSH 和可信主机公钥，加入池时会检查登录及管理协议。</p>
+      <details id="bastionGlobalSettings" class="bastion-global-settings">
+        <summary>全局连接设置 <span>总控 SSH 身份 · Tailscale 凭据</span></summary>
+        <div class="bastion-workspace">
+          <section class="management-panel bastion-ssh-panel"><div class="section-heading"><div><span class="cluster-kicker">CONTROL SSH</span><h2>总控 SSH 密钥</h2></div></div>
+            <p class="resource-description">总控使用此身份登录 share node 的 alpha-worker，管理成员公钥。</p>
+            <form id="bastionSSHForm"><fieldset id="bastionSSHFields" disabled>
+              <p id="bastionSSHCurrent" class="form-note" role="status"></p>
+              <div id="bastionSSHInventory" class="bastion-key-list" role="group" aria-label="选择总控密钥"></div>
+              <div id="bastionSSHPublic" class="bastion-key-public" hidden><span class="cluster-kicker">所选密钥公钥</span><p id="bastionSSHFingerprint" class="mono pool-public-key"></p><code id="bastionSSHPublicKey" class="pool-public-key"></code><div class="actions"><button id="bastionSSHDownload" type="button">下载公钥 .pub</button></div></div>
+              <div class="actions"><button id="bastionSSHSave" class="primary" type="submit">校验并启用所选密钥</button></div>
+            </fieldset></form>
+            <details id="bastionSSHCreate" class="bastion-key-create"><summary>创建新密钥</summary>
+              <form id="bastionSSHGenerateForm"><fieldset id="bastionSSHGenerateFields" disabled>
+                <div class="bastion-ssh-generate-row"><label>密钥名称<input id="bastionSSHName" value="control-share" required maxlength="48" pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,47}" autocomplete="off"></label><button id="bastionSSHGenerate" type="submit">创建密钥</button></div>
+                <p id="bastionSSHDirectory" class="form-note"></p>
+              </fieldset></form>
+            </details>
+            <p id="bastionSSHStatus" class="form-note" role="status"></p>
+            <p class="resource-footnote">生成的私钥保留在总控，权限为 0600。下载公钥后可用于 share-node --control-key-file 初始化或 --add-control-file 追加授权；创建后先授权公钥，再校验并启用。切换前会验证全部已配置分享节点。连接仅使用所选密钥，不读取 SSH config；主机公钥需在服务用户的 ~/.ssh/known_hosts 中建立信任。</p>
           </section>
-          <section class="management-panel"><div class="section-heading"><div><span class="cluster-kicker">AUTHORIZED KEYS</span><h2>跳板公钥池</h2></div><button id="bastionKeySync" type="button">补齐用户公钥</button></div>
-            <p class="resource-description">按公钥关联使用者，支持多人共用。未关联的 free 公钥仍可登录，清理后撤销授权。</p><p id="bastionKeyPoolError" class="error-text" role="alert"></p><div id="bastionKeyPool" class="bastion-list"></div>
+          <section class="management-panel bastion-tailscale-panel"><div class="section-heading"><div><span class="cluster-kicker">TAILSCALE</span><h2>Tailscale 凭据</h2></div></div>
+            <p class="resource-description">用于查询节点和创建分享邀请，适用于整个分享池。</p>
+          <form id="bastionSettingsForm"><fieldset id="bastionSettingsFields"><div class="bastion-credentials"><label>Tailnet<input id="bastionTailnet" value="-" required maxlength="253"></label><label>API Key<input id="bastionToken" type="password" autocomplete="off" placeholder="输入个人 API Key"><small>留空则保留已保存的凭据。</small></label></div><div class="bastion-credential-footer"><p id="bastionTokenStatus" class="form-note"></p><div class="actions"><button class="primary">保存凭据</button><button id="bastionTest" type="button">测试连接</button></div></div></fieldset></form>
           </section>
         </div>
-        <section class="management-panel bastion-tailscale-panel"><div class="resource-panel-heading"><span class="resource-section-icon" aria-hidden="true"><svg class="ui-icon"><use href="#icon-storage"/></svg></span><div><span class="cluster-kicker">TAILSCALE</span><h2>分享节点</h2></div></div>
-          <p class="resource-description">选择允许分享的节点。使用者在自己的 Tailscale 账号中接受邀请。</p>
-          <form id="bastionSettingsForm"><fieldset id="bastionSettingsFields"><div class="bastion-credentials"><label>Tailnet<input id="bastionTailnet" value="-" required maxlength="253"></label><label>API Key<input id="bastionToken" type="password" autocomplete="off" placeholder="输入个人 API Key"><small>留空则保留已保存的凭据。</small></label></div><div class="bastion-credential-footer"><p id="bastionTokenStatus" class="form-note"></p><div class="actions"><button class="primary">保存凭据</button><button id="bastionTest" type="button">测试连接</button></div></div></fieldset></form>
-          <div class="resource-subheading"><h3>已配置的分享池</h3><button id="bastionDevicesRefresh" type="button">查询节点</button></div><div id="bastionTailscalePool" class="bastion-list"></div>
-          <div id="bastionDevices" class="bastion-list bastion-device-results" aria-live="polite"></div>
-        </section>
-      </div>
-      <section class="management-panel bastion-members-panel"><div class="section-heading"><div><span class="cluster-kicker">MEMBER RESOURCES</span><h2>使用者资源</h2><p>查看分享邀请、跳板授权和各节点容器。回收失败的记录可在修复后再次删除。</p></div></div><div id="bastionAssignments" class="bastion-list"></div></section>
+      </details>
+      <section class="bastion-share-nodes" aria-label="Share nodes">
+        <div class="section-heading"><div><span class="cluster-kicker">SHARE NODES</span><h2>分享节点</h2><p id="bastionShareSummary" role="status"></p></div><div class="actions"><button id="bastionDevicesRefresh" type="button">查询并添加节点</button><button id="bastionKeySync" type="button">补齐全部节点公钥</button></div></div>
+        <div id="bastionDevices" class="bastion-list bastion-device-results" aria-live="polite"></div>
+        <p id="bastionKeyPoolError" class="error-text" role="alert"></p>
+        <div id="bastionTailscalePool" class="bastion-node-list"></div>
+      </section>
+      <section class="management-panel bastion-members-panel"><div class="section-heading"><div><span class="cluster-kicker">MEMBER RESOURCES</span><h2>按使用者查看资源</h2><p>汇总全部使用者的 share node、分享邀请和公钥状态，包含尚未分配节点的使用者。查看资源可管理邀请、重试分配或删除使用者。</p></div></div><div id="bastionAssignments" class="bastion-list"></div></section>
     </section>
     <section id="page-dashboard" class="platform-page">
       <div class="welcome-panel"><div class="welcome-copy"><span class="welcome-label"><span class="status-dot"></span> PROJECT ALPHA WORKSPACE</span><h2>你好，<span id="welcomeUser">管理员</span>。<br>让主机管理，更有条理。</h2><p>看清空间去向，追踪运行进程，<br>把复杂的分析交给 Agent。</p><button class="primary" data-page="overview">进入存储工作台 <span aria-hidden="true">↗</span></button></div><div class="workspace-art" aria-hidden="true"><span>FIG. 03 / YOUR WORKSPACE</span><svg viewBox="0 0 620 500" class="signature"><circle cx="310" cy="250" r="195"/><path d="M70 250h480M310 20v460"/><use href="#alphaSignature"/></svg><span>SIMPLICITY, BY DESIGN.</span></div></div>

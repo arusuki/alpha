@@ -226,6 +226,124 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 expect(page.locator('#page-bastion')).to_be_visible()
                 expect(page.locator('#bastionSettingsFields')).to_be_enabled()
                 expect(page.locator('#bastionAssignments')).to_contain_text('alice')
+                expect(page.locator('#bastionAssignments')).to_contain_text('尚未分配 share node')
+                expect(page.locator('#bastionSSHFields')).to_be_enabled()
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('尚未启用')
+                assert context.request.get(url + '/api/bastion/ssh').json()['identity_file'] == ''
+                expect(page.locator('#bastionSSHForm')).not_to_be_visible()
+                page.locator('#bastionGlobalSettings > summary').click()
+                # Mock cryptographic commands: browser coverage never creates test keys.
+                ssh_cfg = context.request.get(url + '/api/bastion/ssh').json()
+                identity = dict(identity_file=ssh_cfg['key_directory'] + '/' + 'long-name-' * 12 + '/id_ed25519',
+                                public_key='ssh-ed25519 ' + 'A' * 360, fingerprint='SHA256:browser-example')
+                ssh_saves, generations = [], []
+                page.route('**/api/bastion/ssh', lambda route: ssh_saves.append(route)
+                           if route.request.method == 'PUT' else route.fulfill(status=200,
+                           content_type='application/json', body=json.dumps(ssh_cfg)))
+                page.route('**/api/bastion/ssh/generate', lambda route: generations.append(route))
+                page.locator('#bastionSSHName').fill('browser-control')
+                page.locator('#bastionSSHGenerate').click()
+                expect(page.locator('#bastionSSHGenerate')).to_be_disabled()
+                page.wait_for_timeout(100)
+                assert generations[0].request.post_data_json == dict(name='browser-control')
+                ssh_cfg['identities'].append(identity['identity_file'])
+                generations.pop().fulfill(status=201, content_type='application/json', body=json.dumps(identity))
+                expect(page.locator('[data-select-identity][aria-pressed="true"]')).to_have_count(1)
+                expect(page.locator('#bastionSSHStatus')).to_contain_text('已持久保存')
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('尚未启用')
+                with page.expect_download() as exported:
+                    page.locator('#bastionSSHDownload').click()
+                assert exported.value.suggested_filename == 'control-service.pub'
+                assert Path(exported.value.path()).read_text() == identity['public_key'] + '\n'
+                # A full page reload must still expose the saved, inactive key.
+                page.route('**/api/bastion/ssh/public-key?*', lambda route: route.fulfill(status=200,
+                    content_type='application/json', body=json.dumps(identity)))
+                page.reload()
+                page.locator('.platform-nav [data-page="bastion"]').click()
+                expect(page.locator('#bastionSSHFields')).to_be_enabled()
+                page.locator('#bastionGlobalSettings > summary').click()
+                expect(page.locator('#bastionSSHIdentity')).to_have_count(0)
+                saved_key = page.locator('#bastionSSHInventory .bastion-key-card').filter(has_text='long-name-')
+                expect(saved_key).to_contain_text('未启用')
+                expect(saved_key).to_contain_text('Ed25519')
+                saved_key.locator('[data-select-identity]').click()
+                expect(page.locator('[data-select-identity][aria-pressed="true"]')).to_have_count(1)
+                expect(page.locator('#bastionSSHPublicKey')).to_have_text(identity['public_key'])
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('尚未启用')
+                assert not ssh_saves, 'selecting an existing key must not change the active identity'
+                with page.expect_download() as restored_export:
+                    page.locator('#bastionSSHDownload').click()
+                assert Path(restored_export.value.path()).read_text() == identity['public_key'] + '\n'
+                page.set_viewport_size(dict(width=390, height=844))
+                assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'control SSH mobile overflow'
+                page.screenshot(path='/tmp/project-alpha-control-ssh-mobile.png', full_page=True)
+                page.set_viewport_size(dict(width=1440, height=1080))
+                page.locator('#bastionSSHSave').click()
+                expect(page.locator('#bastionSSHSave')).to_be_disabled()
+                page.wait_for_timeout(100)
+                assert ssh_saves[0].request.post_data_json == dict(revision=1, identity_file=identity['identity_file'])
+                ssh_saves.pop().fulfill(status=409, content_type='application/json',
+                                       body=json.dumps(dict(error='分享节点校验失败，SSH 配置未保存')))
+                expect(page.locator('#bastionError')).to_contain_text('校验失败')
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('尚未启用')
+                page.locator('#bastionSSHSave').click()
+                page.wait_for_timeout(100)
+                ssh_cfg.update(identity, revision=2)
+                ssh_saves.pop().fulfill(status=200, content_type='application/json', body=json.dumps(ssh_cfg))
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('版本 2')
+                expect(saved_key.locator('[data-delete-identity]')).to_be_disabled()
+                expect(page.locator('#bastionSSHSave')).to_be_disabled()
+                # Create and activate a replacement before deleting the first key.
+                replacement = dict(identity_file=ssh_cfg['key_directory'] + '/replacement-123/id_ed25519',
+                                   public_key=identity['public_key'], fingerprint=identity['fingerprint'])
+                page.locator('#bastionSSHCreate > summary').click()
+                page.locator('#bastionSSHName').fill('replacement')
+                page.locator('#bastionSSHGenerate').click()
+                page.wait_for_timeout(100)
+                ssh_cfg['identities'].append(replacement['identity_file'])
+                generations.pop().fulfill(status=201, content_type='application/json', body=json.dumps(replacement))
+                expect(page.locator('#bastionSSHSave')).to_be_enabled()
+                page.locator('#bastionSSHSave').click()
+                page.wait_for_timeout(100)
+                assert ssh_saves[0].request.post_data_json == dict(revision=2, identity_file=replacement['identity_file'])
+                ssh_cfg.update(replacement, revision=3)
+                ssh_saves.pop().fulfill(status=200, content_type='application/json', body=json.dumps(ssh_cfg))
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('replacement-123')
+                deletions = []
+                page.route('**/api/bastion/ssh/identity', lambda route: deletions.append(route))
+                expect(saved_key.locator('[data-delete-identity]')).to_be_enabled()
+                # Cancellation sends no request. Failed deletion retains the key.
+                page.once('dialog', lambda dialog: dialog.dismiss())
+                saved_key.locator('[data-delete-identity]').click()
+                assert not deletions
+                saved_key.locator('[data-select-identity]').click()
+                expect(page.locator('#bastionSSHPublic')).to_be_visible()
+                page.once('dialog', lambda dialog: dialog.accept())
+                saved_key.locator('[data-delete-identity]').click()
+                expect(saved_key.locator('[data-delete-identity]')).to_be_disabled()
+                page.wait_for_timeout(100)
+                assert deletions[0].request.method == 'DELETE'
+                assert deletions[0].request.post_data_json == dict(identity_file=identity['identity_file'])
+                deletions.pop().fulfill(status=409, content_type='application/json', body=json.dumps(dict(error='不能删除当前使用的 SSH 身份')))
+                expect(page.locator('#bastionError')).to_contain_text('不能删除当前使用')
+                expect(saved_key.locator('[data-delete-identity]')).to_be_enabled()
+                expect(page.locator('#bastionSSHPublic')).to_be_visible()
+                page.once('dialog', lambda dialog: dialog.accept())
+                saved_key.locator('[data-delete-identity]').click()
+                page.wait_for_timeout(100)
+                ssh_cfg['identities'].remove(identity['identity_file'])
+                deletions.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                expect(saved_key).to_have_count(0)
+                expect(page.locator('#bastionSSHPublic')).to_be_visible()
+                expect(page.locator('#bastionSSHCurrent')).to_contain_text('replacement-123')
+                expect(page.locator('#bastionSSHStatus')).to_have_text('密钥文件已删除。')
+                page.locator('#bastionRefresh').click()
+                expect(page.locator('#bastionRefresh')).to_be_enabled()
+                expect(saved_key).to_have_count(0)
+                page.unroute('**/api/bastion/ssh/identity')
+                page.unroute('**/api/bastion/ssh')
+                page.unroute('**/api/bastion/ssh/generate')
+                page.unroute('**/api/bastion/ssh/public-key?*')
                 page.locator('#bastionToken').fill('tskey-api-browser-test')
                 page.locator('#bastionSettingsForm .primary').click()
                 expect(page.locator('#bastionStatus')).to_contain_text('凭据已保存')
@@ -281,6 +399,13 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 saves.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
                 expect(page.locator('#bastionNodeDialog')).not_to_be_visible()
                 expect(page.locator('#bastionTailscalePool')).to_contain_text('已停用')
+                share_data['tailscale'].append(dict(id='node-second', name='Second share node', enabled=1,
+                    ssh_host='100.64.0.2', ssh_port=22, status_port=8765, member_count=1, control_url='http://10.0.0.1:8765'))
+                for assignment in share_data['assignments']:
+                    assignment['tailscale_id'] = 'node-test' if assignment['username'] == 'alice' else 'node-second'
+                first_node = page.locator('[data-share-node="node-test"]')
+                second_node = page.locator('[data-share-node="node-second"]')
+                page.locator('#bastionGlobalSettings > summary').click()
                 # The pool is a superset: show free keys and clean only the
                 # selected unreferenced entry; referenced rows have no cleanup.
                 used_id, free_id = '1' * 32, '2' * 32
@@ -288,14 +413,35 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                     dict(id=used_id, node_id='node-test', node_name='Share node', public_key='ssh-ed25519 used-key', fingerprint='SHA256:used',
                          state='used', members=[dict(id=member_id, username='alice', status='active')]),
                     dict(id=free_id, node_id='node-test', node_name='Share node', public_key='ssh-ed25519 ' + 'A' * 360, fingerprint='SHA256:free',
-                         state='free', members=[])])
+                         state='free', members=[]),
+                    dict(id=used_id, node_id='node-second', node_name='Second share node', public_key='ssh-ed25519 second-key', fingerprint='SHA256:second',
+                         state='used', members=[dict(id='second-member', username='bob', status='active')])])
                 with page.expect_response('**/api/bastion/resources'):
                     page.locator('#bastionRefresh').click()
-                expect(page.locator('#bastionKeyPool')).to_contain_text('free · 未关联用户')
-                expect(page.locator('#bastionKeyPool')).to_contain_text('alice')
+                expect(first_node.locator('.bastion-node-keys')).to_contain_text('free · 未关联用户')
+                expect(first_node.locator('.bastion-node-keys')).to_contain_text('alice')
+                expect(first_node).not_to_contain_text('bob')
+                expect(second_node).to_contain_text('bob')
+                expect(second_node).not_to_contain_text('alice')
+                expect(second_node.locator('.bastion-node-keys')).to_contain_text('SHA256:second')
+                expect(first_node.locator('.bastion-node-keys')).not_to_contain_text('SHA256:second')
+                expect(first_node.locator('.bastion-assignment')).to_have_count(1)
+                expect(second_node.locator('.bastion-assignment')).to_have_count(1)
+                user_rows = page.locator('#bastionAssignments .bastion-assignment')
+                expect(user_rows).to_have_count(2)
+                expect(user_rows.filter(has_text='alice')).to_contain_text('Share node · Share node (node-test)')
+                expect(user_rows.filter(has_text='bob')).to_contain_text('Share node · Second share node (node-second)')
+                first_node.locator(f'[data-member="{member_id}"]').click()
+                expect(page.locator('#bastionMemberDialog')).to_be_visible()
+                page.locator('#bastionMemberClose').click()
+                for node in (first_node, second_node):
+                    expect(node.locator('.bastion-node-accounts')).to_contain_text('alpha-worker')
+                    expect(node.locator('.bastion-node-accounts')).to_contain_text('alpha-jump')
+                assert first_node.bounding_box()['width'] > 900
+                assert abs(first_node.bounding_box()['x'] - second_node.bounding_box()['x']) < 1
                 assert page.locator('[data-clean-key]').count() == 1
                 assert page.locator('[data-clean-key="' + used_id + '"]').count() == 0
-                page.locator('#bastionKeyPool details').last.locator('summary').click()
+                first_node.locator('.bastion-node-keys details').last.locator('summary').click()
                 page.set_viewport_size(dict(width=390, height=844))
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'pool key mobile overflow'
                 page.set_viewport_size(dict(width=1440, height=1080))
@@ -310,7 +456,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 expect(page.locator('[data-clean-key="' + free_id + '"]')).to_be_enabled()
                 page.locator('[data-clean-key="' + free_id + '"]').click()
                 page.wait_for_timeout(100)
-                share_data['key_pool']['keys'].pop()
+                share_data['key_pool']['keys'].pop(1)
                 cleanups.pop().fulfill(status=200, content_type='application/json', body='{"ok":true}')
                 expect(page.locator('#bastionStatus')).to_have_text('已清理 free 公钥。')
                 expect(page.locator('[data-clean-key]')).to_have_count(0)
@@ -326,7 +472,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.unroute('**/api/bastion/keys/sync')
                 page.unroute('**/api/bastion/resources')
                 page.unroute('**/api/bastion/tailscale/node-test')
-                page.locator(f'[data-member="{member_id}"]').click()
+                page.locator(f'#bastionAssignments [data-member="{member_id}"]').click()
                 expect(page.locator('#bastionMemberDialog')).to_be_visible()
                 expect(page.locator('#bastionMemberContent')).to_contain_text('alpha-jump')
                 page.locator('#bastionMemberClose').click()
@@ -335,7 +481,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'bastion mobile overflow'
                 page.screenshot(path='/tmp/project-alpha-bastion-mobile.png', full_page=True)
                 page.set_viewport_size(dict(width=1440, height=1080))
-                page.locator(f'[data-member="{member_id}"]').click()
+                page.locator(f'#bastionAssignments [data-member="{member_id}"]').click()
                 # This fixture never writes real alpha-jump keys or Tailscale shares.
                 with sqlite3.connect(root / 'data' / 'platform.sqlite3') as db:
                     db.execute("UPDATE member_access SET invite_state='deleted',key_state='deleted'")
@@ -380,7 +526,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert not errors, errors
                 public.dispose()
                 browser.close()
-            print('Member browser checks passed: real API, schema editor, quota, independent identity, escaping, schema conflicts, revocation, invitation deletion, retained resources, mobile layout and stale logout responses.')
+            print('Member browser checks passed: real API, schema editor, quota, control SSH selection/generation/save/public download, independent identity, escaping, schema conflicts, revocation, invitation deletion, retained resources, mobile layout and stale logout responses.')
         finally:
             service.terminate()
             try:

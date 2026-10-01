@@ -1,3 +1,8 @@
+CREATE TABLE bastion_ssh_settings (
+ id INTEGER PRIMARY KEY CHECK(id=1), identity_file TEXT NOT NULL DEFAULT '',
+ revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
+);
+INSERT INTO bastion_ssh_settings(id) VALUES(1);
 CREATE TABLE bastion_tailscale (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
  ssh_host TEXT NOT NULL, ssh_port INTEGER NOT NULL CHECK(ssh_port BETWEEN 1 AND 65535),

@@ -56,7 +56,7 @@ func TestOpenSSHPoliciesForBothNonRootAccounts(t *testing.T) {
 		t.Skip("set PROJECT_ALPHA_SSH_HOST_KEY to an existing disposable SSH host key")
 	}
 	dir := t.TempDir()
-	raw, _ := configuredSSH([]byte("HostKey " + key + "\nPasswordAuthentication yes\nAllowTcpForwarding yes\n"))
+	raw, _ := configuredSSH([]byte("HostKey " + key + "\nPasswordAuthentication yes\nAllowTcpForwarding yes\nTrustedUserCAKeys " + key + ".pub\nDisableForwarding yes\nPermitOpen 10.0.0.99:22\n"))
 	path := filepath.Join(dir, "sshd_config")
 	if err = os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
@@ -70,8 +70,12 @@ func TestOpenSSHPoliciesForBothNonRootAccounts(t *testing.T) {
 			if err = checkEffectiveSSH(out, name); err != nil {
 				t.Fatal(err)
 			}
-		} else if !strings.Contains(string(out), "passwordauthentication yes\n") {
-			t.Fatal("changed other account")
+		} else {
+			for _, expected := range []string{"passwordauthentication yes\n", "trustedusercakeys " + key + ".pub\n", "disableforwarding yes\n", "permitopen 10.0.0.99:22\n"} {
+				if !strings.Contains(string(out), expected) {
+					t.Fatalf("changed other account %s: missing %q", name, expected)
+				}
+			}
 		}
 	}
 	conflicting := append([]byte("HostKey "+key+"\nMatch User alpha-worker\n AllowTcpForwarding yes\n"), []byte(jumpSSHConfig())...)
@@ -82,6 +86,19 @@ func TestOpenSSHPoliciesForBothNonRootAccounts(t *testing.T) {
 	}
 	if checkEffectiveSSH(out, WorkerUser) == nil {
 		t.Fatal("accepted conflicting policy")
+	}
+	for _, policy := range []string{"TrustedUserCAKeys " + key + ".pub", "DisableForwarding yes", "PermitOpen none"} {
+		conflicting := []byte("HostKey " + key + "\nMatch User alpha-jump\n " + policy + "\n" + jumpSSHConfig())
+		if err = os.WriteFile(path, conflicting, 0600); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command(sshd, "-T", "-f", path, "-C", "user=alpha-jump,host=localhost,addr=127.0.0.1").CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v %s", err, out)
+		}
+		if checkEffectiveSSH(out, JumpUser) == nil {
+			t.Fatalf("accepted conflicting jump policy: %s", policy)
+		}
 	}
 	if strings.Contains(string(proxyUnit()), "User=root") || !strings.Contains(string(proxyUnit()), "User=alpha-worker") {
 		t.Fatal("proxy must run as worker")

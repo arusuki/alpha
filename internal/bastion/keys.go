@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"syscall"
@@ -21,18 +22,19 @@ const WorkerUser = "alpha-worker"
 const installationDirectory = "/var/lib/project-alpha-jump"
 const readerExecutable = "/usr/local/libexec/project-alpha-jump"
 const keyFormat = 2
+const installationFormat = 3
 const maxKeyFile = 4 << 20
 
 type installation struct {
-	Version    int    `json:"version"`
-	ControlKey string `json:"control_key"`
-	ControlURL string `json:"control_url"`
-	ListenHost string `json:"listen_host"`
-	StatusPort int    `json:"status_port"`
-	JumpUID    int    `json:"jump_uid"`
-	JumpGID    int    `json:"jump_gid"`
-	WorkerUID  int    `json:"worker_uid"`
-	WorkerGID  int    `json:"worker_gid"`
+	Version     int      `json:"version"`
+	ControlKeys []string `json:"control_keys"`
+	ControlURL  string   `json:"control_url"`
+	ListenHost  string   `json:"listen_host"`
+	StatusPort  int      `json:"status_port"`
+	JumpUID     int      `json:"jump_uid"`
+	JumpGID     int      `json:"jump_gid"`
+	WorkerUID   int      `json:"worker_uid"`
+	WorkerGID   int      `json:"worker_gid"`
 }
 type keySnapshot struct {
 	Version int               `json:"version"`
@@ -104,10 +106,9 @@ func (s keyStore) openManifest(checkAccounts bool) (*os.Root, installation, erro
 			return e
 		}
 		if e = strictJSON(raw, &c); e != nil {
-			return e
+			return fmt.Errorf("跳板安装格式无效，请使用新数据目录: %w", e)
 		}
-		key, e := sshkeys.Normalize(c.ControlKey)
-		if e != nil || key != c.ControlKey || c.Version != keyFormat || c.JumpUID <= 0 || c.JumpGID <= 0 || c.WorkerUID <= 0 || c.WorkerGID <= 0 || c.WorkerUID == c.JumpUID || c.StatusPort < 1024 || c.StatusPort > 65535 {
+		if validateControlKeys(c.ControlKeys) != nil || c.Version != installationFormat || c.JumpUID <= 0 || c.JumpGID <= 0 || c.WorkerUID <= 0 || c.WorkerGID <= 0 || c.WorkerUID == c.JumpUID || c.StatusPort < 1024 || c.StatusPort > 65535 {
 			return fmt.Errorf("跳板安装格式无效或版本不匹配，请使用新数据目录")
 		}
 		if _, e = platform.InternalIP(c.ListenHost); e != nil {
@@ -143,7 +144,7 @@ func openKeys(r *os.Root, c installation) (*os.Root, error) {
 	}
 	return r.OpenRoot("keys")
 }
-func validateSnapshot(v keySnapshot, controlKey string) error {
+func validateSnapshot(v keySnapshot, controlKeys []string) error {
 	if v.Version != keyFormat || v.Keys == nil {
 		return fmt.Errorf("公钥格式不匹配，请使用新数据目录")
 	}
@@ -152,7 +153,7 @@ func validateSnapshot(v keySnapshot, controlKey string) error {
 		if !sshkeys.ID.MatchString(id) || err != nil || normal != key {
 			return fmt.Errorf("公钥清单包含无效条目")
 		}
-		if key == controlKey {
+		if slices.Contains(controlKeys, key) {
 			return fmt.Errorf("管理公钥不能作为成员公钥")
 		}
 	}
@@ -170,7 +171,7 @@ func loadSnapshot(r *os.Root, c installation) (keySnapshot, error) {
 	if err = strictJSON(raw, &v); err != nil {
 		return v, err
 	}
-	return v, validateSnapshot(v, c.ControlKey)
+	return v, validateSnapshot(v, c.ControlKeys)
 }
 func updateKeys(r *os.Root, c installation, change func(*keySnapshot) error) (keySnapshot, error) {
 	if os.Geteuid() != c.WorkerUID {
@@ -181,23 +182,17 @@ func updateKeys(r *os.Root, c installation, change func(*keySnapshot) error) (ke
 		return keySnapshot{}, err
 	}
 	defer k.Close()
-	lock, err := k.OpenFile(".lock", os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0600)
+	unlock, err := lockKeyFiles(k, c)
 	if err != nil {
 		return keySnapshot{}, err
 	}
-	defer lock.Close()
-	info, err := lock.Stat()
+	defer unlock()
+	// A local administrator may have appended a control key since open().
+	current, err := readInstallation(r, c)
 	if err != nil {
 		return keySnapshot{}, err
 	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != c.WorkerUID || int(st.Gid) != c.JumpGID || info.Mode().Perm() != 0600 {
-		return keySnapshot{}, fmt.Errorf("公钥锁文件无效")
-	}
-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		return keySnapshot{}, fmt.Errorf("公钥正在更新，请重试")
-	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	c.ControlKeys = current.ControlKeys
 	v, err := loadSnapshot(k, c)
 	if err != nil {
 		return v, err
@@ -205,7 +200,7 @@ func updateKeys(r *os.Root, c installation, change func(*keySnapshot) error) (ke
 	if err = change(&v); err != nil {
 		return v, err
 	}
-	if err = validateSnapshot(v, c.ControlKey); err != nil {
+	if err = validateSnapshot(v, c.ControlKeys); err != nil {
 		return v, err
 	}
 	raw, err := json.Marshal(v)

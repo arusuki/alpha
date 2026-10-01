@@ -174,7 +174,30 @@
 #bastionError:not(:empty),#bastionStatus:not(:empty){padding:12px 16px;margin-bottom:20px;border:1px solid var(--line);border-radius:4px;font-size:.78rem;overflow-wrap:anywhere}
 #bastionStatus:not(:empty){background:#edf3e9;color:var(--green)}
 .bastion-workspace{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);align-items:start;gap:22px;margin-bottom:22px}
-.bastion-column{display:grid;gap:22px;min-width:0}
+.bastion-global-settings{border:1px solid var(--line);border-radius:6px;margin-bottom:26px;background:var(--paper)}
+.bastion-global-settings>summary{padding:18px 22px;cursor:pointer;font-size:.82rem;font-weight:550}
+.bastion-global-settings>summary span{font-size:.72rem;color:var(--muted);font-weight:400;margin-left:14px}
+.bastion-global-settings[open]>summary{border-bottom:1px solid var(--line)}
+.bastion-global-settings .bastion-workspace{margin:0;gap:0}
+#page-bastion .bastion-global-settings .management-panel{border:0;background:transparent}
+.bastion-share-nodes{margin-bottom:22px}
+.bastion-node-list{display:grid;gap:20px}
+.bastion-node-title{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0}
+#page-bastion .bastion-node-title h2{margin:0;overflow-wrap:anywhere}
+.bastion-node-connection{display:flex;flex-wrap:wrap;gap:8px 24px;font-size:.72rem;color:var(--muted);line-height:1.8;overflow-wrap:anywhere}
+.bastion-node-accounts{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;padding:16px;background:var(--bg);border:1px solid var(--line);border-radius:4px}
+.bastion-node-accounts>div{min-width:0}
+.bastion-node-accounts strong{font-size:.8rem;font-weight:550}
+.bastion-node-accounts span{font-size:.7rem;margin-left:12px;color:var(--muted)}
+.bastion-node-accounts p{font-size:.72rem;color:var(--muted);line-height:1.8;margin:8px 0 0}
+.bastion-node-section{border-top:1px solid var(--line);margin-top:22px;padding-top:16px;min-width:0}
+.bastion-node-section h3{display:flex;align-items:baseline;flex-wrap:wrap;gap:12px;margin:0}
+#page-bastion .bastion-node-section .resource-description{margin:8px 0 0}
+#page-bastion .bastion-node-section .bastion-assignment:first-child{border-top:0;padding-top:0}
+#bastionKeyPoolError{overflow-wrap:anywhere}
+#page-bastion #bastionSSHInventory{max-height:320px;overflow:auto;padding:2px 4px 2px 0}
+#bastionSSHInventory .mono{overflow-wrap:anywhere}
+@media(max-width:760px){.bastion-node-accounts{grid-template-columns:1fr;gap:16px}.bastion-global-settings>summary span{display:block;margin:8px 0 0}}
 #page-bastion .management-panel{padding:24px;margin:0;min-width:0;background:var(--paper)}
 #page-bastion h2{font-size:1rem;font-weight:550;line-height:1.5;margin-top:6px}
 #page-bastion h3{font-size:.8rem;font-weight:550}
@@ -194,6 +217,9 @@
 .bastion-credentials label{font-size:.73rem}.bastion-credentials small{font-size:.66rem;font-weight:400;line-height:1.6;color:var(--muted)}
 .bastion-credential-footer{display:flex;flex-direction:column;align-items:flex-start;gap:12px;margin-top:16px}
 #bastionTokenStatus{margin:0;font-size:.68rem;color:var(--muted)}
+.bastion-ssh-panel form{margin-top:18px}.bastion-ssh-panel label{font-size:.73rem}.bastion-ssh-panel label small{font-size:.66rem;line-height:1.6;color:var(--muted)}.bastion-ssh-panel .form-note{overflow-wrap:anywhere}#bastionSSHPublicKey{font-size:.7rem;line-height:1.8;margin-bottom:12px}
+.bastion-ssh-generate-row{display:flex;align-items:flex-end;flex-wrap:wrap;gap:12px}.bastion-ssh-generate-row>label{flex:1 1 200px;min-width:0}.bastion-ssh-generate-row>button{flex:0 0 auto;min-height:40px;white-space:nowrap}
+@media(max-width:540px){.bastion-ssh-generate-row>label{flex-basis:100%}.bastion-ssh-generate-row>button{width:100%}}
 .resource-subheading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:20px}
 #page-bastion .bastion-list{gap:0;margin:16px 0 0}
 #page-bastion .bastion-row{padding:14px 0;gap:14px;flex-wrap:wrap}
@@ -214,8 +240,27 @@
 .bastion-assignment>.error-text{grid-column:1/-1;margin:0;overflow-wrap:anywhere}
 #bastionMemberContent>p{font-size:.8rem;line-height:1.8;margin:14px 0}
 #bastionDeleteForm{border-top:1px solid var(--line);padding-top:22px}
-@media(max-width:1050px){.bastion-workspace{grid-template-columns:1fr 1fr;gap:16px}.bastion-column{gap:16px}#page-bastion .management-panel{padding:20px}.bastion-credentials{grid-template-columns:1fr}.bastion-assignment{gap:14px}.bastion-member-state{align-items:flex-start;flex-direction:column;gap:6px}.allocation-searchbar{align-items:flex-start;flex-direction:column;gap:12px}#allocationStatus{text-align:left}}
+@media(max-width:1050px){.bastion-workspace{grid-template-columns:1fr 1fr;gap:16px}#page-bastion .management-panel{padding:20px}.bastion-credentials{grid-template-columns:1fr}.bastion-assignment{gap:14px}.bastion-member-state{align-items:flex-start;flex-direction:column;gap:6px}.allocation-searchbar{align-items:flex-start;flex-direction:column;gap:12px}#allocationStatus{text-align:left}}
 @media(max-width:760px){#page-bastion .bastion-row>div:first-child{flex-basis:auto}.bastion-workspace{grid-template-columns:1fr}.bastion-credentials{grid-template-columns:minmax(100px,.65fr) minmax(0,1.5fr)}.resource-overview article{padding:0 16px}.resource-overview small{font-size:.63rem}.bastion-member-state{font-size:.66rem}}
 @media(max-width:540px){.resource-overview{padding:20px 0;margin-bottom:24px}.resource-overview article{padding:0 12px;gap:9px}.resource-overview article>span{font-size:.66rem}.resource-overview strong{font-size:1.6rem}.resource-overview small{display:none}.resource-toolbar{gap:12px}.resource-toolbar h2{font-size:.95rem}.resource-toolbar p{font-size:.7rem}.allocation-searchbar .cluster-search{width:100%}#page-allocations .allocation-user summary{display:grid;grid-template-columns:34px minmax(0,1fr) 16px;gap:5px 12px;padding:16px}#page-allocations .allocation-avatar{grid-row:1/3;width:34px;height:34px}.allocation-identity{grid-column:2;grid-row:1}.allocation-identity small{display:none}#page-allocations .allocation-counts{grid-column:2;grid-row:2;font-size:.66rem}#page-allocations .allocation-chevron{grid-column:3;grid-row:1/3}.allocation-content{padding:0 14px 16px}.allocation-identity strong{font-size:.85rem}.bastion-toolbar{align-items:flex-start}#page-bastion .management-panel{padding:20px 16px}.bastion-credentials{grid-template-columns:1fr}.bastion-assignment{grid-template-columns:1fr 1fr;gap:14px}.bastion-member-name{grid-column:1;grid-row:1}.bastion-assignment>button{grid-column:2;grid-row:1;justify-self:end}.bastion-member-state{grid-row:2}.resource-panel-heading>.resource-tag{font-size:.61rem}#page-bastion .bastion-row{align-items:stretch}#page-bastion .bastion-row>div:first-child{flex-basis:auto}}
 @media(max-width:540px){#page-allocations [data-delete-member]{grid-column:2;grid-row:3;justify-self:start;margin-top:6px}}
 @media(prefers-reduced-motion:reduce){#page-allocations .allocation-chevron{transition:none}}
+
+/* Control SSH key selection. */
+.bastion-key-list{display:grid;gap:10px;margin:16px 0}
+.bastion-key-card{display:flex;align-items:center;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--paper,var(--bg));overflow:hidden}
+.bastion-key-card[data-selected="true"]{border-color:var(--blue);box-shadow:inset 3px 0 var(--blue)}
+#page-bastion .bastion-key-choice{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:16px;text-align:left;border:0;background:transparent;color:var(--ink);border-radius:0;white-space:normal}
+.bastion-key-choice:focus-visible{outline:2px solid var(--blue);outline-offset:-3px}
+.bastion-key-indicator{display:grid;place-items:center;flex:0 0 20px;height:20px;border:1px solid var(--line);border-radius:50%;color:var(--blue);font-size:12px}
+[data-selected="true"] .bastion-key-indicator{border-color:var(--blue)}
+.bastion-key-label{display:grid;gap:5px;flex:1;min-width:0}
+.bastion-key-label strong{font-size:.8rem;overflow-wrap:anywhere;font-weight:550}
+.bastion-key-label small{font-size:.68rem;color:var(--muted)}
+#page-bastion .bastion-key-delete{border:0;border-left:1px solid var(--line);border-radius:0;background:transparent;color:var(--muted);padding:8px 12px;margin-right:4px;flex-shrink:0}
+#page-bastion .bastion-key-delete:hover:not(:disabled){color:var(--danger,#b33)}
+.bastion-key-public{padding:16px;margin:16px 0;border:1px solid var(--line);border-radius:8px}
+.bastion-key-create{margin-top:22px;border-top:1px solid var(--line);padding-top:16px}
+.bastion-key-create>summary{cursor:pointer;color:var(--blue);font-size:.78rem;font-weight:550}
+.bastion-key-create>form{margin-top:16px}
+@media(max-width:540px){#page-bastion .bastion-key-choice{padding:12px;gap:8px;flex-wrap:wrap}.bastion-key-choice>.resource-tag{margin-left:28px}.bastion-key-label{flex-basis:calc(100% - 28px)}}

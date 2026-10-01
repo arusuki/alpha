@@ -373,4 +373,3 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 @media(max-width:700px){.bastion-row{align-items:flex-start;flex-direction:column;gap:10px}.bastion-dialog{padding:18px}.bastion-row .actions{flex-wrap:wrap}}
 
 .pool-public-key{display:block;white-space:normal;overflow-wrap:anywhere;margin-top:8px}
-#bastionKeyPool .bastion-row strong{overflow-wrap:anywhere}

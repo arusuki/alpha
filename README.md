@@ -111,6 +111,7 @@ The detailed guides are currently available in Chinese.
 | Node connections, service roles, and permissions | [Cluster management](docs/cluster.md) |
 | Creating, importing, and managing containers | [Container management](docs/containers.md) |
 | Invitations, registration forms, and user registration | [User registration](docs/members.md) |
+| Share node installation, service SSH identity, and troubleshooting | [Share node configuration](docs/share-node.md) |
 | Tailscale shares, jump account keys, and resource reclamation | [Access and user resources](docs/bastion.md) |
 | How storage usage is calculated | [Storage accounting](docs/accounting.md) |
 | Scan results, directory exploration, and incremental updates | [Records and exploration](docs/records.md) |

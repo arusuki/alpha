@@ -73,6 +73,7 @@ def inside():
     copy_key('host_ed25519', Path('/tmp/share-host-key'))
     config = Path('/etc/ssh/sshd_config')
     original = (f'Port {ssh_port}\nListenAddress 0.0.0.0\nHostKey /tmp/share-host-key\n'
+                'TrustedUserCAKeys /tmp/share-host-key.pub\nDisableForwarding yes\nPermitOpen none\n'
                 'UsePAM no\nLogLevel VERBOSE\nPidFile /tmp/share-sshd.pid\n')
     config.write_text(original)
     for name in ['alpha-control-test', 'alpha-client-test']:
@@ -81,7 +82,7 @@ def inside():
         known.write_text(f'[{share_ip}]:{ssh_port} ' + Path('/tmp/share-host-key.pub').read_text())
         os.chown(known, u.pw_uid, u.pw_gid)
         known.chmod(0o600)
-    init = [binary, 'share-node', '--control-key-file', str(control_key), '--listen-host', share_ip,
+    init = [binary, 'share-node', '--listen-host', share_ip,
             '--control-url', f'http://{share_ip}:{control_port}', '--status-port', str(proxy_port),
             '--no-reload', '--no-service']
     # Earlier Match rules must be detected for either role, without partial installs.
@@ -106,6 +107,20 @@ def inside():
     run(*init)
     installation = Path('/var/lib/project-alpha-jump/installation.json')
     manifest = json.loads(installation.read_text())
+    assert manifest['version'] == 3 and manifest['control_keys'] == []
+    authorized = Path('/var/lib/project-alpha-jump/worker_authorized_keys')
+    assert authorized.read_text() == ''
+    run(binary, 'share-node', '--add-control-file', str(control_key))
+    normalized_control = ' '.join(control_key.read_text().split()[:2])
+    run(binary, 'share-node', '--add-control-key', normalized_control)
+    assert json.loads(installation.read_text())['control_keys'] == [normalized_control]
+    assert authorized.read_text() == 'restrict ' + normalized_control + '\n'
+    # A second existing public key can be appended without replacing the first.
+    extra_control = ' '.join(Path('/tmp/share-host-key.pub').read_text().split()[:2])
+    run(binary, 'share-node', '--add-control-key', extra_control)
+    run(*init)
+    assert json.loads(installation.read_text())['control_keys'] == [normalized_control, extra_control]
+    assert authorized.read_text() == 'restrict ' + normalized_control + '\nrestrict ' + extra_control + '\n'
     jump, worker = pwd.getpwnam('alpha-jump'), pwd.getpwnam('alpha-worker')
     assert worker.pw_uid > 0 and jump.pw_uid > 0 and worker.pw_uid != jump.pw_uid
     assert worker.pw_shell == '/bin/sh' and jump.pw_shell == '/bin/false'

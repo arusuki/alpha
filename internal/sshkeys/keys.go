@@ -24,7 +24,7 @@ func Normalize(value string) (string, error) {
 	if len(parts) < 2 {
 		return "", bad
 	}
-	raw, err := base64.StdEncoding.DecodeString(parts[1])
+	raw, err := base64.StdEncoding.Strict().DecodeString(parts[1])
 	if err != nil {
 		return "", bad
 	}
@@ -53,7 +53,7 @@ func Normalize(value string) (string, error) {
 		}
 	case "ssh-rsa":
 		e, n := read(), read()
-		if len(e) == 0 || len(e) > 4 || len(n) == 0 || n[0]&128 != 0 {
+		if len(e) > 4 || !positiveMPInt(e) || !positiveMPInt(n) {
 			return "", bad
 		}
 		exponent := new(big.Int).SetBytes(e).Int64()
@@ -81,6 +81,12 @@ func Normalize(value string) (string, error) {
 		return "", bad
 	}
 	return parts[0] + " " + parts[1], nil
+}
+
+// SSH mpints are signed and must use the shortest representation. Reject
+// alternate encodings so a key has one identity in the shared key pool.
+func positiveMPInt(v []byte) bool {
+	return len(v) > 0 && v[0]&128 == 0 && (v[0] != 0 || len(v) > 1 && v[1]&128 != 0)
 }
 
 func Marker(id string) string { return "project-alpha:member:" + id }

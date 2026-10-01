@@ -107,6 +107,7 @@ cd project-alpha_v0.2.0_linux_amd64
 | 节点接入、运行角色与权限 | [集群管理](cluster.md) |
 | 创建、导入和管理容器 | [容器管理](containers.md) |
 | 邀请码、登记表与使用者注册 | [使用者登记](members.md) |
+| share node 初始化、总控 SSH 身份与排错 | [share node 配置指南](share-node.md) |
 | Tailscale 分享、跳板公钥与资源回收 | [跳板机与使用者资源](bastion.md) |
 | 空间用量如何计算 | [存储统计口径](accounting.md) |
 | 扫描记录、目录探索与增量更新 | [记录读取与探索](records.md) |

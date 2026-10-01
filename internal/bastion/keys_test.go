@@ -18,7 +18,7 @@ func testKeyStore(t *testing.T) (keyStore, installation) {
 	if os.Geteuid() == 0 {
 		t.Skip("non-root key writer")
 	}
-	c := installation{Version: keyFormat, ControlKey: managerTestKey, ControlURL: "http://10.0.0.1:8765", ListenHost: "100.64.0.2", StatusPort: 9765, JumpUID: os.Geteuid() + 1, JumpGID: os.Getegid(), WorkerUID: os.Geteuid(), WorkerGID: os.Getegid()}
+	c := installation{Version: installationFormat, ControlKeys: []string{managerTestKey}, ControlURL: "http://10.0.0.1:8765", ListenHost: "100.64.0.2", StatusPort: 9765, JumpUID: os.Geteuid() + 1, JumpGID: os.Getegid(), WorkerUID: os.Geteuid(), WorkerGID: os.Getegid()}
 	s := keyStore{path: t.TempDir(), owner: os.Geteuid(), lookup: func(name string) (*user.User, error) {
 		uid, gid := c.JumpUID, c.JumpGID
 		if name == WorkerUser {
@@ -60,13 +60,13 @@ func TestWorkerWritesJumpReadsAndControllerKeyIsIndependent(t *testing.T) {
 	if err = s.authorizedKeys(JumpUser, strconv.Itoa(c.JumpUID), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), testKey) || strings.Contains(out.String(), c.ControlKey) {
+	if !strings.Contains(out.String(), testKey) || strings.Contains(out.String(), c.ControlKeys[0]) {
 		t.Fatal("manager key entered member pool")
 	}
 	if err = s.authorizedKeys(WorkerUser, strconv.Itoa(c.WorkerUID), &out); err == nil {
 		t.Fatal("reader accepted worker")
 	}
-	if _, err = s.update(func(v *keySnapshot) error { ensurePoolKeys(v, c.ControlKey); return nil }); err == nil {
+	if _, err = s.update(func(v *keySnapshot) error { ensurePoolKeys(v, c.ControlKeys[0]); return nil }); err == nil {
 		t.Fatal("manager key accepted as member")
 	}
 }
@@ -116,7 +116,7 @@ func TestKeyStoreRejectsChangedIdentityFormatsAndUnsafeFiles(t *testing.T) {
 			case "null-snapshot":
 				os.WriteFile(keys, []byte(`null`), 0640)
 			case "control-key":
-				raw, _ := json.Marshal(keySnapshot{Version: keyFormat, Keys: map[string]string{strings.Repeat("a", 32): testKey, strings.Repeat("b", 32): c.ControlKey}})
+				raw, _ := json.Marshal(keySnapshot{Version: keyFormat, Keys: map[string]string{strings.Repeat("a", 32): testKey, strings.Repeat("b", 32): c.ControlKeys[0]}})
 				os.WriteFile(keys, raw, 0640)
 			case "lock-symlink":
 				lock := filepath.Join(s.path, "keys", ".lock")

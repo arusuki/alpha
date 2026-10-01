@@ -120,6 +120,16 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 	return n, nil
 }
 func (h *Handler) sshCommand(ctx context.Context, s ShareNode, req commandRequest) (commandReply, error) {
+	// Key revocation and synchronization also run inside database transactions.
+	// Read the current immutable configuration without taking another connection.
+	if h.sshConfigErr != nil {
+		return commandReply{}, h.sshConfigErr
+	}
+	cfg := h.sshConfig.Load()
+	return h.sshCommandWithIdentity(ctx, s, req, cfg.IdentityFile)
+}
+
+func (h *Handler) sshCommandWithIdentity(ctx context.Context, s ShareNode, req commandRequest, identity string) (commandReply, error) {
 	var reply commandReply
 	if err := s.validate(); err != nil {
 		return reply, err
@@ -131,7 +141,13 @@ func (h *Handler) sshCommand(ctx context.Context, s ShareNode, req commandReques
 	if err != nil {
 		return reply, err
 	}
-	args := append(sshArgs(s), s.SSHHost, "alpha-worker cmd")
+	args := sshArgs(s)
+	if err := h.checkManagedIdentity(identity); err != nil {
+		return reply, err
+	}
+	// Use only the selected key, while retaining standard known_hosts checks.
+	args = append(args, "-F", "/dev/null", "-i", identity, "-o", "IdentitiesOnly=yes")
+	args = append(args, s.SSHHost, "alpha-worker cmd")
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	if len(raw) > maxKeyFile {
 		return reply, httpapi.NewError(400, "公钥管理请求过大")
@@ -158,5 +174,5 @@ func checkReply(s ShareNode, r commandReply) error {
 	if s.ControlURL != "" && s.ControlURL != r.ControlURL {
 		return httpapi.NewError(409, "share node 的总控代理地址已改变，请核对安装配置")
 	}
-	return validateSnapshot(keySnapshot{Version: r.Version, Keys: r.Keys}, "")
+	return validateSnapshot(keySnapshot{Version: r.Version, Keys: r.Keys}, nil)
 }
