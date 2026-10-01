@@ -1,6 +1,6 @@
 # share node 配置指南
 
-share node 为成员提供两个入口：通过固定账号 `alpha-jump` 转发 SSH 到计算节点上的容器，通过 HTTP 代理访问总控的本人状态页。总控使用自己的普通服务账号及其在总控创建并启用的 SSH 密钥登录 share node 的 `alpha-worker`，远程发布、查询和撤销成员公钥。
+share node 为成员提供两个入口：通过固定账号 `alpha-jump` 转发 SSH 到计算节点上的容器，通过 HTTP 代理访问总控的本人状态页。总控以普通服务账号运行，通过已启用的 SSH 密钥登录 share node 的 `alpha-worker`，远程管理成员公钥。
 
 本文按总控、share node、成员客户端分别说明操作。成员分配、邀请核对和资源 API 见 [跳板机与使用者资源](bastion.md)。
 
@@ -51,17 +51,15 @@ flowchart LR
   --host 10.0.0.1 --port 8765 --allowed-host 10.0.0.1
 ```
 
-首次打开总控只需创建管理员账号。总控监听地址由启动参数决定；仅监听 `127.0.0.1` 的总控无法被另一台机器上的 share node 访问。直接通过总控 IP 或域名访问时，用 `--allowed-host` 允许对应地址；示例显式允许 `10.0.0.1`，方便直接访问及后面的连通性检查。
+仅监听 `127.0.0.1` 的总控无法被另一台机器上的 share node 访问。直接通过总控 IP 或域名访问时，用 `--allowed-host` 允许对应地址；示例允许 `10.0.0.1`，用于直接访问及连通性检查。
 
-在总控 Web 的「Share node 管理 → 全局连接设置 → 总控 SSH 密钥」点选已创建的密钥；没有密钥时，在展开的创建区域输入名称并创建。页面只列出总控数据目录 `control-ssh/` 中的密钥，不支持手填路径或使用默认 SSH 身份。创建后即持久保存，刷新页面或重启服务后仍可选择。
+在总控 Web 的「Share node 管理 → 全局连接设置 → 总控 SSH 密钥」选择密钥；没有密钥时，展开“创建新密钥”，输入名称并创建。页面只列出总控数据目录 `control-ssh/` 中的密钥，不支持手填路径或使用默认 SSH 身份。
 
-卡片区分“当前使用”“待启用”和“未启用”。选择后可查看、下载公钥；先将公钥在 share node 授权，再点击「校验并启用所选密钥」。创建不会自动切换身份或覆盖旧密钥。未启用的密钥可在列表中删除，当前使用的密钥需先切换；删除本地密钥不会撤销 share node 上已安装的管理公钥。
-
-将下载的 `control-service.pub` 复制到 share node 的 `/tmp/control-service.pub`；私钥保留在总控，不会回传浏览器。总控连接时只使用所选密钥，以及池中的 IP、端口和 `alpha-worker`，不读取 SSH config。主机信任使用总控服务账号的 `~/.ssh/known_hosts`；仅给交互登录账号配置主机信任不足以让后台服务连接。
+选择后下载 `control-service.pub`，复制到 share node 的 `/tmp/control-service.pub`。创建密钥不会自动启用；先完成后续授权和主机信任步骤，再启用。私钥保留在总控，连接仅使用所选密钥，不读取 SSH config。
 
 ## 2. 准备 share node
 
-在 share node 安装并启动 OpenSSH server、systemd 和 Tailscale，加入总控所管理的 Tailnet，确认该机器是已授权的自有节点。准备与总控相同版本、适合本机架构的 `project-alpha` 二进制。
+在 share node 安装并启动 OpenSSH server 和 Tailscale，加入总控所管理的 Tailnet，确认该机器是已授权的自有节点。默认部署使用 systemd；准备与总控相同版本、适合本机架构的 `project-alpha` 二进制。
 
 本项目的公钥认证和账号限制由 OpenSSH 实现。若使用默认 SSH 端口 `22`，在 share node 关闭 Tailscale SSH：
 
@@ -78,14 +76,13 @@ tailscale ip -4
 curl --fail http://10.0.0.1:8765/api/session
 ```
 
-这里测试的是总控内网地址，不是 share node 的代理入口。
-
 ## 3. 在 share node 初始化
 
-在 **share node 本机** 执行。管理公钥选填，可以先初始化账号和代理，稍后再授权总控：
+在 **share node 本机** 执行，示例同时授权总控管理公钥：
 
 ```sh
 sudo ./project-alpha share-node \
+  --control-key-file /tmp/control-service.pub \
   --listen-host 100.64.0.2 \
   --control-url http://10.0.0.1:8765 \
   --status-port 9765
@@ -100,7 +97,7 @@ sudo ./project-alpha share-node \
 | `--control-url` | share node 能直接访问的总控 HTTP/HTTPS 地址；不含账号、业务路径、查询参数或片段 |
 | `--status-port` | 网页入口端口，默认 `8765`，范围 `1024–65535`，须与 SSH 端口不同 |
 
-如果希望初始化时就授权总控，在上面的命令中加 `--control-key-file /tmp/control-service.pub`，或使用新的 `--add-control-file` / `--add-control-key` 参数。
+管理公钥选填。省略 `--control-key-file` 可先初始化账号和代理，但加入分享池前必须追加授权。
 
 初始化后，以下两种方式任选其一；只需提供追加参数，无需重填网络配置：
 
@@ -112,11 +109,7 @@ sudo ./project-alpha share-node --add-control-file /tmp/control-service.pub
 sudo ./project-alpha share-node --add-control-key 'ssh-ed25519 AAAA... control-service'
 ```
 
-两个追加参数可同时使用或重复使用，按规范化后的公钥去重，保留已有授权；需要本机 sudo，无需重启 sshd 或代理。每个文件只能包含一行公钥，接受 Ed25519、2048–8192 位 RSA 或 ECDSA，不接受私钥、证书或 authorized_keys 选项。已在成员公钥池中的公钥不能追加为管理公钥。
-
-未配置任何管理公钥时，HTTP 代理可以运行，但 `alpha-worker` 不接受 SSH 登录，总控暂时无法校验或加入分享池。请先完成追加授权，再进行后续 SSH 校验。已安装节点重复初始化会保留已有管理公钥，并合并本次提供的公钥。
-
-安装记录格式为 **3**，使用 `control_keys` 列表（允许空列表）；成员公钥清单和管理协议仍为版本 2。旧安装记录会明确报格式错误，需使用新的安装数据目录，不自动迁移、删除或覆盖旧数据。
+两个追加参数也可在初始化时使用，支持同时使用或重复传入，自动去重并保留已有授权，无需重启 sshd 或代理。每个文件只能包含一行公钥，接受 Ed25519、2048–8192 位 RSA 或 ECDSA，不接受私钥、证书或 authorized_keys 选项。管理公钥不能与成员公钥池中的公钥相同。
 
 IPv6 示例使用 `--listen-host fd7a:115c:a1e0::2`；URL 中的 IPv6 地址需加方括号，例如 `--control-url 'http://[fd7a:115c:a1e0::1]:8765'`。
 
@@ -127,9 +120,7 @@ IPv6 示例使用 `--listen-host fd7a:115c:a1e0::2`；URL 中的 IPv6 地址需�
 | `alpha-worker` | 只接受总控管理公钥；SSH 只执行 `alpha-worker cmd` 管理协议，禁止任意 shell、SFTP、PTY 和转发；HTTP 代理服务也以此账号运行 |
 | `alpha-jump` | 从专用公钥池读取成员公钥；允许本地 TCP 转发，禁止 shell、命令、SFTP、PTY、反向监听、Agent、X11 和 Unix socket 转发 |
 
-两个账号显式设置 `TrustedUserCAKeys none`，不会继承主机的用户证书 CA 信任。`alpha-jump` 显式允许 TCP 转发及目标地址，避免全局 `DisableForwarding` / `PermitOpen` 阻止 ProxyJump；已有更早的冲突 `Match` 配置会被校验拒绝。相关设置的含义见 [OpenSSH sshd_config 手册](https://man.openbsd.org/sshd_config)。
-
-初始化不修改 sshd 的全局监听 IP 或 SSH 端口，也不配置 Tailscale 策略和防火墙。只有安装、更新配置和卸载需要本机 sudo；日常公钥管理和 HTTP 代理使用普通账号。
+初始化校验两个账号的实际 SSH 配置，冲突时拒绝安装。sshd 的全局监听 IP、SSH 端口、Tailscale 策略和防火墙需自行配置。安装、追加管理公钥、更新配置和卸载需要本机 sudo；日常成员公钥管理和 HTTP 代理以普通账号运行。
 
 在 share node 检查服务：
 
@@ -145,9 +136,9 @@ sudo /usr/sbin/sshd -t
 sudo -u alpha-worker /usr/local/libexec/project-alpha-jump share-node --serve
 ```
 
-此处 sudo 仅用于切换到代理账号，代理进程以 `alpha-worker` 运行。`--no-service` 仍安装服务单元，但不调用 systemd 启停；`--no-reload` 仍校验 SSH 配置。
+`--no-service` 仍安装服务单元，但不调用 systemd 启停；`--no-reload` 仍校验 SSH 配置。
 
-## 4. 在总控建立主机信任并验证管理连接
+## 4. 在总控建立主机信任并启用密钥
 
 总控强制 `StrictHostKeyChecking=yes`。先通过可信控制台核对 share node 实际 sshd 使用的主机公钥指纹，例如 share node 使用 Ed25519 主机公钥时：
 
@@ -173,9 +164,12 @@ chmod 600 ~/.ssh/known_hosts
 
 `ssh-keyscan` 的采集结果本身不证明主机身份。主机使用其他公钥类型时，选择相应的已存在主机公钥；非默认端口必须使用实际端口，`known_hosts` 中对应名称为 `[IP]:端口`。
 
-接着执行一次只读管理查询：
+主机信任建立后，返回总控页面点击「校验并启用所选密钥」。尚无分享池配置时，首次启用不会连接 share node；下一节加入分享池时会验证管理连接。
 
-将下面的私钥路径替换为总控页面中已启用密钥的实际路径。
+<details>
+<summary>可选：手动查询管理协议，排查 SSH 连接问题</summary>
+
+在总控服务账号下执行。私钥位于 `<总控数据目录>/control-ssh/<密钥卡片名称>/id_ed25519`；按实际路径、share node IP 和 SSH 端口替换示例。
 
 ```sh
 printf '%s\n' '{"version":2,"operation":"inspect"}' | \
@@ -189,7 +183,9 @@ printf '%s\n' '{"version":2,"operation":"inspect"}' | \
     100.64.0.2 'alpha-worker cmd'
 ```
 
-成功时返回 JSON，包含 `version: 2`、`listen_host: "100.64.0.2"`、`status_port: 9765`、`control_url: "http://10.0.0.1:8765"` 和 `keys`。新安装的 `keys` 通常为空。直接执行 `ssh alpha-worker@…` 请求 shell、运行 `id` 或 SFTP 会被拒绝，应使用上述管理协议验证。
+成功时返回 JSON，包含 `version: 2`、`listen_host: "100.64.0.2"`、`status_port: 9765`、`control_url: "http://10.0.0.1:8765"` 和 `keys`。直接请求 shell、运行 `id` 或 SFTP 会被拒绝。
+
+</details>
 
 ## 5. 在总控加入分享池
 
@@ -200,13 +196,13 @@ printf '%s\n' '{"version":2,"operation":"inspect"}' | \
 3. 为已授权的自有 share node 点击“配置并加入分享池”。填写 Tailscale IP `100.64.0.2`、实际 OpenSSH 端口 `22`、网页入口端口 `9765`。
 4. 点击“校验并保存”。总控用服务账号登录 `alpha-worker`，核对管理协议、监听 IP 和网页入口端口，并保存返回的总控代理地址。校验失败不会保存节点。
 
-加入池之前直接请求 share node 的网页入口可能被总控 Host 校验拒绝。加入后可从有网络权限的客户端验证：
+加入后，从有网络权限的客户端验证网页入口：
 
 ```sh
 curl --fail http://100.64.0.2:9765/api/session
 ```
 
-代理入口使用 **HTTP**，传输经过 Tailscale；`--control-url` 使用 HTTPS 只改变代理到总控这一段，不会使成员入口变为 HTTPS。代理保留浏览器 Host、Origin、路径及查询参数。总控会允许已保存分享节点的 IP 与入口端口，无需另行把这个 IP 加入 `--allowed-host`。
+代理入口使用 **HTTP**，传输经过 Tailscale；`--control-url` 使用 HTTPS 只改变代理到总控这一段。代理保留浏览器 Host、Origin、路径及查询参数。总控会允许已保存分享节点的 IP 与入口端口，无需另行加入 `--allowed-host`；保存前访问入口可能被 Host 校验拒绝。
 
 按配置的 IP 和端口访问代理；自定义域名或不同端口会被入口拒绝。总控启用 `--secure-cookie` 时，HTTP 入口无法承载管理员 Secure 会话 Cookie，管理员应从总控 HTTPS 入口登录；成员本人状态页使用资源令牌。
 
@@ -245,11 +241,13 @@ Host alpha-container
 
 ## 更新配置与卸载
 
-升级二进制或修改 `--control-url` 时，在 share node 用相同管理公钥重新执行初始化命令。重复初始化保留两个账号身份和成员公钥，更新工具与代理配置并重启代理。随后在总控打开该分享节点的“配置”，重新“校验并保存”，让总控记录新的代理目标。
+升级二进制或修改代理配置时，在 share node 重新执行初始化命令，提供完整的 `--listen-host`、`--control-url` 和 `--status-port`；省略端口会使用默认值 `8765`。重复初始化保留账号身份和已有公钥，合并本次提供的管理公钥，更新工具与代理配置并重启代理。使用 `--no-service` 时需自行重启代理。更改 `--control-url` 后，在总控打开该节点的“配置”，重新“校验并保存”，更新代理目标记录。
 
 已有成员引用时，总控禁止更改分享节点 IP、SSH 端口和网页入口端口。需变更这些地址时，先回收关联成员；仅“停用”节点不会迁移成员或撤销已有授权，只会停止新的分配。
 
-已有未管理账号、旧安装格式、无效公钥文件或冲突 SSH 配置会明确报错。原数据保留，不自动迁移、覆盖或清空。安装路径固定为 `/var/lib/project-alpha-jump`，遇到格式不匹配须准备新的安装环境；不要删除旧目录来绕过校验。
+更换总控 SSH 密钥时，先在所有已配置 share node（包括停用节点）追加候选公钥并建立主机信任，再在总控启用。任一节点校验失败都会保留原身份。未启用的本地密钥可在页面删除；删除不会撤销 share node 上的管理公钥。
+
+安装不会接管已有未管理账号，也不会迁移或覆盖旧格式数据。安装路径固定为 `/var/lib/project-alpha-jump`，没有自定义数据目录参数；格式不匹配时会报错并保留原数据，需准备新的安装环境。
 
 卸载前在总控回收关联成员并移除分享池配置，断开成员和管理 SSH 连接。在 share node 执行：
 
@@ -261,9 +259,9 @@ sudo ./project-alpha share-node --uninstall
 
 ## 公钥与访问边界
 
-管理公钥保存在 root 持有的 `worker_authorized_keys`，成员公钥保存在 `/var/lib/project-alpha-jump/keys/keys.json`。公钥目录属主为 `alpha-worker`、组为 `alpha-jump`、权限为 `2750`，清单为 `0640`。通过管理协议发布公钥，文件锁及原子替换避免半写入；不要手工改属主、权限或替换为链接文件。
+公钥数据位于 `/var/lib/project-alpha-jump/`：管理授权文件 `worker_authorized_keys` 由 root 持有，成员清单为 `keys/keys.json`。`keys/` 属主为 `alpha-worker`、组为 `alpha-jump`、权限为 `2750`，清单为 `0640`。公钥通过管理协议维护，不要手工修改文件或权限。
 
-同一 share node 的公钥按规范化内容关联成员，支持多人共用；撤销最后一个引用成员时删除该公钥全部条目。`free` 仅表示没有成员引用，仍可认证，需管理员点击“清理 free 公钥”撤销。“补齐用户公钥”补齐活跃成员公钥并保留 free 条目。
+同一 share node 的公钥按规范化内容关联成员，支持多人共用；撤销最后一个引用成员时删除该公钥全部条目。`free` 仅表示没有成员引用，仍可认证，需管理员点击“清理 free 公钥”撤销。“补齐全部节点公钥”按成员分配的节点补齐活跃成员公钥，并保留 free 条目。
 
 `alpha-jump` 的 TCP 转发目标没有按成员容器限制，持有已授权私钥的人可以请求转发到 share node 可达的其他 TCP 地址。成员隔离还依赖容器 SSH 身份和网络访问策略。多人共用同一私钥意味着共享 SSH 身份，无法靠公钥池区分持有者。
 
@@ -273,12 +271,12 @@ sudo ./project-alpha share-node --uninstall
 
 | 现象 | 核对方法 |
 | --- | --- |
-| `Permission denied (publickey)` | 确认是总控服务账号在连接，页面当前启用的密钥与 share node 授权公钥匹配；检查总控服务账号的 known_hosts |
+| `Permission denied (publickey)` | 确认是总控服务账号在连接，页面当前启用的密钥与 share node 授权公钥匹配；检查私钥的属主、权限及 share node 的 sshd 认证日志 |
 | `Host key verification failed` | 在服务账号的 `known_hosts` 建立经指纹核对的信任，端口必须正确；主机公钥变化时先确认原因 |
 | 管理响应无效、命令被拒绝 | 使用 `alpha-worker cmd` 和当前协议；确认实际连接的是 OpenSSH，而非接管端口的 Tailscale SSH；总控和 share node 使用相同版本 |
 | 协议、监听 IP 或入口端口不一致 | 比较初始化参数、只读 `inspect` 返回值及分享池字段；代理入口端口默认是 `8765` |
 | `sshd` 已有配置冲突 | 检查更早的 `Match` 块和 `Include` 配置；按报错字段处理，再重新初始化；不要跳过校验 |
-| 公钥目录属主、权限或格式无效 | 核对本节记录的路径、账号与权限；保留原文件，处理实际错误；格式不匹配时使用新的安装环境 |
+| 公钥目录属主、权限或格式无效 | 按[公钥与访问边界](#公钥与访问边界)核对路径、账号与权限；格式不匹配时保留原数据，使用新的安装环境 |
 | 网页入口返回 `502` | 查看代理日志，从 share node 直连 `--control-url`；核对总控监听、路由、防火墙和上游 HTTPS 证书 |
 | 网页入口被拒绝或 Host 不允许 | 使用已加入分享池的 IP 与准确端口；先完成池保存，避免用别名或自定义域名访问 |
 | `Cannot assign requested address`、端口占用 | `--listen-host` 须属于 share node；用 `ss -ltn` 查看实际监听，等待 Tailscale 地址就绪后启动代理 |
