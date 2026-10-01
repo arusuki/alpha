@@ -79,7 +79,7 @@ func (p *harness) request(t *testing.T, method, path, body string, status int) m
 }
 func (p *harness) login(t *testing.T) {
 	t.Helper()
-	p.request(t, "POST", "/api/setup", `{"username":"administrator","password":"A-test-password-123","internal_ip":"10.0.0.1"}`, 200)
+	p.request(t, "POST", "/api/setup", `{"username":"administrator","password":"A-test-password-123"}`, 200)
 }
 func fields(raw string) map[string]json.RawMessage {
 	var value map[string]json.RawMessage

@@ -56,7 +56,7 @@ func (d *Database) Users() ([]object, error) {
 }
 func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, setup bool) (object, error) {
 	for key := range value {
-		if key != "username" && key != "password" && key != "role" && !(setup && key == "internal_ip") {
+		if key != "username" && key != "password" && key != "role" {
 			return nil, httpapi.NewError(400, "账号字段无效")
 		}
 	}
@@ -77,12 +77,6 @@ func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, se
 	if (role != "admin" && role != "viewer") || (setup && role != "admin") {
 		return nil, httpapi.NewError(400, "角色无效")
 	}
-	settings := ControlSettings{Revision: 1, InternalIP: httpapi.FieldString(value, "internal_ip")}
-	if setup {
-		if err := settings.validate(); err != nil {
-			return nil, err
-		}
-	}
 	encoded, err := passwordHash(password, "")
 	if err != nil {
 		return nil, err
@@ -96,9 +90,6 @@ func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, se
 			}
 			if n > 0 {
 				return httpapi.NewError(409, "管理员已初始化，请登录")
-			}
-			if _, err := tx.Exec("INSERT INTO control_settings VALUES(1,?,?)", settings.Revision, settings.InternalIP); err != nil {
-				return err
 			}
 		}
 		if _, err := tx.Exec("INSERT INTO users VALUES(?,?,?,?,?,?)", uid, name, encoded, role, 1, Now()); err != nil {

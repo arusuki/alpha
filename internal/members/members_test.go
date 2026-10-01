@@ -550,7 +550,7 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 			t.Fatalf("want %d, got %d: %s", code, w.Code, w.Body.String())
 		}
 	}
-	setup := call("POST", "/api/setup", object{"username": "operator", "password": "A-test-password-123", "internal_ip": "10.0.0.1"}, "", "", nil)
+	setup := call("POST", "/api/setup", object{"username": "operator", "password": "A-test-password-123"}, "", "", nil)
 	expect(200, setup)
 	var session platform.Session
 	if err := json.Unmarshal(setup.Body.Bytes(), &session); err != nil {

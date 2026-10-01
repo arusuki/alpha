@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	web "project-alpha/dist"
+	"project-alpha/internal/testutil"
 )
 
 func TestEmbeddedBrowserAssets(t *testing.T) {
@@ -53,5 +54,20 @@ func TestEmbeddedBrowserAssets(t *testing.T) {
 				t.Fatalf("GET %s: response differs from embedded asset", path)
 			}
 		})
+	}
+}
+
+func TestDirectControlAccessUsesAllowedHosts(t *testing.T) {
+	db, err := OpenDatabase(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.SQL.Close() })
+	client := &testutil.Client{T: t, Handler: NewServer(db, nil, nil, []string{"10.0.0.1", "fd7a:115c:a1e0::1", "control.example"}, false)}
+	for _, host := range []string{"127.0.0.1:8765", "10.0.0.1:8765", "[FD7A:115C:A1E0::1]:8443", "control.example"} {
+		client.Expect(200, "GET", "/api/session", nil, map[string]string{"Host": host})
+	}
+	for _, host := range []string{"10.0.0.2:8765", "[fd7a:115c:a1e0::2]:8765", "other.example"} {
+		client.Expect(403, "GET", "/api/session", nil, map[string]string{"Host": host})
 	}
 }

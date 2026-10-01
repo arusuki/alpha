@@ -36,8 +36,7 @@ type memberResourceView struct {
 }
 
 type memberControlAccess struct {
-	InternalIP string `json:"internal_ip"`
-	StatusURL  string `json:"status_url"`
+	StatusURL string `json:"status_url"`
 }
 
 type memberNodeStatus struct {

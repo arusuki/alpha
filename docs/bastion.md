@@ -69,7 +69,7 @@ sudo ./project-alpha share-node --uninstall
 | GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
 | POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与令牌所属使用者一致 |
 
-`control` 返回总控内网 IP 和通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
+`control` 返回通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
 
 `access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
 

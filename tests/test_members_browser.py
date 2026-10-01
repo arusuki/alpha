@@ -45,7 +45,6 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.goto(url)
                 page.locator('#authUsername').fill('operator')
                 page.locator('#authPassword').fill('A-test-password-123')
-                page.locator('#authInternalIP').fill('10.0.0.1')
                 page.locator('#authSubmit').click()
                 page.locator('.platform-nav [data-page="members"]').click()
                 expect(page.locator('#memberSchemaEditor')).to_be_enabled()

@@ -88,7 +88,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 公网 registry 在网络分享和跳板公钥就绪后，引导用户接受 Tailscale 分享、登录客户端并连接 VPN，提供本人资源令牌复制和总控状态页链接。之后所有容器查看、申请及 SSH 教程均通过总控。令牌在同一注册会话刷新后仍可复制，不放入状态页 URL。
 
-使用者网页入口为总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册返回的 `resource_token` 后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。页面同时提供使用当前总控和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回创建结果，失败显示具体错误；不需要运维平台登录。
+使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册返回的 `resource_token` 后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回创建结果，失败显示具体错误；不需要运维平台登录。
 
 | 状态码 | 含义 |
 | --- | --- |

@@ -123,19 +123,15 @@ func (s *Server) guard(r *http.Request) error {
 		return httpapi.NewError(400, "无效的 Host")
 	}
 	if !s.AllowedHosts[strings.ToLower(host.Hostname())] {
-		var internalIP string
 		address, err := netip.ParseAddr(host.Hostname())
 		if err != nil {
 			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
 		}
 		ip := address.Unmap().String()
-		direct := s.DB.SQL.QueryRow("SELECT internal_ip FROM control_settings WHERE id=1").Scan(&internalIP) == nil && ip == internalIP
-		if !direct {
-			var count int
-			port := host.Port()
-			if s.DB.SQL.QueryRow("SELECT count(*) FROM bastion_tailscale WHERE ssh_host=? AND CAST(status_port AS TEXT)=?", ip, port).Scan(&count) != nil || count == 0 {
-				return httpapi.NewError(403, "该访问域名未在服务配置中允许")
-			}
+		var count int
+		port := host.Port()
+		if s.DB.SQL.QueryRow("SELECT count(*) FROM bastion_tailscale WHERE ssh_host=? AND CAST(status_port AS TEXT)=?", ip, port).Scan(&count) != nil || count == 0 {
+			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
 		}
 	}
 	if r.Method != "GET" {
@@ -254,23 +250,6 @@ func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) (int, any, err
 	}
 	if (route == "/api/users" || route == "/api/audit") && !admin {
 		return failure(httpapi.NewError(403, "此操作需要管理员权限"))
-	}
-	if route == "/api/control/settings" {
-		if !admin {
-			return failure(httpapi.NewError(403, "此操作需要管理员权限"))
-		}
-		if method == "GET" {
-			value, err := db.ControlSettings()
-			return 200, value, err
-		}
-		if method == "PUT" {
-			var value ControlSettings
-			if err := httpapi.DecodeBody(w, r, &value); err != nil {
-				return failure(err)
-			}
-			value, err := db.UpdateControlSettings(value, user.Username)
-			return 200, value, err
-		}
 	}
 	if method == "POST" && (route == "/api/logout" || route == "/api/password") {
 		value, err := httpapi.RequestBody(w, r)

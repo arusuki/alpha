@@ -37,7 +37,7 @@
         <ol>
           <li>本页「我的容器」显示各节点的本人容器。尚无容器时，点击在线节点的「＋ 申请」。</li>
           <li>将 SSH config 示例保存到本机 <code>~/.ssh/config</code>，把 <code>IdentityFile</code> 改为注册公钥对应的私钥路径。</li>
-          <li>运行下方对应的 <code>ssh</code> 命令，经总控的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>。</li>
+          <li>运行下方对应的 <code>ssh</code> 命令，经分配 share node 的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>。</li>
         </ol>
         <p id="sshAccessState" class="muted"></p>
         <div class="guide-heading"><h3>SSH config 示例</h3><button id="copySSHConfig" type="button">复制配置</button></div>
@@ -45,7 +45,7 @@
         <p id="sshCopyStatus" class="message" role="status" aria-live="polite"></p>
         <div id="sshCommands" class="ssh-commands"></div>
         <p id="sshGuideNote" class="muted"></p>
-        <p class="muted">跳板账号用于转发连接，无需单独登录跳板 shell。总控跳板示例使用 SSH 默认端口 22。</p>
+        <p class="muted">跳板账号用于转发连接，无需单独登录跳板 shell。跳板地址和 SSH 端口来自分配的 share node。</p>
       </section>
     </section>
     <noscript><p class="error">请启用 JavaScript 以查看节点和申请容器。</p></noscript>

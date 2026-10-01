@@ -70,7 +70,7 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	if view.MemberID != alice || view.Username != "alice" || len(view.Nodes) != 2 {
 		t.Fatalf("bad member status: %+v", view)
 	}
-	if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "" || view.Nodes[0].InternalIP != "10.0.0.11" {
+	if view.Control.StatusURL != "" || view.Nodes[0].InternalIP != "10.0.0.11" {
 		t.Fatalf("status did not use configured addresses: %+v", view)
 	}
 	n := view.Nodes[0]
@@ -143,7 +143,6 @@ func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
 	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 400)
 	body["internal_ip"] = "fd00::11"
 	requireStatus(t, f.request(t, "PUT", "/api/cluster/nodes/"+w.ID, body), 200)
-	requireStatus(t, f.request(t, "PUT", "/api/control/settings", platform.ControlSettings{Revision: 1, InternalIP: "100.100.0.2"}), 200)
 	response := selfCall(f, "GET", "/api/status/alice", token, nil)
 	requireStatus(t, response, 200)
 	if !strings.Contains(response.Body.String(), "http://100.64.0.3:9765/status/alice") || !strings.Contains(response.Body.String(), "fd00::11") || strings.Contains(response.Body.String(), "10.0.0.11") || strings.Contains(response.Body.String(), s.URL) {
@@ -229,6 +228,9 @@ func TestShareStatusEntranceHostAndOriginAreValidated(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.server.ServeHTTP(w, r)
 		return w.Code
+	}
+	if got := request("10.0.0.1:8765", "GET", "/api/status/alice", ""); got != 403 {
+		t.Fatal("proxy upstream automatically allowed as a browser entrance", got)
 	}
 	if got := request("100.64.0.2:9765", "GET", "/api/status/alice", ""); got != 200 {
 		t.Fatal(got)

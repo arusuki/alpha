@@ -15,7 +15,7 @@
 
 总控保存 Agent 配置、加密 API Key、会话与报告，调用模型并通过 `/api/worker/records` 使用指定节点的查询、扫描和清理能力；不创建扫描配置或扫描任务表，不启动 Docker、扫描调度或 Tetragon。worker 不创建 Agent 表或保存模型凭据，基础数据库包含空的账号/会话表，但不创建账号、接受登录或持久化总控账号副本。Agent 会话保存总控用户 ID 和节点 ID，同一节点同时运行一个分析会话，不同节点可并行。
 
-数据库格式 v30，worker 节点协议 v4，registry 长连接协议 v2，不提供旧版本迁移。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。升级旧格式或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
+数据库格式 v31，worker 节点协议 v4，registry 长连接协议 v2，不提供旧版本迁移。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。升级旧格式或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
 
 ## 部署
 
@@ -31,9 +31,9 @@
 
 需要自行指定令牌时，通过 `--worker-token-file ./node-token`（建议文件权限 0600）或 `PROJECT_ALPHA_WORKER_TOKEN` 提供；指定文件时以文件为准。显式提供的令牌不打印；空文件、无效令牌或文件读取失败均报错。令牌须为 32–256 位不含空白的 ASCII 字符，不提供命令行明文令牌参数。node 无需 `--allowed-host`，请求必须携带服务令牌和匹配的节点身份；网页会话和 Host/Origin 校验由总控完成。
 
-首次打开总控创建管理员，同时必填总控内网 IP（支持 IPv4 / IPv6，包括 Tailscale IP）。管理员账号和访问设置在同一事务中保存；可在“设置”修改内网 IP。当前配置的 IP 自动允许通过总控 Host 校验，修改后即时更新；总控仍须监听该 IP 或 `0.0.0.0` / `::`，网络路由由部署负责。成员网页入口使用分配的 share node IP 和入口端口，在分享节点池中配置。
+首次打开总控只需创建管理员账号。成员网页入口使用分配的 share node IP 和入口端口，在分享节点池中配置；总控自动允许已配置分享节点的入口通过 Host 校验。share node 初始化时使用 `--control-url` 指定其可访问的总控 Web 地址，总控须监听该地址或 `0.0.0.0` / `::`，网络路由由部署负责。直接通过总控 IP 或域名访问时，使用 `--allowed-host` 允许相应地址。
 
-然后在“添加节点”选择 worker 或 registry，输入名称、根地址和该节点的令牌。每台 worker 还须填写跳板机可访问的计算节点内网 IP，用于成员 SSH 教程；不从管理 URL 推断，registry 无此配置。总控分别用 `/api/worker/info` 或 `/api/registry/info` 核验类型、协议版本和实例 ID；同一实例不能重复添加。registry 还会检查是否已绑定其他 control，认证探测本身不建立绑定。registry 地址必须为 HTTPS，仅回环地址允许 HTTP。节点地址只允许 HTTP(S) 根地址，不允许路径、URL 用户密码、查询参数或 fragment。探测不跟随重定向，避免令牌被转发到其他目标。
+然后在“添加节点”选择 worker 或 registry，输入名称、根地址和该节点的令牌。每台 worker 还须填写 share node 可访问的计算节点内网 IP，用于成员 SSH 教程；不从管理 URL 推断，registry 无此配置。总控分别用 `/api/worker/info` 或 `/api/registry/info` 核验类型、协议版本和实例 ID；同一实例不能重复添加。registry 还会检查是否已绑定其他 control，认证探测本身不建立绑定。registry 地址必须为 HTTPS，仅回环地址允许 HTTP。节点地址只允许 HTTP(S) 根地址，不允许路径、URL 用户密码、查询参数或 fragment。探测不跟随重定向，避免令牌被转发到其他目标。
 
 生产部署使用可信内网或 TLS 反向代理连接 node。HTTPS 使用系统 CA 校验，不跳过证书验证。node 端口仅需向总控开放。总控通过 HTTPS 提供网页时使用 `--secure-cookie`，并将总控域名加入 `--allowed-host`。总控与 node 的服务访问不使用系统 HTTP 代理。
 
@@ -78,7 +78,6 @@ Agent 后台任务直接检查总控中的管理员权限和节点注册；每�
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET / PUT | `/api/agent/settings` | 总控统一 Agent 配置，仅管理员可访问 |
-| GET / PUT | `/api/control/settings` | 管理员配置 `{revision,internal_ip}`；保存需当前 revision，冲突返回 409 |
 | GET | `/api/cluster/nodes` | 节点注册列表，不含 token |
 | POST | `/api/cluster/nodes` | `{kind,name,url,token,internal_ip}`，kind 为 worker 或 registry；验证成功后添加，返回 201 |
 | GET | `/api/cluster/nodes/<id>` | 节点连接信息，不含 token |

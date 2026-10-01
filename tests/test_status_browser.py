@@ -59,7 +59,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/status/'):
             if self.authorized():
-                self.send(200, dict(member_id=member, username='alice', control=dict(internal_ip='100.100.0.1', status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
+                self.send(200, dict(member_id=member, username='alice', control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.removeprefix('/')
         if filename not in ('status.html', 'status.js', 'status.css'):

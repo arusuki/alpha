@@ -117,12 +117,7 @@ try:
         setup.locator('#authPassword').fill('short')
         setup.locator('#authSubmit').click()
         assert 'setup' not in setup_calls, 'native validation must block short setup passwords'
-        assert setup.locator('#authInternalIP').evaluate('(e) => e.required')
-        assert setup.locator('#authInternalIPLabel').is_visible()
         setup.locator('#authPassword').fill('long-enough-password')
-        setup.locator('#authSubmit').click()
-        assert 'setup' not in setup_calls, 'native validation must require the control IP'
-        setup.locator('#authInternalIP').fill('10.0.0.1')
         setup.locator('#authSubmit').click()
         setup.wait_for_selector('#authError:not(:empty)')
         assert 'setup' in setup_calls

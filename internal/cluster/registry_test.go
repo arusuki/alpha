@@ -246,7 +246,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 			close(release)
 		}
 		if view.Access.InviteState == "invited" && view.Access.KeyState == "ready" && len(view.Nodes) == 1 && view.Nodes[0].State == "ready" {
-			if view.Control.InternalIP != "10.0.0.1" || view.Control.StatusURL != "http://100.64.0.2:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
+			if view.Control.StatusURL != "http://100.64.0.2:8765/status/alice" || view.Nodes[0].InternalIP != "10.0.0.11" {
 				t.Fatalf("registration guidance lost configured IPs: %+v", view)
 			}
 			if view.Access.InviteURL != "https://login.tailscale.com/admin/invite/test-share" {

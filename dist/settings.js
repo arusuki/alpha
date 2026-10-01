@@ -1,21 +1,5 @@
 'use strict';
-const settingsState={model:null,control:null,epoch:0,loading:0,saving:false,controlLoading:0,controlSaving:false};
-function controlSettingsControls(){
-  $('controlSaveSettings').disabled=!settingsState.control||!!settingsState.controlLoading||settingsState.controlSaving;
-  $('controlReloadSettings').disabled=!!settingsState.controlLoading||settingsState.controlSaving;
-}
-function renderControlSettings(value){
-  settingsState.control=value;$('controlInternalIP').value=value.internal_ip;
-  $('controlSettingsStatus').textContent='总控配置已载入';
-}
-async function loadControlSettings(){
-  if(settingsState.controlSaving||!platform.user||platform.user.role!=='admin')return;
-  const epoch=settingsState.epoch,sequence=++settingsState.controlLoading;
-  $('controlSettingsError').textContent='';controlSettingsControls();
-  try{const value=await api('/api/control/settings');if(epoch===settingsState.epoch&&sequence===settingsState.controlLoading)renderControlSettings(value);}
-  catch(error){if(epoch===settingsState.epoch)$('controlSettingsError').textContent=error.message;}
-  finally{if(epoch===settingsState.epoch&&sequence===settingsState.controlLoading){settingsState.controlLoading=0;controlSettingsControls();}}
-}
+const settingsState={model:null,epoch:0,loading:0,saving:false};
 function modelSettingsError(error){$('agentSettingsError').textContent=error ? error.message||String(error) : '';}
 function renderModelSettings(result){
   settingsState.model=result;const c=result.value;
@@ -39,8 +23,7 @@ async function loadModelSettings(){
 }
 window.SettingsUI={
   reset(){
-    Object.assign(settingsState,{model:null,control:null,epoch:settingsState.epoch+1,loading:0,saving:false,controlLoading:0,controlSaving:false});
-    $('controlSettingsForm').reset();$('controlSettingsError').textContent='';$('controlSettingsStatus').textContent='';controlSettingsControls();
+    Object.assign(settingsState,{model:null,epoch:settingsState.epoch+1,loading:0,saving:false});
     $('agentSettingsForm').reset();$('agentKey').value='';$('agentClearKey').checked=false;
     $('agentSettingsStatus').textContent='';$('agentKeyState').textContent='Key 只在服务器保存，不会回传到浏览器。';modelSettingsError('');modelSettingsControls();
     $('settingsUsername').textContent='';$('settingsRole').textContent='';$('usersBody').innerHTML='';$('auditList').innerHTML='';$('createUserForm').reset();
@@ -49,23 +32,11 @@ window.SettingsUI={
     if(!platform.user)return;
     $('settingsUsername').textContent=platform.user.username;$('settingsRole').textContent=platform.user.role==='admin'?'管理员':'只读';
     if(platform.user.role==='admin')loadAccounts().catch(error=>{if(platform.user)message(error.message);});
-    if(platform.user.role==='admin')loadControlSettings();
   },
   openModel(){
     if(platform.user?.role==='admin' && !settingsState.model && !settingsState.loading)loadModelSettings();
   }
 };
-$('controlReloadSettings').addEventListener('click',loadControlSettings);
-$('controlSettingsForm').addEventListener('submit',async event=>{
-  event.preventDefault();if(platform.user?.role!=='admin'||!settingsState.control||settingsState.controlLoading||settingsState.controlSaving)return;
-  const epoch=settingsState.epoch;settingsState.controlSaving=true;$('controlSettingsError').textContent='';controlSettingsControls();
-  try{
-    const value=await api('/api/control/settings',{method:'PUT',body:JSON.stringify({revision:settingsState.control.revision,internal_ip:$('controlInternalIP').value.trim()})});
-    if(epoch!==settingsState.epoch)return;
-    renderControlSettings(value);$('controlSettingsStatus').textContent='总控配置已保存';
-  }catch(error){if(epoch===settingsState.epoch)$('controlSettingsError').textContent=error.message;}
-  finally{if(epoch===settingsState.epoch){settingsState.controlSaving=false;controlSettingsControls();}}
-});
 $('agentReloadSettings').addEventListener('click',loadModelSettings);
 $('agentSettingsForm').addEventListener('submit',async e=>{
   e.preventDefault();if(!platform.user||platform.user.role!=='admin'||settingsState.saving||settingsState.loading)return;

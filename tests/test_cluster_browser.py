@@ -97,7 +97,6 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             page.goto(url)
             page.locator('#authUsername').fill('operator')
             page.locator('#authPassword').fill('A-test-password-123')
-            page.locator('#authInternalIP').fill('10.0.0.1')
             page.locator('#authSubmit').click()
             expect(page.locator('#page-cluster')).to_be_visible()
             expect(page.locator('#clusterNodes')).to_contain_text('第一个节点')

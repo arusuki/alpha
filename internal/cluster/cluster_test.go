@@ -30,6 +30,12 @@ type fixture struct {
 	token, csrf string
 }
 
+func TestControlSettingsRoutesRemoved(t *testing.T) {
+	f := setup(t)
+	requireStatus(t, f.request(t, "GET", "/api/control/settings", nil), 404)
+	requireStatus(t, f.request(t, "PUT", "/api/control/settings", map[string]any{}), 404)
+}
+
 func setup(t *testing.T) *fixture {
 	t.Helper()
 	db, err := platform.OpenDatabase(t.TempDir(), Initialize)
@@ -40,7 +46,7 @@ func setup(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.SQL.Close() })
-	_, err = db.CreateUser(map[string]json.RawMessage{"username": json.RawMessage(`"admin"`), "password": json.RawMessage(`"password-123456"`), "internal_ip": json.RawMessage(`"10.0.0.1"`)}, "setup", true)
+	_, err = db.CreateUser(map[string]json.RawMessage{"username": json.RawMessage(`"admin"`), "password": json.RawMessage(`"password-123456"`)}, "setup", true)
 	if err != nil {
 		t.Fatal(err)
 	}

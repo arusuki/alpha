@@ -192,8 +192,7 @@ def inside():
         start([binary, '--control', '--host', '0.0.0.0', '--port', str(control_port), '--data-dir', str(directory)],
               name='alpha-control-test', label='control')
         wait_for(lambda: api('/api/session'))
-        csrf = api('/api/setup', dict(username='operator', password='Integration-test-password-123',
-                                    internal_ip='10.0.0.1'))['csrf']
+        csrf = api('/api/setup', dict(username='operator', password='Integration-test-password-123'))['csrf']
         with sqlite3.connect(directory / 'platform.sqlite3') as db:
             db.execute("INSERT INTO bastion_tailscale VALUES(?,?,?,?,?,?,?)",
                        ('share', 'Share', 1, share_ip, ssh_port, proxy_port, f'http://{share_ip}:{control_port}'))
