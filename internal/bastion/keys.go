@@ -78,20 +78,19 @@ func readPrivateFile(r *os.Root, name string, uid, gid int, forbidden os.FileMod
 	}
 	return raw, err
 }
-func (s keyStore) open() (*os.Root, installation, error) { return s.openManifest(true) }
-func (s keyStore) openManifest(checkAccounts bool) (*os.Root, installation, error) {
-	var c installation
+func (s keyStore) readManifest() (*os.Root, []byte, error) {
 	canonical, err := filepath.EvalSymlinks(s.path)
 	if err != nil {
-		return nil, c, err
+		return nil, nil, err
 	}
 	if canonical != filepath.Clean(s.path) {
-		return nil, c, fmt.Errorf("安装目录不能经过符号链接")
+		return nil, nil, fmt.Errorf("安装目录不能经过符号链接")
 	}
 	r, err := os.OpenRoot(s.path)
 	if err != nil {
-		return nil, c, err
+		return nil, nil, err
 	}
+	var raw []byte
 	check := func() error {
 		info, e := r.Stat(".")
 		if e != nil {
@@ -101,10 +100,23 @@ func (s keyStore) openManifest(checkAccounts bool) (*os.Root, installation, erro
 		if !ok || int(st.Uid) != s.owner || info.Mode().Perm()&0022 != 0 {
 			return fmt.Errorf("安装目录属主或权限无效")
 		}
-		raw, e := readPrivateFile(r, "installation.json", s.owner, -1, 0022, 16384)
-		if e != nil {
-			return e
-		}
+		raw, e = readPrivateFile(r, "installation.json", s.owner, -1, 0022, 16384)
+		return e
+	}
+	if err = check(); err != nil {
+		r.Close()
+		return nil, nil, err
+	}
+	return r, raw, nil
+}
+func (s keyStore) open() (*os.Root, installation, error) {
+	var c installation
+	r, raw, err := s.readManifest()
+	if err != nil {
+		return nil, c, err
+	}
+	check := func() error {
+		var e error
 		if e = strictJSON(raw, &c); e != nil {
 			return fmt.Errorf("跳板安装格式无效，请使用新数据目录: %w", e)
 		}
@@ -117,12 +129,10 @@ func (s keyStore) openManifest(checkAccounts bool) (*os.Root, installation, erro
 		if _, e = proxyTarget(c.ControlURL); e != nil {
 			return e
 		}
-		if checkAccounts {
-			for name, ids := range map[string][2]int{JumpUser: {c.JumpUID, c.JumpGID}, WorkerUser: {c.WorkerUID, c.WorkerGID}} {
-				u, e := s.lookup(name)
-				if e != nil || u.Uid != strconv.Itoa(ids[0]) || u.Gid != strconv.Itoa(ids[1]) {
-					return fmt.Errorf("%s 系统身份不匹配", name)
-				}
+		for name, ids := range map[string][2]int{JumpUser: {c.JumpUID, c.JumpGID}, WorkerUser: {c.WorkerUID, c.WorkerGID}} {
+			u, e := s.lookup(name)
+			if e != nil || u.Uid != strconv.Itoa(ids[0]) || u.Gid != strconv.Itoa(ids[1]) {
+				return fmt.Errorf("%s 系统身份不匹配", name)
 			}
 		}
 		return nil

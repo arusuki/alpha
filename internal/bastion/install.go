@@ -3,6 +3,7 @@ package bastion
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -403,7 +404,7 @@ func initializeShare(ctx context.Context, c installation, noReload, noService bo
 	if _, err = os.Lstat(installationDirectory); err == nil {
 		r, old, e := systemKeyStore().open()
 		if e != nil {
-			return fmt.Errorf("已有安装格式无效，原数据保留，请使用新的 share node 安装目录: %w", e)
+			return fmt.Errorf("已有安装格式无效，原数据保留，请使用新的安装环境；--uninstall 仅支持具有完整 alpha-jump/alpha-worker 身份记录的安装: %w", e)
 		}
 		r.Close()
 		c.ControlKeys = mergeControlKeys(old.ControlKeys, c.ControlKeys)
@@ -662,7 +663,7 @@ func uninstallShare(ctx context.Context, noReload, noService bool, out io.Writer
 		return err
 	}
 	s := systemKeyStore()
-	r, c, err := s.openManifest(false)
+	r, c, err := s.openUninstallManifest()
 	if err != nil {
 		return err
 	}
@@ -750,25 +751,9 @@ func uninstallShare(ctx context.Context, noReload, noService bool, out io.Writer
 	var keyEntries []os.DirEntry
 	if k != nil {
 		defer k.Close()
-		if _, err = loadSnapshot(k, c); err != nil {
-			return err
-		}
-		keyEntries, err = rootEntries(k)
+		keyEntries, err = uninstallKeyEntries(k, c)
 		if err != nil {
 			return err
-		}
-		for _, entry := range keyEntries {
-			if entry.Name() != "keys.json" && entry.Name() != ".lock" {
-				return fmt.Errorf("公钥目录包含未知文件 %s，拒绝清理", entry.Name())
-			}
-			info, e := k.Lstat(entry.Name())
-			if e != nil {
-				return e
-			}
-			st, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != c.WorkerUID {
-				return fmt.Errorf("公钥文件身份无效，拒绝清理")
-			}
 		}
 	}
 	if _, _, err = rootFile(readerExecutable); err != nil && !os.IsNotExist(err) {
@@ -868,6 +853,59 @@ func uninstallShare(ctx context.Context, noReload, noService bool, out io.Writer
 	}
 	_, err = fmt.Fprintln(out, "已撤销 share node HTTP 代理服务及 SSH 配置，删除 alpha-worker、alpha-jump、工具和公钥数据；sshd 原始备份保留。")
 	return err
+}
+
+// Removal needs recorded identities, not a runnable installation. Never migrate
+// or rewrite the manifest, and never infer missing IDs from existing accounts.
+func (s keyStore) openUninstallManifest() (*os.Root, installation, error) {
+	var c installation
+	r, raw, err := s.readManifest()
+	if err != nil {
+		return nil, c, err
+	}
+	var fields map[string]json.RawMessage
+	err = strictJSON(raw, &fields)
+	if err == nil {
+		for _, field := range []struct {
+			name string
+			id   *int
+		}{{"jump_uid", &c.JumpUID}, {"jump_gid", &c.JumpGID}, {"worker_uid", &c.WorkerUID}, {"worker_gid", &c.WorkerGID}} {
+			if e := json.Unmarshal(fields[field.name], field.id); e != nil || *field.id <= 0 {
+				err = fmt.Errorf("%s 必须为正整数", field.name)
+				break
+			}
+		}
+	}
+	if err == nil && c.WorkerUID == c.JumpUID {
+		err = fmt.Errorf("两个专用账号的 UID 不能相同")
+	}
+	if err != nil {
+		r.Close()
+		return nil, c, fmt.Errorf("安装记录缺少有效的双账号身份，保留数据并拒绝卸载；需人工核对并备份清理原安装，不能用服务用户替代专用账号: %w", err)
+	}
+	return r, c, nil
+}
+
+// Explicit uninstall removes managed key files without interpreting their data.
+func uninstallKeyEntries(k *os.Root, c installation) ([]os.DirEntry, error) {
+	entries, err := rootEntries(k)
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if entry.Name() != "keys.json" && entry.Name() != ".lock" {
+			return nil, fmt.Errorf("公钥目录包含未知文件 %s，拒绝清理", entry.Name())
+		}
+		info, err := k.Lstat(entry.Name())
+		if err != nil {
+			return nil, err
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || !info.Mode().IsRegular() || st.Nlink != 1 || int(st.Uid) != c.WorkerUID || int(st.Gid) != c.JumpGID || info.Mode().Perm()&0037 != 0 {
+			return nil, fmt.Errorf("公钥文件身份或权限无效，拒绝清理")
+		}
+	}
+	return entries, nil
 }
 
 func rootEntries(r *os.Root) ([]os.DirEntry, error) {
