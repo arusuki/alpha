@@ -10,7 +10,7 @@
 
 ```bash
 go build -o bin/project-alpha \
-  -ldflags '-X project-alpha/internal/buildinfo.Version=v0.1.1' \
+  -ldflags '-X project-alpha/internal/buildinfo.Version=v0.3.0' \
   ./cmd/project-alpha
 ./bin/project-alpha --version
 ```
