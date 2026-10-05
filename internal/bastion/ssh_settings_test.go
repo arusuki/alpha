@@ -234,7 +234,7 @@ func TestSSHIdentitySwitchChecksDisabledNodesAndKeepsOldSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, call := range strings.Split(strings.TrimSpace(string(args)), "\n") {
-		for _, want := range []string{"-F /dev/null", "-i " + path, "IdentitiesOnly=yes", "StrictHostKeyChecking=yes", "-l alpha-worker", "alpha-worker cmd"} {
+		for _, want := range []string{"-F /dev/null", "-i " + path, "IdentitiesOnly=yes", "StrictHostKeyChecking=accept-new", "-l alpha-worker", "alpha-worker cmd"} {
 			if !strings.Contains(call, want) {
 				t.Fatalf("missing %q in %s", want, call)
 			}

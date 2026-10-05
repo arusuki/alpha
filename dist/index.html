@@ -123,7 +123,7 @@
               </fieldset></form>
             </details>
             <p id="bastionSSHStatus" class="form-note" role="status"></p>
-            <p class="resource-footnote">生成的私钥保留在总控，权限为 0600。下载公钥后可用于 share-node --control-key-file 初始化或 --add-control-file 追加授权；创建后先授权公钥，再校验并启用。切换前会验证全部已配置分享节点。连接仅使用所选密钥，不读取 SSH config；主机公钥需在服务用户的 ~/.ssh/known_hosts 中建立信任。</p>
+            <p class="resource-footnote">生成的私钥保留在总控，权限为 0600。下载公钥后可用于 share-node --control-key-file 初始化或 --add-control-file 追加授权；创建后先授权公钥，再校验并启用。切换前会验证全部已配置分享节点。连接仅使用所选密钥，不读取 SSH config；首次连接自动将主机公钥记录到服务用户的 ~/.ssh/known_hosts；已记录的主机公钥发生变化时拒绝连接。</p>
           </section>
           <section class="management-panel bastion-tailscale-panel"><div class="section-heading"><div><span class="cluster-kicker">TAILSCALE</span><h2>Tailscale 凭据</h2></div></div>
             <p class="resource-description">用于查询节点和创建分享邀请，适用于整个分享池。</p>

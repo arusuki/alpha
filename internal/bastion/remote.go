@@ -99,11 +99,10 @@ func serveCommand(s keyStore, original string, in io.Reader, out io.Writer) erro
 	return json.NewEncoder(out).Encode(commandReply{Version: keyFormat, ListenHost: c.ListenHost, StatusPort: c.StatusPort, ControlURL: c.ControlURL, Keys: v.Keys})
 }
 
-// Use ordinary identity files and ssh-agent belonging to the control process.
-// Preserve identity/known-host settings while disabling configured commands and
-// forwards. Host keys must already be trusted by this account.
+// Disable configured commands and forwards. Trust new host keys on first use
+// in the service account's known_hosts, but reject changed host keys.
 func sshArgs(s ShareNode) []string {
-	return []string{"-T", "-o", "ClearAllForwardings=yes", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no", "-p", strconv.Itoa(s.SSHPort), "-l", WorkerUser}
+	return []string{"-T", "-o", "ClearAllForwardings=yes", "-o", "RemoteCommand=none", "-o", "PermitLocalCommand=no", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-o", "PreferredAuthentications=publickey", "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "ControlPersist=no", "-p", strconv.Itoa(s.SSHPort), "-l", WorkerUser}
 }
 
 type limitedBuffer struct {

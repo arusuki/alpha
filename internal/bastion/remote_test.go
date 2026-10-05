@@ -210,7 +210,7 @@ func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 func TestSSHClientUsesWorkerIdentityAndRejectsBadReply(t *testing.T) {
 	s := ShareNode{SSHHost: "100.64.0.2", SSHPort: 22, StatusPort: 9765}
 	args := strings.Join(sshArgs(s), " ")
-	if !strings.Contains(args, "-l alpha-worker") || !strings.Contains(args, "StrictHostKeyChecking=yes") || !strings.Contains(args, "ClearAllForwardings=yes") || strings.Contains(args, "-l root") {
+	if !strings.Contains(args, "-l alpha-worker") || !strings.Contains(args, "StrictHostKeyChecking=accept-new") || !strings.Contains(args, "ClearAllForwardings=yes") || strings.Contains(args, "-l root") {
 		t.Fatal(args)
 	}
 	good := commandReply{Version: keyFormat, ListenHost: s.SSHHost, StatusPort: s.StatusPort, ControlURL: "http://10.0.0.1:8765", Keys: map[string]string{}}

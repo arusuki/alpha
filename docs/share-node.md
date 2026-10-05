@@ -55,7 +55,7 @@ flowchart LR
 
 在总控 Web 的「Share node 管理 → 全局连接设置 → 总控 SSH 密钥」选择密钥；没有密钥时，展开“创建新密钥”，输入名称并创建。页面只列出总控数据目录 `control-ssh/` 中的密钥，不支持手填路径或使用默认 SSH 身份。
 
-选择后下载 `control-service.pub`，复制到 share node 的 `/tmp/control-service.pub`。创建密钥不会自动启用；先完成后续授权和主机信任步骤，再启用。私钥保留在总控，连接仅使用所选密钥，不读取 SSH config。
+选择后下载 `control-service.pub`，复制到 share node 的 `/tmp/control-service.pub`。创建密钥不会自动启用；先完成后续授权，再启用。私钥保留在总控，连接仅使用所选密钥，不读取 SSH config。
 
 ## 2. 准备 share node
 
@@ -141,9 +141,18 @@ sudo -u alpha-worker /usr/local/libexec/project-alpha-jump share-node --serve
 
 `--no-service` 仍安装服务单元，但不调用 systemd 启停；`--no-reload` 仍校验 SSH 配置。
 
-## 4. 在总控建立主机信任并启用密钥
+## 4. 在总控启用密钥
 
-总控强制 `StrictHostKeyChecking=yes`。先通过可信控制台核对 share node 实际 sshd 使用的主机公钥指纹，例如 share node 使用 Ed25519 主机公钥时：
+总控使用 `StrictHostKeyChecking=accept-new`：首次连接自动信任并记录 share node 的 SSH 主机公钥，后续主机公钥变化时拒绝连接。通常无需手动维护 `known_hosts`；总控服务账号的 home 和 `~/.ssh/known_hosts` 必须可写，以便 SSH 持久保存主机公钥。
+
+返回总控页面点击「校验并启用所选密钥」。尚无分享池配置时，首次启用不会连接 share node；下一节加入分享池时会验证管理连接并记录主机公钥。
+
+首次自动信任不会独立核实主机身份。如需预先核对，可按以下可选步骤操作。
+
+<details>
+<summary>可选：连接前核对主机指纹并建立信任</summary>
+
+先通过可信控制台核对 share node 实际 sshd 使用的主机公钥指纹，例如 share node 使用 Ed25519 主机公钥时：
 
 ```sh
 sudo ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
@@ -167,7 +176,7 @@ chmod 600 ~/.ssh/known_hosts
 
 `ssh-keyscan` 的采集结果本身不证明主机身份。主机使用其他公钥类型时，选择相应的已存在主机公钥；非默认端口必须使用实际端口，`known_hosts` 中对应名称为 `[IP]:端口`。
 
-主机信任建立后，返回总控页面点击「校验并启用所选密钥」。尚无分享池配置时，首次启用不会连接 share node；下一节加入分享池时会验证管理连接。
+</details>
 
 <details>
 <summary>可选：手动查询管理协议，排查 SSH 连接问题</summary>
@@ -178,7 +187,7 @@ chmod 600 ~/.ssh/known_hosts
 printf '%s\n' '{"version":2,"operation":"inspect"}' | \
   ssh -F /dev/null -i /var/lib/project-alpha-control/control-ssh/control-share-XXXXXX/id_ed25519 \
     -o IdentitiesOnly=yes -T -p 22 -l alpha-worker \
-    -o BatchMode=yes -o StrictHostKeyChecking=yes \
+    -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
     -o PreferredAuthentications=publickey \
     -o ClearAllForwardings=yes -o RemoteCommand=none \
     -o PermitLocalCommand=no -o ForwardAgent=no -o ForwardX11=no \
@@ -248,7 +257,7 @@ Host alpha-container
 
 已有成员引用时，总控禁止更改分享节点 IP、SSH 端口和网页入口端口。需变更这些地址时，先回收关联成员；仅“停用”节点不会迁移成员或撤销已有授权，只会停止新的分配。
 
-更换总控 SSH 密钥时，先在所有已配置 share node（包括停用节点）追加候选公钥并建立主机信任，再在总控启用。任一节点校验失败都会保留原身份。未启用的本地密钥可在页面删除；删除不会撤销 share node 上的管理公钥。
+更换总控 SSH 密钥时，先在所有已配置 share node（包括停用节点）追加候选公钥，再在总控启用。任一节点校验失败都会保留原身份。未启用的本地密钥可在页面删除；删除不会撤销 share node 上的管理公钥。
 
 安装不会接管已有未管理账号，也不会迁移或覆盖旧格式数据。安装路径固定为 `/var/lib/project-alpha-jump`，没有自定义数据目录参数；格式不匹配时会报错并保留原数据，需准备新的安装环境。
 
@@ -275,7 +284,7 @@ sudo ./project-alpha share-node --uninstall
 | 现象 | 核对方法 |
 | --- | --- |
 | `Permission denied (publickey)` | 确认是总控服务账号在连接，页面当前启用的密钥与 share node 授权公钥匹配；检查私钥的属主、权限及 share node 的 sshd 认证日志 |
-| `Host key verification failed` | 在服务账号的 `known_hosts` 建立经指纹核对的信任，端口必须正确；主机公钥变化时先确认原因 |
+| `Host key verification failed` | 首次连接自动记录主机公钥；检查总控服务账号的 home 和 `known_hosts` 是否可写，端口是否正确。已有主机公钥变化时先确认原因并核对指纹，再更新对应记录 |
 | 管理响应无效、命令被拒绝 | 使用 `alpha-worker cmd` 和当前协议；确认实际连接的是 OpenSSH，而非接管端口的 Tailscale SSH；总控和 share node 使用相同版本 |
 | 协议、监听 IP 或入口端口不一致 | 比较初始化参数、只读 `inspect` 返回值及分享池字段；代理入口端口默认是 `8765` |
 | `sshd` 已有配置冲突 | 检查更早的 `Match` 块和 `Include` 配置；按报错字段处理，再重新初始化；不要跳过校验 |

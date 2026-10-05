@@ -8,7 +8,7 @@
 
 1. 总控以普通服务用户运行；让 Web 服务监听 share node 可达的内网地址，例如 `--host 10.0.0.1 --port 8765 --allowed-host 10.0.0.1`。总控仅监听 `127.0.0.1` 时，其他主机上的代理无法连接；直接访问总控 IP 或域名需通过 `--allowed-host` 允许。
 2. 在总控「Share node 管理 → 全局连接设置 → 总控 SSH 密钥」点选已创建的密钥，没有密钥时先创建并下载公钥；授权后校验并启用，用于管理连接。在 share node 安装 OpenSSH 和 systemd，管理公钥可在初始化时提供，也可稍后追加；加入分享池前需授权总控 SSH **公钥**，私钥始终保留在总控。
-3. 总控服务用户的 `known_hosts` 需事先信任 share node 的 SSH 主机公钥。网页保存 Tailscale API Key（`tskey-api-…`）和 Tailnet，查询已授权的自有节点，配置 SSH 端口和网页入口端口后加入分享池。加入和重新启用时，通过 `alpha-worker` 校验免密登录、管理协议、监听 IP 和入口端口；失败不保存节点。
+3. 首次连接自动将 share node 的 SSH 主机公钥记录到总控服务用户的 `known_hosts`，已记录的主机公钥变化时拒绝连接。网页保存 Tailscale API Key（`tskey-api-…`）和 Tailnet，查询已授权的自有节点，配置 SSH 端口和网页入口端口后加入分享池。加入和重新启用时，通过 `alpha-worker` 校验免密登录、管理协议、监听 IP 和入口端口；失败不保存节点。
 4. 在总控为 worker 配置内网 IP，在 worker 的容器管理中配置默认镜像、数据目录、Docker endpoint 和起始端口。share node 需能访问这些计算节点的容器 SSH 端口。
 5. 生成 [注册邀请码](members.md)，通过 API 或 [公网 registry](operations.md#公网-registry) 注册。按关联人数最少优先分配分享节点，停用只影响新分配。
 
@@ -16,7 +16,7 @@
 
 「总控 SSH 密钥」使用卡片选择，仅列出数据目录内创建的密钥；不提供手填路径、服务用户 `~/.ssh` 文件扫描或默认身份选项。接口同样拒绝空身份、外部文件和符号链接。私钥必须属于服务用户，权限为 `0600` 或 `0400`；公钥及 SHA256 指纹从私钥派生，避免使用不匹配的 `.pub` 文件。
 
-连接使用 `ssh -F /dev/null -i <路径> -o IdentitiesOnly=yes`，仅使用已启用的密钥。主机信任使用 OpenSSH 默认的 known_hosts 路径；尚未启用密钥时提示先选择或创建。
+连接使用 `ssh -F /dev/null -i <路径> -o IdentitiesOnly=yes`，仅使用已启用的密钥。主机信任使用 `StrictHostKeyChecking=accept-new` 和 OpenSSH 默认的 known_hosts 路径，服务账号须有写入权限；尚未启用密钥时提示先选择或创建。
 
 生成操作只创建候选密钥，不切换当前身份。新密钥保存在 control 数据目录的 `control-ssh/<名称>-<随机目录>/id_ed25519`，目录 `0700`、私钥 `0600`，不会覆盖已有密钥；下载仅提供公钥。点击「校验并启用所选密钥」后持久生效，无需重启。更换身份前先在全部 share node 运行 `share-node --add-control-file <候选公钥文件>` 追加授权；保存时对所有已配置节点（包括停用节点）执行只读 `inspect`，任一 SSH 或协议校验失败均保留原配置。不要在新身份验证成功前撤销旧公钥；追加授权和重复初始化均保留原有管理公钥。
 
