@@ -125,10 +125,13 @@ IPv6 示例使用 `--listen-host fd7a:115c:a1e0::2`；URL 中的 IPv6 地址需�
 在 share node 检查服务：
 
 ```sh
-sudo systemctl status project-alpha-share-node.service
-sudo journalctl -u project-alpha-share-node.service -n 50 --no-pager
+./project-alpha share-node status
+sudo ./project-alpha share-node log
+sudo ./project-alpha share-node log -n 100 -f
 sudo /usr/sbin/sshd -t
 ```
+
+`status` 查看 `project-alpha-share-node.service` 的 systemd 状态；服务未运行或不存在时仍输出状态，并返回错误。`log` 默认显示最近 50 行 journal 日志，`-n`（或 `--lines`）指定行数，`-f`（或 `--follow`）持续跟踪，按 Ctrl+C 退出。两者都不分页；查看日志需要 journal 读取权限，权限不足时使用 sudo。这两个子命令适用于 systemd 部署。
 
 默认安装会查找活动的 `ssh.service` 或 `sshd.service` 并重载。无 systemd 或自行托管 sshd 时，初始化加 `--no-reload --no-service`，自行重载 sshd，并通过自己的进程管理器以 `alpha-worker` 持续运行：
 

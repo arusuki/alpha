@@ -269,6 +269,9 @@ func CLI(ctx context.Context, args []string, out io.Writer) error {
 	return fmt.Errorf("请在 share node 使用 project-alpha share-node 初始化；加 --uninstall 撤销安装")
 }
 func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && (args[0] == "status" || args[0] == "log") {
+		return shareServiceCLI(ctx, args[0], args[1:], out)
+	}
 	p := flag.NewFlagSet("project-alpha share-node", flag.ContinueOnError)
 	p.SetOutput(out)
 	p.Usage = func() {
@@ -277,12 +280,17 @@ func InitializeCLI(ctx context.Context, args []string, out io.Writer) error {
   sudo project-alpha share-node --add-control-key "ssh-ed25519 AAAA…"
   sudo project-alpha share-node --add-control-file FILE
   sudo project-alpha share-node --uninstall [--no-reload] [--no-service]
+  project-alpha share-node status
+  project-alpha share-node log [-n 行数] [-f]
 
 在 share node 本机初始化 alpha-worker、alpha-jump、sshd 和 HTTP 代理服务。
 初始化完成后退出；代理以 alpha-worker 运行，由 systemd 持续托管并开机启动。
 管理公钥可在初始化时提供，也可稍后用 --add-control-key / --add-control-file 追加。
 未配置管理公钥时 alpha-worker 不接受 SSH 登录。总控授权后管理成员公钥。
 成员使用 alpha-jump 转发 SSH，通过监听 IP 和入口端口访问总控网页。
+status 查看 HTTP 代理的 systemd 状态；log 默认显示最近 50 行日志，-f 持续跟踪。
+查看日志需要 journal 读取权限；权限不足时使用 sudo。
+使用 project-alpha share-node <子命令> --help 查看详细用法。
 
 示例：
   sudo project-alpha share-node --control-key-file /tmp/control-service.pub \

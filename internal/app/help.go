@@ -12,7 +12,7 @@ func printHelp(out io.Writer) {
 
 子命令：
   serve              启动总控（默认）、worker 或公网 registry
-  share-node         初始化分享节点账号、sshd 和 HTTP 代理；--uninstall 卸载
+  share-node         初始化分享节点；status 查看服务状态，log 查看日志；--uninstall 卸载
   containers import  导入已有 Docker 容器
   scan               扫描存储，导出 JSON 快照
   process            采集或回放容器进程，导出 JSON 进程树
