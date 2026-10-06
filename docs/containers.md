@@ -2,6 +2,19 @@
 
 node 通过本机 Docker CLI 执行容器管理。所有网页位于总控，选择节点后使用 `/api/cluster/nodes/<节点ID>/api/containers...` 代理下述接口；node 不提供网页或独立账号。默认 endpoint 为 `unix:///var/run/docker.sock`；显式传入 `--host`，忽略服务环境中的 `DOCKER_CONTEXT` / `DOCKER_HOST`，避免运行期间切换到其他 daemon。管理功能不依赖存储扫描或 Tetragon。服务账号必须有 Docker 权限，并与 daemon 共享宿主机文件路径视图。
 
+## 节点权限检查与修复
+
+管理员在节点的“容器管理 → 节点权限”查看 worker **运行的系统账号**（不是网页登录账号）、Docker 组成员身份、当前进程的组权限、Docker endpoint 实际连接结果，以及已保存的数据根目录写权限。目录检查实际创建并删除一个临时空目录，不只检查权限位；进入页面、点击“检查权限”或保存配置时执行，没有独立定时检查。
+
+- **使用 sudo 加入 docker 组**：输入该 worker 系统账号的 sudo 密码，必要时创建 `docker` 组，并用 `usermod --append --groups docker` 加组，保留其他组。成功后提示重启 worker；当前进程的组权限不会自动更新。root 或 rootless Docker 等情况按实际连接结果判断可用性。
+- **使用 sudo 设置目录 ACL**：为已保存的数据根目录添加运行账号的 `rwx` ACL。目录缺失时只创建该目录，父目录须已存在且可遍历；不递归修改文件、不更换已有属主、不覆盖已有数据。拒绝路径中的符号链接，通过固定目录文件描述符执行 `setfacl`。文件系统须支持 POSIX ACL，节点需安装 `acl` 软件包。
+
+两项修复分别由管理员发起，密码仅通过本次请求及 sudo 私有输入管道使用，不进入命令参数、日志、数据库或审计记录；提交、关闭弹窗及退出登录时清空输入。免密 sudo 可留空。认证失败、缺少命令、服务禁止提权等情况会显示明确错误，不修改 sudoers。修复完成后重新检查权限及 Docker 连接。若目录仍不可写，检查其父目录访问权限、只读挂载及节点的访问控制策略。
+
+接口为 `GET /api/containers/permissions` 和 `POST /api/containers/permissions`，均限管理员，通过总控的节点代理使用。POST 接收 `action`（`docker_group` 或 `directory`）、检查时的 `base_dir` / `endpoint` 及 `sudo_password`；实际操作账号始终来自 worker 的有效 UID，路径始终使用节点已保存配置。配置变化后拒绝旧请求，须重新检查。已有成员分配计划仍保留原数据目录，本检查不会改写计划。
+
+部署要求见 [运维说明](operations.md#部署)。Docker 组的使用及生效方式参见 [Docker 官方文档](https://docs.docker.com/engine/install/linux-postinstall/)，ACL 修改语义参见 [setfacl 手册](https://man7.org/linux/man-pages/man1/setfacl.1.html)。
+
 ## 命令行导入
 
 ```bash

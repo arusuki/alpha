@@ -5,11 +5,12 @@ After=network.target docker.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/project-alpha
-# Provision a distinct random token in this root-readable file (mode 0600).
+# Set User/Group to an existing ordinary service account with sudo access.
+# Provision a distinct random token readable by that account (mode 0600).
 # Restrict port 8766 to the control host or place a TLS proxy in front of it.
 ExecStart=/opt/project-alpha/bin/project-alpha --worker --data-dir /var/lib/project-alpha-worker --host 0.0.0.0 --port 8766 --worker-token-file /etc/project-alpha/node-token
-User=root
-Group=root
+User=project-alpha
+Group=project-alpha
 UMask=0077
 StateDirectory=project-alpha-worker
 StateDirectoryMode=0700
@@ -17,7 +18,8 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
 KillMode=control-group
-NoNewPrivileges=true
+# Interactive permission repairs invoke a short-lived sudo helper.
+NoNewPrivileges=false
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

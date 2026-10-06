@@ -279,6 +279,15 @@
    <div class="table-scroll"><table><thead><tr><th>容器 / 所属用户</th><th>状态</th><th>配置 / SSH</th><th>操作</th></tr></thead><tbody id="managedContainerRows"></tbody></table></div>
 
   </section>
+  <section class="management-panel" data-admin aria-labelledby="containerPermissionsTitle">
+   <div class="section-heading"><div><h2 id="containerPermissionsTitle">节点权限</h2><p id="containerPermissionAccount">检查运行 worker 的系统账号及已保存的数据目录。</p></div><button id="containerPermissionsRefresh" type="button">检查权限</button></div>
+   <div class="form-grid">
+    <div><h3>Docker 组</h3><p id="containerGroupStatus" role="status">等待检查</p><button id="containerGroupRepair" type="button" disabled>使用 sudo 加入 docker 组</button></div>
+    <div><h3>数据目录写权限</h3><p id="containerDirectoryStatus" role="status">等待检查</p><button id="containerDirectoryRepair" type="button" disabled>使用 sudo 设置目录 ACL</button></div>
+   </div>
+   <p id="containerDockerStatus" class="form-note" role="status"></p><p id="containerSudoStatus" class="form-note"></p>
+   <p id="containerPermissionError" class="error-text" role="alert"></p>
+  </section>
   <section class="management-panel" data-admin><details><summary>创建容器</summary>
    <form id="createContainerForm" class="settings-form"><div class="form-grid three">
     <label>容器名称<input id="newContainerName" required maxlength="63" pattern="[A-Za-z0-9][A-Za-z0-9_.-]*"></label>
@@ -305,6 +314,7 @@
  </section>
  <dialog id="containerActionDialog"><h2 id="containerActionTitle"></h2><p id="containerActionHint"></p><form id="containerActionForm"><label id="containerConfirmLabel">输入完整容器名确认<input id="containerConfirmName" autocomplete="off"></label><p id="containerActionError" class="error-text" role="alert"></p><div class="form-actions"><button id="containerActionSubmit" type="submit" class="primary">确认</button><button id="containerActionClose" type="button">取消</button></div></form></dialog>
  <dialog id="containerCredentialsDialog"><h2>容器连接信息</h2><p>请现在保存密码，关闭后平台不再提供查询。</p><pre id="containerCredentials"></pre><button id="containerCredentialsClose">已保存，关闭</button></dialog>
+ <dialog id="containerPermissionDialog" aria-labelledby="containerPermissionTitle"><h2 id="containerPermissionTitle">修复节点权限</h2><p id="containerPermissionHint"></p><form id="containerPermissionForm"><label id="containerSudoLabel">worker 运行账号的 sudo 密码<input id="containerSudoPassword" type="password" maxlength="4096" autocomplete="off"></label><p class="form-note">密码仅用于本次 sudo 操作，不保存。已配置免密 sudo 时可留空。</p><p id="containerPermissionDialogError" class="error-text" role="alert"></p><div class="form-actions"><button type="submit" class="primary">执行修复</button><button id="containerPermissionClose" type="button">取消</button></div></form></dialog>
 
  <section id="page-processes" class="platform-page" hidden>
   <div class="process-status-panel"><div><span id="processConnection" class="connection-badge">等待连接</span><p id="processStatusHint" role="status">正在读取进程监控状态…</p></div><div class="process-status-actions"><label class="checkbox-label"><input id="processHost" type="checkbox">包含宿主机</label><button id="processRefresh">刷新进程 ↻</button></div></div>

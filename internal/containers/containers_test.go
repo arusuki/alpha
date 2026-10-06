@@ -415,6 +415,9 @@ func TestPlatformAuthenticationAndCSRF(t *testing.T) {
 	if w := request("GET", "/api/containers", "", "", nil); w.Code != 401 {
 		t.Fatalf("unauthenticated: %d", w.Code)
 	}
+	if w := request("GET", "/api/containers/permissions", "", "", nil); w.Code != 401 {
+		t.Fatalf("unauthenticated permissions: %d", w.Code)
+	}
 	w := request("POST", "/api/setup", `{"username":"administrator","password":"test-password-1234"}`, "", nil)
 	if w.Code != 200 {
 		t.Fatalf("setup: %s", w.Body.String())
@@ -424,6 +427,9 @@ func TestPlatformAuthenticationAndCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	cookie := w.Result().Cookies()[0]
+	if w := request("POST", "/api/containers/permissions", `{}`, "", cookie); w.Code != 403 {
+		t.Fatalf("permission repair without CSRF: %d", w.Code)
+	}
 	w = request("PUT", "/api/containers/settings", `{}`, "", cookie)
 	if w.Code != 403 {
 		t.Fatalf("missing csrf: %d %s", w.Code, w.Body.String())

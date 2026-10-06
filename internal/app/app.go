@@ -16,6 +16,7 @@ import (
 	"project-alpha/internal/bastion"
 	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/cluster"
+	"project-alpha/internal/containers"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/registry"
@@ -27,6 +28,12 @@ type stringFlags []string
 func (s *stringFlags) String() string     { return fmt.Sprint([]string(*s)) }
 func (s *stringFlags) Set(v string) error { *s = append(*s, v); return nil }
 func Run(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "container-permissions-helper" {
+		if len(args) != 1 {
+			return fmt.Errorf("container-permissions-helper does not accept arguments")
+		}
+		return containers.ServePermissionsHelper(ctx, os.Stdin, os.Stdout)
+	}
 	if len(args) > 0 && args[0] == "share-node" {
 		return bastion.InitializeCLI(ctx, args[1:], os.Stdout)
 	}

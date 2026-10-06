@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -15,9 +16,10 @@ import (
 )
 
 type Handler struct {
-	db  *platform.Database
-	run command
-	mu  sync.Mutex
+	db                *platform.Database
+	run               command
+	mu                sync.Mutex
+	permissionCommand func(context.Context, string, ...string) *exec.Cmd
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
 	Owner func(*sql.Tx, string, string) error
 	// UnassignOwner clears shared and managed ownership in the same transaction.
@@ -46,6 +48,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return fail(err)
 	}
 	path := r.URL.Path
+	if path == "/api/containers/permissions" {
+		return h.permissions(w, r.WithContext(ctx), user, cfg)
+	}
 	if strings.HasPrefix(path, "/api/containers/members/") {
 		return h.memberOperation(w, r.WithContext(ctx), user, cfg, strings.TrimPrefix(path, "/api/containers/members/"))
 	}

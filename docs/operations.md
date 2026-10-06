@@ -67,7 +67,9 @@ worker 通过 Tetragon 事件和进程缓存维护活动进程树，默认 socke
 
 ## 部署
 
-将二进制放到 `/opt/project-alpha/bin/project-alpha`，调整 [总控 systemd 单元](../deploy/project-alpha.service) 的 `User=` 为实际普通服务账号，再安装并启动。每台节点使用 [worker 单元](../deploy/project-alpha-worker.service)，准备权限为 0600 的 `/etc/project-alpha/node-token`。HTTPS 部署参考 [nginx 示例](../deploy/nginx.conf.example)，配置 `--allowed-host` 和 `--secure-cookie`。
+将二进制放到 `/opt/project-alpha/bin/project-alpha`，调整 [总控 systemd 单元](../deploy/project-alpha.service) 的 `User=` 为实际普通服务账号，再安装并启动。每台节点使用 [worker 单元](../deploy/project-alpha-worker.service)，将 `User=` / `Group=` 改为实际普通服务账号，并准备由该账号持有、权限为 0600 的 `/etc/project-alpha/node-token`。worker 模板默认账号名为 `project-alpha`，需提前创建或替换，不使用 share node 的 `alpha-worker`。HTTPS 部署参考 [nginx 示例](../deploy/nginx.conf.example)，配置 `--allowed-host` 和 `--secure-cookie`。
+
+节点容器页面提供 [权限检查和 sudo 修复](containers.md#节点权限检查与修复)。使用网页修复时，worker 账号须有相应 sudo 执行权限，节点安装 `sudo`、`acl`（提供 `setfacl`）及 `groupadd` / `usermod`。worker 单元需允许 sudo 提权（`NoNewPrivileges=false`，且 sudo 策略不要求终端）；模板已设置。已部署的单元需自行同步并运行 `sudo systemctl daemon-reload`、`sudo systemctl restart project-alpha-worker`。本功能不修改 sudoers、不自动重启服务；加组后也须重启 worker 才能更新进程组列表。手动从终端启动的 worker 需在重新登录后的会话中启动。
 
 总控默认监听回环地址，也可使用 SSH 转发访问：
 
