@@ -51,7 +51,7 @@ func exampleSchema() Schema {
 	}}
 }
 func validRegistration(code string) Registration {
-	return Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: code, SchemaRevision: 2, Profile: rawProfile(object{"full_name": " 张三 ", "degree": "博士"})}
+	return Registration{Password: "Member-password-123", SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: code, SchemaRevision: 2, Profile: rawProfile(object{"full_name": " 张三 ", "degree": "博士"})}
 }
 func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	s := testStore(t)
@@ -174,7 +174,7 @@ func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
 	if err = os.Rename(keyPath+".saved", keyPath); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.RegisterWith(Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "shared", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil); err != nil {
+	if _, err = s.RegisterWith(Registration{Password: "Member-password-123", SSHKey: validRegistration(i.Code).SSHKey, Username: "shared", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil); err != nil {
 		t.Fatal(err)
 	}
 	_, err = s.InvitationCode(i.ID)
@@ -242,7 +242,7 @@ func TestInvitationLabelUpdates(t *testing.T) {
 				t.Fatal(err)
 			}
 			if status == "exhausted" {
-				_, err = s.RegisterWith(Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "exhausted", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
+				_, err = s.RegisterWith(Registration{Password: "Member-password-123", SSHKey: validRegistration(i.Code).SSHKey, Username: "exhausted", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 			} else if status == "revoked" {
 				err = s.RevokeInvitation(i.ID, "operator")
 			}
@@ -325,7 +325,7 @@ func TestInvitationDeletion(t *testing.T) {
 				t.Fatal(err)
 			}
 			h := NewHandler(s.Database)
-			req := Registration{SSHKey: validRegistration(i.Code).SSHKey, Username: "alice", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}
+			req := Registration{Password: "Member-password-123", SSHKey: validRegistration(i.Code).SSHKey, Username: "alice", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}
 			token := platform.RandomHex(32)
 			var member Member
 			if status != "unused" {
@@ -464,7 +464,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()
-			_, err := stores[n%2].RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
+			_, err := stores[n%2].RegisterWith(Registration{Password: "Member-password-123", SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: fmt.Sprintf("user%d", n), InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 			results <- err
 		}(n)
 	}
@@ -488,7 +488,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if _, err = s.SQL.Exec("CREATE TRIGGER fail_registration_audit BEFORE INSERT ON audit WHEN NEW.action='member.register' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
+	_, err = s.RegisterWith(Registration{Password: "Member-password-123", SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "rolledback", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 	if err == nil {
 		t.Fatal("expected audit failure")
 	}
@@ -505,7 +505,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.RegisterWith(Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
+	_, err = s.RegisterWith(Registration{Password: "Member-password-123", SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "revoked", InvitationCode: i.Code, SchemaRevision: 1, Profile: rawProfile(object{})}, nil)
 	expectError(t, err, 400)
 	if err = s.RevokeInvitation(i.ID, "operator"); err != nil {
 		t.Fatal(err)
@@ -631,9 +631,6 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	}
 	expect(401, call("POST", "/api/login", object{"username": "alice", "password": "A-test-password-123"}, "", "", nil))
 	privileged := object{"username": "bob", "invitation_code": invitation.Code, "schema_revision": 2, "profile": object{"full_name": "李四", "degree": "硕士"}, "role": "admin"}
-	expect(400, call("POST", "/api/members/register", privileged, "", "", nil))
-	delete(privileged, "role")
-	privileged["password"] = "unwanted-password"
 	expect(400, call("POST", "/api/members/register", privileged, "", "", nil))
 	w = call("GET", invitationPage, nil, token, csrf, nil)
 	expect(200, w)

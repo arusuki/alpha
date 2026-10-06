@@ -115,7 +115,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 expect(invitation_label).to_have_value('新备注 <img src=x onerror=alert(1)> "')
                 expect(invitation_label).to_be_hidden()
                 expect(invitation_display).to_have_text('新备注 <img src=x onerror=alert(1)> "')
-                payload = dict(username='alice', invitation_code=code, ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f', schema_revision=schema['revision'],
+                payload = dict(username='alice', password='Member-password-123', invitation_code=code, ssh_public_key='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f', schema_revision=schema['revision'],
                                profile=dict(full_name='<img src=x onerror=alert(1)>', degree='博士', group='A组'))
                 registered = public.post('/api/members/register', data=payload)
                 assert registered.status == 201, registered.text()

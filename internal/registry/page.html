@@ -15,6 +15,9 @@
   <form id="registration" hidden>
     <label>使用者标识<input name="username" required minlength="3" maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="username" placeholder="例如 alice"></label>
     <p class="hint">以小写字母开头，3–32 位字母、数字、下划线或短横线。</p>
+    <label>密码<input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+    <label>确认密码<input name="password_confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+    <p class="hint">12–256 字节，不能含换行或冒号。用于状态页登录，也是容器的初始 root 密码。</p>
     <div id="fields"></div>
     <label>SSH 公钥<textarea name="ssh_public_key" required rows="3" maxlength="16384" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
     <p class="hint">粘贴你的 SSH 公钥，用于访问工作空间。</p>
@@ -37,12 +40,10 @@
     <h2 id="controlGuideTitle">下一步：通过 VPN 进入总控</h2>
     <ol>
       <li>打开上方分享链接，用你的 Tailscale 账号接受邀请；安装并登录 Tailscale 客户端，保持 VPN 已连接。</li>
-      <li>复制并妥善保存下方本人资源令牌，在总控状态页输入令牌。</li>
+      <li>在总控状态页输入注册时设置的密码。</li>
       <li>收藏总控状态页。之后查看容器、申请计算节点和阅读 SSH 教程，都通过总控进行操作。</li>
     </ol>
-    <label>本人资源令牌<input id="memberResourceToken" type="password" readonly autocomplete="off" spellcheck="false"></label>
-    <button type="button" id="copyResourceToken">复制资源令牌</button>
-    <p class="hint">总控无需管理员账号。资源令牌丢失后请联系管理员重置；本注册页可在当前浏览器会话中恢复。</p>
+    <p class="hint">总控无需管理员账号。可在状态页修改密码；修改后新建容器使用新密码，已有容器密码不变。</p>
     <a id="controlStatusLink" target="_blank" rel="noopener noreferrer">打开我的总控状态页 ↗</a>
     <p id="controlAddress" class="hint"></p>
   </section>

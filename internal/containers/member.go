@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/sshkeys"
 )
@@ -35,6 +36,7 @@ func (h *Handler) memberPlan(id string) (memberPlan, error) {
 	return p, err
 }
 func (h *Handler) saveMemberPlan(id string, p memberPlan) error {
+	p.Request.Password = "" // Secrets are supplied again by control on retry.
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -62,6 +64,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		return 0, nil, httpapi.NewError(400, "使用者 ID 无效")
 	}
 	var req struct {
+		Password string `json:"password"`
 		Username string `json:"username"`
 		SSHKey   string `json:"ssh_public_key"`
 	}
@@ -118,6 +121,9 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 			return fail(err)
 		}
 		return 200, map[string]bool{"ok": true}, nil
+	}
+	if err := members.ValidatePassword(req.Password); err != nil {
+		return 0, nil, err
 	}
 	var err error
 	req.SSHKey, err = sshkeys.Normalize(req.SSHKey)
@@ -192,14 +198,15 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		}
 	}
 	if record.ID == "" {
-		next := CreateRequest{Name: "alpha-" + id, Owner: owner, MemberID: id, SSHKey: req.SSHKey}
+		next := CreateRequest{Name: "alpha-" + id, Owner: owner}
 		if plan.Endpoint != "" {
 			next = plan.Request
-			next.MemberID = id
-			next.SSHKey = req.SSHKey
 			cfg.Endpoint = plan.Endpoint
 			cfg.BaseDir = plan.BaseDir
 		}
+		next.MemberID = id
+		next.SSHKey = req.SSHKey
+		next.Password = req.Password
 		value, e := h.create(ctx, cfg, next, u.Username)
 		if e != nil {
 			return fail(e)
@@ -224,7 +231,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		if err = h.installMemberKey(ctx, record, id, req.SSHKey); err != nil {
 			return fail(err)
 		}
-		if err = h.initialize(ctx, record, platform.RandomHex(24), u.Username); err != nil {
+		if err = h.initialize(ctx, record, req.Password, u.Username); err != nil {
 			return fail(err)
 		}
 	}

@@ -24,7 +24,9 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 func tokenHash(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
-func passwordHash(password, salt string) (string, error) {
+
+// PasswordHash derives a PBKDF2-SHA256 hash; an empty salt generates a fresh salt.
+func PasswordHash(password, salt string) (string, error) {
 	if salt == "" {
 		salt = RandomHex(16)
 	}
@@ -38,12 +40,14 @@ func passwordHash(password, salt string) (string, error) {
 	}
 	return salt + ":" + hex.EncodeToString(hash), nil
 }
-func checkPassword(password, encoded string) bool {
+
+// CheckPassword verifies a password against a stored PBKDF2-SHA256 hash.
+func CheckPassword(password, encoded string) bool {
 	parts := strings.Split(encoded, ":")
 	if len(parts) != 2 {
 		return false
 	}
-	actual, err := passwordHash(password, parts[0])
+	actual, err := PasswordHash(password, parts[0])
 	return err == nil && hmac.Equal([]byte(actual), []byte(encoded))
 }
 func (d *Database) Configured() (bool, error) {
@@ -77,7 +81,7 @@ func (d *Database) CreateUser(value map[string]json.RawMessage, actor string, se
 	if (role != "admin" && role != "viewer") || (setup && role != "admin") {
 		return nil, httpapi.NewError(400, "角色无效")
 	}
-	encoded, err := passwordHash(password, "")
+	encoded, err := PasswordHash(password, "")
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +166,7 @@ func (d *Database) Login(name, password string) (string, *Session, error) {
 	if err == sql.ErrNoRows {
 		encoded = strings.Repeat("0", 32) + ":" + strings.Repeat("0", 64)
 	}
-	if !checkPassword(password, encoded) || u.ID == "" {
+	if !CheckPassword(password, encoded) || u.ID == "" {
 		return "", nil, httpapi.NewError(401, "账号或密码错误")
 	}
 	token, csrf := randomToken(), randomToken()
@@ -201,7 +205,7 @@ func (d *Database) ChangePassword(uid, old, new string) error {
 	if utf8.RuneCountInString(old) > 256 || utf8.RuneCountInString(new) < 12 || utf8.RuneCountInString(new) > 256 {
 		return httpapi.NewError(400, "新密码需为 12–256 个字符")
 	}
-	encoded, err := passwordHash(new, "")
+	encoded, err := PasswordHash(new, "")
 	if err != nil {
 		return err
 	}
@@ -211,7 +215,7 @@ func (d *Database) ChangePassword(uid, old, new string) error {
 		if err != nil && err != sql.ErrNoRows {
 			return err
 		}
-		if err == sql.ErrNoRows || !checkPassword(old, hash) {
+		if err == sql.ErrNoRows || !CheckPassword(old, hash) {
 			return httpapi.NewError(400, "原密码不正确")
 		}
 		if _, err = tx.Exec("UPDATE users SET password_hash=? WHERE id=?", encoded, uid); err != nil {

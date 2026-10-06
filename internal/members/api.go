@@ -56,7 +56,7 @@ func (h *Handler) checkAttempts(r *http.Request) error {
 	}
 	a, exists := h.attempts[ip]
 	if a.count >= 20 || !exists && len(h.attempts) >= 1024 {
-		return httpapi.NewError(429, "注册尝试过多，请在 5 分钟后重试")
+		return httpapi.NewError(429, "认证或注册尝试过多，请在 5 分钟后重试")
 	}
 	if !exists {
 		a.since = now

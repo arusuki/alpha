@@ -12,7 +12,13 @@ CREATE TABLE member_invitations (
 CREATE TABLE members (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE,
  profile TEXT NOT NULL, registration_schema TEXT NOT NULL,
+ password_hash TEXT NOT NULL, password_ciphertext TEXT NOT NULL,
  ssh_public_key TEXT NOT NULL, resource_token_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('active','deleting')),
  -- Registration provenance survives invitation deletion and binds registry retries.
  invitation_id TEXT NOT NULL, invitation_code_hash TEXT NOT NULL, created_at REAL NOT NULL
 );
+CREATE TABLE member_sessions (
+ token_hash TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+ expires_at REAL NOT NULL
+);
+CREATE INDEX member_sessions_member ON member_sessions(member_id);

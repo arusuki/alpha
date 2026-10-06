@@ -12,6 +12,7 @@ repo = Path(__file__).resolve().parents[1]
 member = 'a' * 32
 username = 'alice'
 token = 'b' * 64
+password = 'Member-password-123'
 endpoint = '/api/status/' + username
 nodes = []
 for index, (name, online, state) in enumerate([
@@ -49,10 +50,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def authorized(self):
         if self.headers.get('Authorization') != 'Bearer ' + token:
-            self.send(401, dict(error='资源令牌无效'))
+            self.send(401, dict(error='用户名或密码错误'))
             return False
         if not self.path.startswith(endpoint):
-            self.send(403, dict(error='资源令牌与页面使用者不匹配'))
+            self.send(403, dict(error='登录会话与页面使用者不匹配'))
             return False
         return True
 
@@ -61,7 +62,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.authorized():
                 self.send(200, dict(member_id=member, username='alice', control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
-        filename = 'status.html' if self.path.startswith('/status/') else self.path.removeprefix('/')
+        filename = 'status.html' if self.path.startswith('/status/') else self.path.lstrip('/')
         if filename not in ('status.html', 'status.js', 'status.css'):
             self.send(404, {})
             return
@@ -69,6 +70,18 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, (repo / 'dist' / filename).read_bytes(), mime + '; charset=utf-8')
 
     def do_POST(self):
+        if self.path.endswith('/login'):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if self.path != endpoint + '/login':
+                self.send(401, dict(error='用户名或密码错误'))
+            elif body.get('password') != password:
+                self.send(401, dict(error='用户名或密码错误'))
+            else:
+                self.send(200, dict(session_token=token))
+            return
+        if self.path.endswith('/logout'):
+            self.send(200, dict(ok=True))
+            return
         if not self.authorized():
             return
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -99,15 +112,15 @@ try:
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(url + '/status/' + username)
         expect(page.locator('#memberIdentity')).to_have_text('使用者 · alice')
-        expect(page.locator('#tokenPanel')).to_be_visible()
+        expect(page.locator('#loginPanel')).to_be_visible()
         expect(page.locator('#statusContent')).to_be_hidden()
-        page.locator('#resourceToken').fill('invalid')
-        page.locator('#tokenSubmit').click()
-        expect(page.locator('#statusError')).to_contain_text('资源令牌无效')
-        page.locator('#resourceToken').fill(token)
-        page.locator('#tokenSubmit').click()
+        page.locator('#loginPassword').fill('invalid')
+        page.locator('#loginSubmit').click()
+        expect(page.locator('#statusError')).to_contain_text('用户名或密码错误')
+        page.locator('#loginPassword').fill(password)
+        page.locator('#loginSubmit').click()
         expect(page.locator('#totalNodes')).to_have_text('6')
-        assert page.evaluate('sessionStorage.getItem("alpha.member-token.alice")') == token
+        assert page.evaluate('sessionStorage.getItem("alpha.member-session.alice")') == token
         expect(page.locator('#onlineNodes')).to_have_text('5')
         expect(page.locator('#allocatedNodes')).to_have_text('2')
         expect(page.locator('#statusNodes')).to_contain_text('alpha-existing')
@@ -129,7 +142,7 @@ try:
         expect(page.locator('[data-apply="' + nodes[2]['node_id'] + '"]')).to_be_disabled()
         assert page.locator('[data-node="' + nodes[5]['node_id'] + '"] [data-apply]').count() == 0
         assert token not in page.url
-        assert page.locator('#resourceToken').input_value() == ''
+        assert page.locator('#loginPassword').input_value() == ''
         page.reload()
         expect(page.locator('#statusContent')).to_be_visible()
         target = page.locator('[data-apply="' + nodes[1]['node_id'] + '"]')
@@ -160,7 +173,7 @@ try:
         started.clear()
         page.locator('[data-apply="' + nodes[3]['node_id'] + '"]').click()
         assert started.wait(5)
-        page.locator('#forgetToken').click()
+        page.locator('#logout').click()
         hold.set()
         expect(page.locator('#statusContent')).to_be_hidden()
         assert page.locator('#statusNodes').inner_text() == ''
@@ -169,9 +182,9 @@ try:
         page.wait_for_timeout(200)
         expect(page.locator('#statusContent')).to_be_hidden()
         page.goto(url + '/status/bob')
-        page.locator('#resourceToken').fill(token)
-        page.locator('#tokenSubmit').click()
-        expect(page.locator('#statusError')).to_contain_text('与页面使用者不匹配')
+        page.locator('#loginPassword').fill(password)
+        page.locator('#loginSubmit').click()
+        expect(page.locator('#statusError')).to_contain_text('用户名或密码错误')
         expect(page.locator('#statusContent')).to_be_hidden()
         assert not errors, errors
         browser.close()

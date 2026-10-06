@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
@@ -165,7 +166,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "" || action == "/" {
-		if err == sql.ErrNoRows || v.Registration == "" {
+		if err == sql.ErrNoRows || (!v.Registered && v.Registration == "") {
 			if !s.allow(r) {
 				panic(http.ErrAbortHandler)
 			}
@@ -217,10 +218,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", typ)
 		w.Write(body)
 	case "/api/session":
-		value := map[string]any{"schema": json.RawMessage(v.Schema), "csrf": v.CSRF, "submitted": v.Registration != "", "registered": v.Registered}
-		if v.Registered {
-			value["resource_token"] = v.Token
-		}
+		value := map[string]any{"schema": json.RawMessage(v.Schema), "csrf": v.CSRF, "submitted": v.Registered || v.Registration != "", "registered": v.Registered}
 		httpapi.WriteJSON(w, 200, value)
 	case "/api/register":
 		if !s.allow(r) {
@@ -231,7 +229,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		httpapi.WriteJSON(w, 200, map[string]any{"ok": true, "resource_token": v.Token})
+		httpapi.WriteJSON(w, 200, map[string]any{"ok": true})
 	case "/api/retry":
 		if !v.Registered || !s.allow(r) {
 			writeError(w, httpapi.NewError(409, "请等待当前注册完成后再重试资源分配"))
@@ -252,6 +250,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func registrationStorageError() error {
+	return httpapi.NewError(500, "注册内容密钥或密文不可用；请恢复数据目录中的 registry-registration.key（权限须为 0600）及原密文，或使用新数据目录")
+}
+
 func (s *Server) register(w http.ResponseWriter, r *http.Request, v *session, invitation string) error {
 	input, err := httpapi.RequestBody(w, r)
 	if err != nil {
@@ -268,18 +270,44 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request, v *session, in
 		if err = d.Decode(&req); err != nil || req.InvitationCode != "" {
 			return httpapi.NewError(400, "注册字段无效；邀请码由入口提供")
 		}
-		body, _ := json.Marshal(req)
-		// The compare-and-set makes simultaneous submissions use the same request.
-		if _, err = s.DB.SQL.Exec("UPDATE registry_sessions SET registration=? WHERE token_hash=? AND registration=''", string(body), v.Hash); err != nil {
+		if err := members.ValidatePassword(req.Password); err != nil {
 			return err
 		}
-		if err = s.DB.SQL.QueryRow("SELECT registration FROM registry_sessions WHERE token_hash=?", v.Hash).Scan(&v.Registration); err != nil {
+		body, _ := json.Marshal(req)
+		// Persist the encrypted request atomically; never replace a missing key
+		// while another registration still needs it for recovery.
+		err = s.DB.Transaction(func(tx *sql.Tx) error {
+			var pending bool
+			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM registry_sessions WHERE registered=0 AND registration<>'')").Scan(&pending); err != nil {
+				return err
+			}
+			encrypt := credentials.Encrypt
+			if pending {
+				encrypt = credentials.EncryptExisting
+			}
+			encrypted, err := encrypt(s.DB.Directory, "registry-registration.key", "registry.registration/"+v.Hash, string(body))
+			if err != nil {
+				return registrationStorageError()
+			}
+			if _, err = tx.Exec("UPDATE registry_sessions SET registration=? WHERE token_hash=? AND registration='' AND registered=0", encrypted, v.Hash); err != nil {
+				return err
+			}
+			return tx.QueryRow("SELECT registration,registered FROM registry_sessions WHERE token_hash=?", v.Hash).Scan(&v.Registration, &v.Registered)
+		})
+		if err != nil {
 			return err
+		}
+		if v.Registered {
+			return nil
 		}
 	}
 	// The invitation stays in the entry URL; only its digest is persisted here.
 	var registration members.Registration
-	if err = json.Unmarshal([]byte(v.Registration), &registration); err != nil {
+	plaintext, err := credentials.Decrypt(s.DB.Directory, "registry-registration.key", "registry.registration/"+v.Hash, v.Registration)
+	if err != nil {
+		return registrationStorageError()
+	}
+	if err = json.Unmarshal([]byte(plaintext), &registration); err != nil {
 		return err
 	}
 	registration.InvitationCode = invitation
@@ -298,7 +326,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request, v *session, in
 		}
 		return err
 	}
-	_, err = s.DB.SQL.Exec("UPDATE registry_sessions SET registered=1 WHERE token_hash=?", v.Hash)
+	_, err = s.DB.SQL.Exec("UPDATE registry_sessions SET registered=1,registration='' WHERE token_hash=?", v.Hash)
 	return err
 }
 

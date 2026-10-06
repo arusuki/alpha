@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const base = document.body.dataset.base;
-  let csrf = '', schema, stream, resourceToken = '';
+  let csrf = '', schema, stream;
   const message = text => { $('message').textContent = text; };
   async function api(action, body) {
     const response = await fetch(`${base}/api/${action}`, {
@@ -62,11 +62,10 @@
     if (!$('share').hidden) { $('shareLink').href = link.href; $('shareLink').textContent = link.href; }
     let statusURL;
     try { statusURL = new URL(value.control.status_url); } catch (_) { /* Not available. */ }
-    const guideReady = resourceToken && access.key_state === 'ready' && ['invited','accepted'].includes(access.invite_state)
+    const guideReady = access.key_state === 'ready' && ['invited','accepted'].includes(access.invite_state)
       && statusURL && ['http:','https:'].includes(statusURL.protocol) && !statusURL.username && !statusURL.password;
     $('controlGuide').hidden = !guideReady;
     if (guideReady) {
-      $('memberResourceToken').value = resourceToken;
       $('controlStatusLink').href = statusURL.href;
       $('controlAddress').textContent = statusURL.href;
     }
@@ -82,7 +81,7 @@
   async function register(body) {
     $('submit').disabled = true; $('resume').hidden = true;
     message('正在提交注册…');
-    try { const result = await api('register', body); resourceToken = result.resource_token; watch(); }
+    try { await api('register', body); $('registration').elements.password.value = ''; $('registration').elements.password_confirm.value = ''; watch(); }
     catch (error) {
       message(error.message);
       if (error.status >= 400 && error.status < 500) {
@@ -93,9 +92,11 @@
   }
   $('registration').addEventListener('submit', event => {
     event.preventDefault();
+    const form = $('registration');
+    if (form.elements.password.value !== form.elements.password_confirm.value) { message('两次输入的密码不一致。'); return; }
     const profile = Object.create(null);
     for (const input of $('fields').querySelectorAll('[data-key]')) profile[input.dataset.key] = input.value;
-    register({username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile});
+    register({password:$('registration').elements.password.value, username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile});
   });
   $('resume').onclick = () => register({});
   $('retry').onclick = async () => {
@@ -107,14 +108,10 @@
     try { await navigator.clipboard.writeText($('shareLink').href); message('分享链接已复制。'); }
     catch (_) { message('请长按或右键上方分享链接复制。'); }
   };
-  $('copyResourceToken').onclick = async () => {
-    try { await navigator.clipboard.writeText(resourceToken); message('资源令牌已复制，请保存后在总控状态页使用。'); }
-    catch (_) { $('memberResourceToken').type = 'text'; $('memberResourceToken').select(); message('请手动复制所选资源令牌。'); }
-  };
   addEventListener('pagehide', () => stream?.close());
   async function load() {
     try {
-      const value = await api('session'); csrf = value.csrf; schema = value.schema; resourceToken = value.resource_token || '';
+      const value = await api('session'); csrf = value.csrf; schema = value.schema;
       showFields();
       if (value.registered) watch();
       else if (value.submitted) await register({});

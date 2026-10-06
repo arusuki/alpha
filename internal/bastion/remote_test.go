@@ -110,7 +110,7 @@ func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 		t.Fatal(err)
 	}
 	register := func(name string) members.Member {
-		m, e := store.RegisterWith(members.Registration{Username: name, SSHKey: testKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, h.Reserve)
+		m, e := store.RegisterWith(members.Registration{Password: "Member-password-123", Username: name, SSHKey: testKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, h.Reserve)
 		if e != nil {
 			t.Fatal(e)
 		}

@@ -13,6 +13,7 @@ import (
 
 	"project-alpha/internal/bastion"
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 )
 
@@ -50,9 +51,9 @@ type memberNodeStatus struct {
 	Containers      []Container `json:"containers"`
 }
 
-var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers)?$`)
+var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password)?$`)
 
-// statusPublic binds the username in both reads and applications to the bearer token's member.
+// statusPublic binds the username in both reads and applications to the login session's member.
 // The HTML shell is public; a username alone never grants access to resources.
 func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any, error) {
 	if !strings.HasPrefix(r.URL.Path, "/api/status/") {
@@ -62,12 +63,23 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 	if parts == nil {
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
-	read := parts[2] == "" && r.Method == "GET"
-	create := parts[2] == "/containers" && r.Method == "POST"
-	if !read && !create {
+	method := "POST"
+	if parts[2] == "" {
+		method = "GET"
+	}
+	if r.Method != method {
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
-	id, err := h.memberID(r)
+	if parts[2] == "/login" {
+		token, err := h.Members.Login(w, r, parts[1])
+		return 200, map[string]string{"session_token": token}, err
+	}
+	store := &members.Store{Database: h.DB}
+	token, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !bearer {
+		return 0, nil, httpapi.NewError(401, "请使用注册时设置的密码登录")
+	}
+	id, err := store.SessionID(token)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -76,9 +88,27 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 		return 0, nil, err
 	}
 	if username != parts[1] {
-		return 0, nil, httpapi.NewError(403, "资源令牌与页面使用者不匹配，请打开本人的状态页")
+		return 0, nil, httpapi.NewError(403, "登录会话与页面使用者不匹配，请打开本人的状态页")
 	}
-	if create {
+	if parts[2] == "/logout" {
+		return 200, map[string]bool{"ok": true}, store.Logout(token)
+	}
+	if parts[2] == "/password" {
+		var req struct {
+			CurrentPassword string `json:"current_password"`
+			Password        string `json:"password"`
+		}
+		if err := httpapi.DecodeBody(w, r, &req); err != nil {
+			return 0, nil, err
+		}
+		gate := h.memberGate(id)
+		if !gate.TryLock() {
+			return 0, nil, httpapi.NewError(409, "资源分配正在执行，请稍后修改密码")
+		}
+		defer gate.Unlock()
+		return 200, map[string]bool{"ok": true}, store.ChangePassword(id, req.CurrentPassword, req.Password)
+	}
+	if parts[2] == "/containers" {
 		return h.dispatchMemberResource(w, r, id, "containers", false, id)
 	}
 	return h.memberStatus(r.Context(), id)

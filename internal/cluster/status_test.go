@@ -14,9 +14,11 @@ import (
 
 func TestMemberStatusPageAndIsolation(t *testing.T) {
 	f := setup(t)
-	alice, token := registerResource(t, f, "alice")
+	alice, _ := registerResource(t, f, "alice")
+	token := statusLogin(t, f, "alice", "Member-password-123")
 	awaitIdle(t, f, alice)
-	bob, bobToken := registerResource(t, f, "bob")
+	bob, _ := registerResource(t, f, "bob")
+	bobToken := statusLogin(t, f, "bob", "Member-password-123")
 	awaitIdle(t, f, bob)
 	w, s := worker(t, strings.Repeat("1", 32), Inventory{
 		Host: "compute-one", Active: map[string]string{"secret": "private-scan-detail"},
@@ -35,7 +37,7 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	for _, path := range []string{"/status/alice", "/status/alice/", "/status.js", "/status.css"} {
 		page := selfCall(f, "GET", path, "", nil)
 		requireStatus(t, page, 200)
-		if strings.HasPrefix(path, "/status/") && (!strings.Contains(page.Body.String(), "tokenForm") || strings.Contains(page.Body.String(), "authUsername")) {
+		if strings.HasPrefix(path, "/status/") && (!strings.Contains(page.Body.String(), "loginForm") || strings.Contains(page.Body.String(), "authUsername")) {
 			t.Fatal("status page must have its own member access form")
 		}
 	}
@@ -102,7 +104,8 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 func TestStatusUsernameCharactersAndLength(t *testing.T) {
 	f := setup(t)
 	for _, name := range []string{"a_b-c", strings.Repeat("a", 32)} {
-		id, token := registerResource(t, f, name)
+		id, _ := registerResource(t, f, name)
+		token := statusLogin(t, f, name, "Member-password-123")
 		awaitIdle(t, f, id)
 		requireStatus(t, selfCall(f, "GET", "/status/"+name, "", nil), 200)
 		response := selfCall(f, "GET", "/api/status/"+name, token, nil)
@@ -122,7 +125,8 @@ func TestStatusUsernameCharactersAndLength(t *testing.T) {
 
 func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
 	f := setup(t)
-	id, token := registerResource(t, f, "alice")
+	id, _ := registerResource(t, f, "alice")
+	token := statusLogin(t, f, "alice", "Member-password-123")
 	awaitIdle(t, f, id)
 	if _, err := f.db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('share','Share',1,'100.64.0.3',2222,9765,'http://100.100.0.2:8765')"); err != nil {
 		t.Fatal(err)
@@ -152,7 +156,8 @@ func TestMemberGuidanceUsesCurrentConfiguredIPs(t *testing.T) {
 
 func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	f := setup(t)
-	id, token := registerResource(t, f, "alice")
+	id, _ := registerResource(t, f, "alice")
+	token := statusLogin(t, f, "alice", "Member-password-123")
 	awaitIdle(t, f, id)
 	var fail atomic.Bool
 	var calls atomic.Int32
@@ -161,6 +166,14 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 		calls.Add(1)
 		if r.URL.Path != "/api/containers/members/"+id || r.Method != "PUT" || u.ID != id {
 			t.Errorf("wrong worker operation: %s %s %+v", r.Method, r.URL.Path, u)
+		}
+		var input struct {
+			Password string `json:"password"`
+			Username string `json:"username"`
+			SSHKey   string `json:"ssh_public_key"`
+		}
+		if err := httpapi.DecodeBody(nil, r, &input); err != nil || input.Password != "Member-password-123" {
+			t.Errorf("worker password not forwarded: %v", err)
 		}
 		if fail.Load() {
 			return 0, nil, httpapi.NewError(409, "默认镜像不可用")
@@ -213,7 +226,8 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 
 func TestShareStatusEntranceHostAndOriginAreValidated(t *testing.T) {
 	f := setup(t)
-	id, token := registerResource(t, f, "alice")
+	id, resourceToken := registerResource(t, f, "alice")
+	token := statusLogin(t, f, "alice", "Member-password-123")
 	awaitIdle(t, f, id)
 	if _, err := f.db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('share','Share',1,'100.64.0.2',22,9765,'http://10.0.0.1:8765')"); err != nil {
 		t.Fatal(err)
@@ -221,6 +235,9 @@ func TestShareStatusEntranceHostAndOriginAreValidated(t *testing.T) {
 	request := func(host, method, path, origin string) int {
 		r := httptest.NewRequest(method, "http://"+host+path, strings.NewReader("{}"))
 		r.Header.Set("Authorization", "Bearer "+token)
+		if strings.HasPrefix(path, "/api/members/") {
+			r.Header.Set("Authorization", "Bearer "+resourceToken)
+		}
 		r.Header.Set("Content-Type", "application/json")
 		if origin != "" {
 			r.Header.Set("Origin", origin)
@@ -244,4 +261,50 @@ func TestShareStatusEntranceHostAndOriginAreValidated(t *testing.T) {
 	if got := request("100.64.0.2:9765", "POST", "/api/members/me/retry", "http://100.64.0.2:9765"); got != 202 {
 		t.Fatal(got)
 	}
+}
+
+func statusLogin(t *testing.T, f *fixture, username, password string) string {
+	t.Helper()
+	response := selfCall(f, "POST", "/api/status/"+username+"/login", "", map[string]string{"password": password})
+	requireStatus(t, response, 200)
+	var result struct {
+		Token string `json:"session_token"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || len(result.Token) != 64 {
+		t.Fatalf("login: %s %v", response.Body.String(), err)
+	}
+	return result.Token
+}
+
+func TestStatusPasswordChangeAndSessionBoundary(t *testing.T) {
+	f := setup(t)
+	id, resourceToken := registerResource(t, f, "alice")
+	awaitIdle(t, f, id)
+	path := "/api/status/alice"
+	requireStatus(t, selfCall(f, "GET", path, resourceToken, nil), 401)
+	requireStatus(t, selfCall(f, "POST", path+"/login", "", map[string]string{"password": "wrong-password"}), 401)
+	token := statusLogin(t, f, "alice", "Member-password-123")
+	requireStatus(t, selfCall(f, "GET", "/api/members/me/resources", token, nil), 401)
+	requireStatus(t, selfCall(f, "POST", path+"/password", token, map[string]string{"current_password": "wrong-password", "password": "Changed-password-123"}), 403)
+	requireStatus(t, selfCall(f, "GET", path, token, nil), 200)
+	requireStatus(t, selfCall(f, "POST", path+"/password", token, map[string]string{"current_password": "Member-password-123", "password": "Changed-password-123"}), 200)
+	requireStatus(t, selfCall(f, "GET", path, token, nil), 401)
+	requireStatus(t, selfCall(f, "POST", path+"/login", "", map[string]string{"password": "Member-password-123"}), 401)
+	token = statusLogin(t, f, "alice", "Changed-password-123")
+	workerNode, workerServer := worker(t, strings.Repeat("9", 32), Inventory{}, moduleFunc(func(_ http.ResponseWriter, r *http.Request, _ platform.User) (int, any, error) {
+		var req map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req["password"] != "Changed-password-123" {
+			t.Errorf("new container did not receive updated password: %v", err)
+		}
+		return 200, map[string]any{"id": strings.Repeat("e", 64), "name": "alpha-" + id, "port": 2222}, nil
+	}))
+	add(t, f, workerNode, workerServer, "After password change")
+	requireStatus(t, selfCall(f, "POST", path+"/containers", token, map[string]string{"node_id": workerNode.ID}), 200)
+	awaitIdle(t, f, id)
+	requireStatus(t, selfCall(f, "POST", path+"/logout", token, nil), 200)
+	requireStatus(t, selfCall(f, "GET", path, token, nil), 401)
+	for range 20 {
+		selfCall(f, "POST", path+"/login", "", map[string]string{"password": "wrong-password"})
+	}
+	requireStatus(t, selfCall(f, "POST", path+"/login", "", map[string]string{"password": "wrong-password"}), 429)
 }

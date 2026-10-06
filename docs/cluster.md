@@ -49,7 +49,7 @@ registry 卡片显示连接状态、错误和最近通信时间，参与在线�
 
 总控首页提供节点状态卡片和 Agent 配置入口，集群使用者也统一在总控管理。`/nodes/<id>/` 展示所选 node 的存储、容器和进程工作台，可在存储内生成 Agent 报告。静态资源由总控提供。浏览器不获取节点令牌、不向 node 发起请求。
 
-`/status/<username>`（如 `/status/alice`）是独立的本人状态页，凭注册时的资源令牌查看全部 node 的基本信息及自己的容器，并在在线 node 立即补申请容器。该页同时提供容器状态、申请功能和 SSH config 示例，status 入口通过分配的 share node HTTP 代理访问；SSH 示例使用该 share node 的固定 `alpha-jump` 账号，转发到 worker 内网 IP 和分配容器端口。它使用 `/api/status/<username>`，校验用户名与令牌所属使用者一致，不会开放节点运维代理权限，详情见 [使用者资源](bastion.md)。
+`/status/<username>`（如 `/status/alice`）是独立的本人状态页，凭注册时设置的密码登录后查看全部 node 的基本信息及自己的容器，并在在线 node 立即补申请容器。该页同时提供容器状态、申请功能和 SSH config 示例，status 入口通过分配的 share node HTTP 代理访问；SSH 示例使用该 share node 的固定 `alpha-jump` 账号，转发到 worker 内网 IP 和分配容器端口。它使用 `/api/status/<username>`，校验用户名与登录会话所属使用者一致，不会开放节点运维代理权限，详情见 [使用者资源](bastion.md)。
 
 原有 node API `/api/jobs` 等在浏览器使用 `/api/cluster/nodes/<id>/api/jobs`；快照下载、ETag、目录变更、SSE 事件同样经过代理。节点切换使用整页导航，清除在途任务状态；缓存 URL 包含节点 ID，防止相同任务 ID 串节点。服务端只代理节点操作白名单，不能通过代理访问 node 登录、成员或内部工具接口。节点路径下的 Agent 请求由总控处理；模型配置仅通过总控 `/api/agent/settings` 访问。
 

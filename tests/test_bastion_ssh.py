@@ -215,13 +215,13 @@ def inside():
         invitation = re.search(r'data-issued-invitation value="([a-f0-9]+)"', page).group(1)
         members = []
         for name in ['alice', 'bobby']:
-            member = api('/api/members/register', dict(username=name, ssh_public_key=member_key,
+            member = api('/api/members/register', dict(username=name, password='Member-password-123', ssh_public_key=member_key,
                          invitation_code=invitation, schema_revision=1, profile={}), expected=201)
             members.append(member)
             wait_for(lambda: api('/api/members/' + member['id'] + '/resources')['access']['key_state'] == 'ready')
         proxy_process = start([binary, 'share-node', '--serve'], name='alpha-worker', label='proxy')
-        wait_for(lambda: api('/api/status/alice', token=members[0]['resource_token'], proxy=True))
-        view = api('/api/status/alice', token=members[0]['resource_token'], proxy=True)
+        status_token = wait_for(lambda: api('/api/status/alice/login', dict(password='Member-password-123'), proxy=True))['session_token']
+        view = api('/api/status/alice', token=status_token, proxy=True)
         assert view['control']['status_url'] == f'http://{share_ip}:{proxy_port}/status/alice'
         assert view['access']['share_host'] == share_ip and view['access']['share_ssh_port'] == ssh_port
         api('/api/members/me/retry', {}, expected=403, token=members[0]['resource_token'], proxy=True,

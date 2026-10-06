@@ -50,7 +50,7 @@ sudo ./project-alpha share-node --add-control-key 'ssh-ed25519 AAAA... control-s
 
 创建账号、修改 sshd、安装服务和追加管理公钥需要本机 sudo。日常总控、代理、SSH 内部管理命令和公钥读取器均不使用 root 账号。总控使用已创建并启用的 SSH 密钥，强制公钥认证、严格主机公钥校验，并关闭客户端额外命令、转发和共享 SSH 会话。
 
-`--control-url` 是 share node 能直接访问的总控地址，不能包含账号、路径、查询参数或片段。Go 标准库反向代理保留请求路径、查询、浏览器 Host 和 Origin，转发到固定目标；总控继续校验成员令牌、管理员会话及 CSRF。入口使用 HTTP，数据通过 Tailscale 网络传送。更改总控地址后，在 share node 重复初始化更新代理配置，并在总控重新保存分享节点以更新记录的代理目标。
+`--control-url` 是 share node 能直接访问的总控地址，不能包含账号、路径、查询参数或片段。Go 标准库反向代理保留请求路径、查询、浏览器 Host 和 Origin，转发到固定目标；总控继续校验成员登录会话或资源令牌、管理员会话及 CSRF。入口使用 HTTP，数据通过 Tailscale 网络传送。更改总控地址后，在 share node 重复初始化更新代理配置，并在总控重新保存分享节点以更新记录的代理目标。
 
 重复初始化保留账号身份、成员公钥和已有管理公钥，并合并本次提供的管理公钥；已有未管理账号、旧安装格式或冲突的 SSH 配置会明确拒绝，不自动接管或覆盖。配置经过 `sshd -t` 和两个账号的 `sshd -T -C` 校验，安装失败恢复本次修改的配置；原始 SSH 配置备份保留在 `.before-alpha-share-node`。
 
@@ -80,23 +80,28 @@ sudo ./project-alpha share-node --uninstall
 
 ## 注册与补申请
 
-注册事务提交邀请码扣减、成员、资源令牌摘要和资源任务，随后后台分配。`201` 仅表示登记成功；单项失败保留错误及已成功资源，不重复扣名额。
+注册事务提交邀请码扣减、成员密码摘要与密文、资源令牌摘要和资源任务，随后后台分配。`201` 仅表示登记成功；单项失败保留错误及已成功资源，不重复扣名额。
 
-调用本人 API 携带 `Authorization: Bearer <resource_token>`，无需平台 Cookie 或 CSRF，仍校验 Host/Origin。令牌只能访问本人的资源，丢失后由管理员重置。总控只保存 SHA-256 摘要。
+自动化客户端调用 `/api/members/me/*` 携带 `Authorization: Bearer <resource_token>`，无需平台 Cookie 或 CSRF，仍校验 Host/Origin。令牌只能访问本人的资源，丢失后由管理员重置。总控只保存 SHA-256 摘要。
 
 | 方法 | 用户 API | 请求 / 返回 |
 | --- | --- | --- |
 | GET | `/api/members/me/resources` | 本人 `access` 和全部当前 node；包括尚未申请的 node |
 | POST | `/api/members/me/containers` | `{"node_id":"…"}`；探测在线后立即创建，成功返回 200 和已就绪资源，失败返回具体错误；支持新添加的 node |
 | POST | `/api/members/me/retry` | `{}`；重试失败的跳板公钥写入和 node，返回 202 |
+| POST | `/api/status/<username>/login` | `{"password":"…"}`；返回 `session_token`，仅能用于此使用者的 status API |
+| POST | `/api/status/<username>/logout` | 撤销当前登录会话 |
+| POST | `/api/status/<username>/password` | `{"current_password":"…","password":"…"}`；修改密码并撤销全部状态页会话 |
 | GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
-| POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与令牌所属使用者一致 |
+| POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与登录会话所属使用者一致 |
+
+`/api/status/*` 除登录外携带 `Authorization: Bearer <session_token>`；不接受资源令牌。修改密码要求当前密码正确。密码长度和存储见 [使用者登记](members.md)。新容器与创建失败后尚未初始化的容器使用当前密码完成初始化；已经初始化的容器不会重置。
 
 `control` 返回通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
 
 `access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
 
-总控 `/status/<username>` 页面（如 `/status/alice`）凭本人令牌查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：分配的 share node IP 和 SSH 端口用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。令牌仅存当前标签页的 `sessionStorage`，退出清除。离线节点保留中央分配记录，运行状态来自最近采集。
+总控 `/status/<username>` 页面（如 `/status/alice`）用注册时设置的密码登录后查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：分配的 share node IP 和 SSH 端口用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。登录会话仅存当前标签页的 `sessionStorage`，12 小时后过期，退出时同时撤销服务端会话；浏览器不保存密码。离线节点保留中央分配记录，运行状态来自最近采集。
 
 每个 `(member_id,node_id)` 只有一个分配槽；worker 保存创建计划，断线或重启后核对同一容器继续。重复申请返回现有分配，外部容器或未标记的数据目录冲突时拒绝。状态为 `unallocated/pending/running/ready/failed/deleting/deleted`；失败须显式重试，同一成员正在处理时返回 409，后台最多并发 8 个 worker。
 
@@ -108,7 +113,7 @@ sudo ./project-alpha share-node --uninstall
 
 ## 回收与管理接口
 
-删除成员先标记 `deleting`，停止本人令牌访问和新申请，再撤销 Tailscale 分享和跳板公钥，清空各 worker 上该使用者的容器归属。容器保持当前运行状态，管理记录、workspace/home 和共享 `/data` 均保留，显示为未归属，等待管理员手动回收。成功返回前直接删除成员及资源记录，保留审计和邀请码累计用量；失败时返回具体错误，管理员可重试删除。Tailscale 撤销返回 400 时再次按邀请 ID 查询，仅确认邀请不存在（404）后视为已撤销，权限、网络及其他错误保留。
+删除成员先标记 `deleting`，停止本人令牌、登录会话访问和新申请，再撤销 Tailscale 分享和跳板公钥，清空各 worker 上该使用者的容器归属。容器保持当前运行状态，管理记录、workspace/home 和共享 `/data` 均保留，显示为未归属，等待管理员手动回收。成功返回前直接删除成员及资源记录，保留审计和邀请码累计用量；失败时返回具体错误，管理员可重试删除。Tailscale 撤销返回 400 时再次按邀请 ID 查询，仅确认邀请不存在（404）后视为已撤销，权限、网络及其他错误保留。
 
 保留容器内的原公钥也不会自动删除。容器直接可达或经其他跳板可达时，原私钥仍可能登录；管理员手动回收时需清理容器授权或停用、删除容器，见 [公钥与访问边界](share-node.md#公钥与访问边界)。
 

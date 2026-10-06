@@ -11,12 +11,12 @@
   <header class="topbar"><span class="brand"><b>α</b> Project Alpha</span><span>使用者资源</span></header>
   <main>
     <div class="heading"><p class="eyebrow">MY NODES / 我的节点</p><h1>你的计算空间</h1><p id="memberIdentity" class="muted"></p></div>
-    <section id="tokenPanel" class="token-panel" aria-labelledby="tokenTitle">
-      <h2 id="tokenTitle">查看我的资源</h2>
-      <p class="muted">输入注册时获得的本人资源令牌。令牌仅保留在当前标签页，丢失时请联系管理员重置。</p>
-      <form id="tokenForm">
-        <label for="resourceToken">资源令牌</label>
-        <div class="token-row"><input id="resourceToken" type="password" autocomplete="off" spellcheck="false" required maxlength="64" placeholder="注册时返回的 resource_token"><button id="tokenSubmit" class="primary">查看节点</button></div>
+    <section id="loginPanel" class="login-panel" aria-labelledby="loginTitle">
+      <h2 id="loginTitle">查看我的资源</h2>
+      <p class="muted">输入注册时设置的密码。登录会话仅保留在当前标签页，12 小时后需重新登录。</p>
+      <form id="loginForm">
+        <label for="loginPassword">密码</label>
+        <div class="login-row"><input id="loginPassword" type="password" autocomplete="current-password" required maxlength="256" placeholder="注册时设置的密码"><button id="loginSubmit" class="primary">登录</button></div>
       </form>
     </section>
     <p id="statusError" class="error" role="alert"></p>
@@ -27,17 +27,29 @@
         <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
         <div><span>已分配容器的节点</span><strong id="allocatedNodes">0</strong></div>
       </div>
-      <div class="directory-heading"><div><h2>我的容器</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="forgetToken">退出查看</button></div></div>
+      <div class="directory-heading"><div><h2>我的容器</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="logout">退出登录</button></div></div>
       <p id="statusMessage" class="message" role="status" aria-live="polite"></p>
       <div id="statusNodes" class="nodes"></div>
       <p class="footnote">未分配容器的在线节点可点击「＋」申请。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
+      <details class="guide">
+        <summary>修改密码</summary>
+        <p class="muted">修改后所有状态页会话退出，新建容器使用新密码；已有容器的密码不变。</p>
+        <form id="passwordForm" class="password-form">
+          <label>当前密码<input id="currentPassword" type="password" required maxlength="256" autocomplete="current-password"></label>
+          <label>新密码<input id="newMemberPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+          <label>确认新密码<input id="confirmMemberPassword" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
+          <p class="muted">12–256 字节，不能含换行或冒号。</p>
+          <button id="passwordSubmit" class="primary">保存密码</button>
+          <p id="passwordError" class="error" role="alert"></p>
+        </form>
+      </details>
       <section class="guide" aria-labelledby="accessGuideTitle">
         <p class="eyebrow">GET STARTED / 使用教程</p><h2 id="accessGuideTitle">通过总控管理你的工作空间</h2>
         <p>保持 Tailscale VPN 已连接，收藏此状态页。之后在总控查看本人容器状态、申请容器和获取 SSH 连接配置。</p>
         <ol>
           <li>本页「我的容器」显示各节点的本人容器。尚无容器时，点击在线节点的「＋ 申请」。</li>
           <li>将 SSH config 示例保存到本机 <code>~/.ssh/config</code>，把 <code>IdentityFile</code> 改为注册公钥对应的私钥路径。</li>
-          <li>运行下方对应的 <code>ssh</code> 命令，经分配 share node 的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>。</li>
+          <li>运行下方对应的 <code>ssh</code> 命令，经分配 share node 的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>，初始密码为创建容器时的账号密码。</li>
         </ol>
         <p id="sshAccessState" class="muted"></p>
         <div class="guide-heading"><h3>SSH config 示例</h3><button id="copySSHConfig" type="button">复制配置</button></div>

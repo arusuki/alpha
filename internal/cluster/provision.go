@@ -186,10 +186,14 @@ func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key str
 		Port int    `json:"port"`
 		OK   bool   `json:"ok"`
 	}
+	payload := map[string]string{"username": name, "ssh_public_key": key}
+	if e == nil && !removing {
+		payload["password"], e = (&members.Store{Database: h.DB}).InitialPassword(id)
+	}
 	if e == nil {
 		callCtx, cancel := context.WithTimeout(ctx, 50*time.Second)
 		defer cancel()
-		e = h.call(callCtx, node, method, "/api/containers/members/"+id, map[string]string{"username": name, "ssh_public_key": key}, platform.User{ID: id, Username: "member:" + name, Role: "admin"}, &out)
+		e = h.call(callCtx, node, method, "/api/containers/members/"+id, payload, platform.User{ID: id, Username: "member:" + name, Role: "admin"}, &out)
 	}
 	if e == nil && !removing && (len(out.ID) != 64 || out.Name == "" || out.Port < 1 || out.Port > 65535) {
 		e = httpapi.NewError(502, "节点返回的容器分配无效，请重试核对")

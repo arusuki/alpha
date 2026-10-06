@@ -13,7 +13,7 @@ import (
 const memberKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
 
 func memberCall(h *Handler, method, id string) (int, string) {
-	raw, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey})
+	raw, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123"})
 	return call(h, method, "/api/containers/members/"+id, string(raw), admin)
 }
 
@@ -51,6 +51,19 @@ func TestMemberRetryAfterCreateStartFailureAndUnassign(t *testing.T) {
 	}
 	if status, body := memberCall(h, "PUT", id); status != 200 || strings.Contains(body, "password") {
 		t.Fatalf("repeat %d %s", status, body)
+	}
+	var plan string
+	if err := h.db.SQL.QueryRow("SELECT plan FROM member_container_slots WHERE member_id=?", id).Scan(&plan); err != nil || strings.Contains(plan, "Member-password-123") {
+		t.Fatalf("plan leaked password: %s %v", plan, err)
+	}
+	passwordWrites := 0
+	for _, input := range f.inputs {
+		if input == "root:Member-password-123\n" {
+			passwordWrites++
+		}
+	}
+	if passwordWrites != 1 {
+		t.Fatalf("retry/reset password writes: %d", passwordWrites)
 	}
 	creates := 0
 	keyWrites := 0

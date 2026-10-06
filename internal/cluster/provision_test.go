@@ -35,7 +35,7 @@ func registerResource(t *testing.T, f *fixture, name string) (string, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	w := selfCall(f, "POST", "/api/members/register", "", map[string]any{"username": name, "ssh_public_key": resourceTestKey, "invitation_code": invite.Code, "schema_revision": 1, "profile": map[string]string{}})
+	w := selfCall(f, "POST", "/api/members/register", "", map[string]any{"username": name, "ssh_public_key": resourceTestKey, "password": "Member-password-123", "invitation_code": invite.Code, "schema_revision": 1, "profile": map[string]string{}})
 	requireStatus(t, w, 201)
 	var v struct {
 		ID    string `json:"id"`
@@ -197,7 +197,7 @@ func TestRegistrationReservesResourcesAtomically(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = store.RegisterWith(members.Registration{Username: "alice", SSHKey: resourceTestKey, InvitationCode: i.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
+	_, e = store.RegisterWith(members.Registration{Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: i.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
 	if e == nil {
 		t.Fatal("expected failure")
 	}
@@ -245,7 +245,7 @@ func TestInterruptedQueueRestartsWithoutDuplicatingNodeSlots(t *testing.T) {
 	// are needed to verify that failures become explicit and the unique slot stays.
 	store := &members.Store{Database: f.db}
 	invite, _ := store.CreateInvitation("restart", 1, "admin")
-	m, e := store.RegisterWith(members.Registration{Username: "alice", SSHKey: resourceTestKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
+	m, e := store.RegisterWith(members.Registration{Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
 	if e != nil {
 		t.Fatal(e)
 	}

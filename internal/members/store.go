@@ -283,6 +283,7 @@ func (s *Store) DeleteInvitation(id, actor string) error {
 }
 
 type Registration struct {
+	Password       string                     `json:"password"`
 	SSHKey         string                     `json:"ssh_public_key"`
 	Username       string                     `json:"username"`
 	InvitationCode string                     `json:"invitation_code"`
@@ -353,17 +354,24 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 	if keyErr != nil {
 		return m, httpapi.NewError(400, keyErr.Error())
 	}
+	if err := ValidatePassword(req.Password); err != nil {
+		return m, err
+	}
+	passwordHash, err := platform.PasswordHash(req.Password, "")
+	if err != nil {
+		return m, err
+	}
 	m.SSHKey = key
 	m.ResourceToken = platform.RandomHex(32)
 	if token != "" {
 		m.ResourceToken = token
 	}
 	m.Status = "active"
-	err := s.Transaction(func(tx *sql.Tx) error {
+	err = s.Transaction(func(tx *sql.Tx) error {
 		if token != "" {
 			var previous Member
-			var profile, schema, invitationHash string
-			err := tx.QueryRow(`SELECT id,username,profile,registration_schema,ssh_public_key,status,invitation_id,created_at,invitation_code_hash FROM members WHERE resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash)
+			var profile, schema, invitationHash, previousPassword string
+			err := tx.QueryRow(`SELECT id,username,profile,registration_schema,ssh_public_key,status,invitation_id,created_at,invitation_code_hash,password_hash FROM members WHERE resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash, &previousPassword)
 			if err == nil {
 				if err = json.Unmarshal([]byte(schema), &previous.Schema); err != nil {
 					return err
@@ -372,7 +380,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 					return err
 				}
 				values, e := validateProfile(previous.Schema.Fields, req.Profile)
-				if e != nil || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
+				if e != nil || !platform.CheckPassword(req.Password, previousPassword) || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
 					return httpapi.NewError(409, "此注册请求已提交，不能更改注册内容")
 				}
 				previous.ResourceToken = token
@@ -412,7 +420,11 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 		if n != 1 {
 			return httpapi.NewError(400, "邀请码无效或已失效")
 		}
-		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,invitation_code_hash,created_at,ssh_public_key,resource_token_hash,status) VALUES(?,?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, hashCode(req.InvitationCode), m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status); err != nil {
+		ciphertext, err := s.encryptPassword(tx, m.ID, req.Password)
+		if err != nil {
+			return err
+		}
+		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,invitation_code_hash,created_at,ssh_public_key,resource_token_hash,status,password_hash,password_ciphertext) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, hashCode(req.InvitationCode), m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status, passwordHash, ciphertext); err != nil {
 			if platform.IsConstraint(err) {
 				return httpapi.NewError(409, "该使用者标识已注册")
 			}

@@ -1,14 +1,14 @@
 # 集群使用者登记
 
-集群使用者是机器/容器的使用者，独立于 Alpha 运维平台的登录账号。管理员在「集群使用者」页面配置注册字段、生成带名额限制的邀请码并查看登记信息。注册不会创建平台账号、密码或登录会话，也不会创建宿主机系统账号。
+集群使用者是机器/容器的使用者，独立于 Alpha 运维平台的登录账号。管理员在「集群使用者」页面配置注册字段、生成带名额限制的邀请码并查看登记信息。注册会设置独立的使用者密码，不会创建平台账号或平台登录会话，也不会创建宿主机系统账号。
 
-使用者、注册 schema 和邀请码由总控统一维护；registry 只为注册会话缓存表单定义与提交内容，邀请码仅存摘要；总控额外保存邀请码密文，用于管理员生成共享注册链接。`id` 是稳定主键，`username` 是唯一且不可修改的使用者标识，用来关联各 node 的容器归属。总控创建容器或设置非空归属时，要求选择已登记的 `username`。CLI 导入或 Docker 标签中尚未登记的归属会在“使用者容器”中单列为“未登记使用者”；同名使用者登记成功后自动归入其统计，node 原始数据保持不变。
+使用者、注册 schema 和邀请码由总控统一维护；registry 只为注册会话缓存表单定义与加密的待提交内容，成功后清除提交内容，邀请码仅存摘要；总控额外保存邀请码密文，用于管理员生成共享注册链接。`id` 是稳定主键，`username` 是唯一且不可修改的使用者标识，用来关联各 node 的容器归属。总控创建容器或设置非空归属时，要求选择已登记的 `username`。CLI 导入或 Docker 标签中尚未登记的归属会在“使用者容器”中单列为“未登记使用者”；同名使用者登记成功后自动归入其统计，node 原始数据保持不变。
 
 “使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册后自动分配分享节点、添加 alpha-jump 公钥，并在各 node 创建一个公钥登录容器；失败项可由使用者后续通过 API 补申请。详见 [跳板机与使用者资源](bastion.md)。
 
 公网用户可通过 [registry](operations.md#公网-registry) 注册同一类集群使用者：访问 `/registry/<8位 REG_PASS>/<邀请码>`，经 control 校验后填写表单并查看资源分配进度和 Tailscale 分享链接。registry 不创建平台管理员或只读账号；control 不需要对公网开放入站端口。
 
-数据格式与旧数据处理见 [运行与配置](operations.md#配置与数据)。
+本次数据库格式为 33，worker 协议为 5，registry 协议为 3；各服务须使用同一版本。旧数据库会明确报错，须使用新数据目录，不迁移或覆盖已有数据。数据格式与旧数据处理见 [运行与配置](operations.md#配置与数据)。
 
 ## 管理接口
 
@@ -29,7 +29,7 @@
 
 ## 注册 schema
 
-`GET /api/members/registration-schema` 无需登录，供外部注册页面取得表单定义。初始值为 `{"revision":1,"fields":[]}`，表示只要求固定的使用者标识、邀请码和 SSH 公钥，没有附加信息字段。保存示例：
+`GET /api/members/registration-schema` 无需登录，供外部注册页面取得表单定义。初始值为 `{"revision":1,"fields":[]}`，表示只要求固定的使用者标识、密码、邀请码和 SSH 公钥，没有附加信息字段。保存示例：
 
 ```json
 {
@@ -52,13 +52,14 @@
 
 ## 注册 API
 
-`POST /api/members/register` 无需平台登录或 CSRF token，要求有效邀请码，不接受 `password`、`role` 等平台账号字段。
+`POST /api/members/register` 无需平台登录或 CSRF token，要求有效邀请码和 `password`，不接受 `role` 等平台权限字段。
 
 ```bash
 curl -X POST http://127.0.0.1:8765/api/members/register \
   -H 'Content-Type: application/json' \
   -d '{
     "username": "alice",
+    "password": "由使用者设置的密码",
     "invitation_code": "替换为管理员发放的邀请码",
     "ssh_public_key": "ssh-ed25519 AAAA…",
     "schema_revision": 2,
@@ -67,6 +68,8 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 ```
 
 `username` 必须以小写字母开头，为 3–32 位小写字母、数字、下划线或短横线，不能是 `data`。`schema_revision` 使用刚读取的版本，`profile` 必须是对象，没有附加字段时传 `{}`。
+
+`password` 必填，长度为 12–256 字节，不得包含换行、冒号或 NUL；不去掉首尾空格。此密码用于 `/status` 登录及新容器的初始 root 密码。总控保存 PBKDF2-SHA256 摘要和用于异步创建的 AES-GCM 密文，密钥为数据目录的 `member-password.key`（0600），备份时必须一并保存；缺失时恢复原密钥或使用新数据目录。registry 的待提交注册使用 `registry-registration.key` 加密，注册完成后移除该提交内容。
 
 `ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
 
@@ -84,11 +87,11 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 }
 ```
 
-邀请码扣减、登记记录、资源分配记录、任务和审计在一个 SQLite 写事务中提交，并发注册不能超过 quota。重复用户名、字段错误、schema 版本冲突及数据库写入失败都会回滚，名额不变。注册成功后该使用者仍不能登录 Alpha 平台；请保存返回的本人资源令牌，使用 `/api/members/me/resources` 查询资源、`POST /api/members/me/containers` 补申请在线 node。详见 [资源 API 与回收](bastion.md)。请求超时且结果未知时，可由管理员在列表中核实是否登记成功；重试同一用户名不会再次消耗名额。
+邀请码扣减、登记记录、资源分配记录、任务和审计在一个 SQLite 写事务中提交，并发注册不能超过 quota。重复用户名、字段错误、schema 版本冲突及数据库写入失败都会回滚，名额不变。注册成功后该使用者仍不能登录 Alpha 平台；自动化客户端可用返回的资源令牌访问资源 API，使用 `/api/members/me/resources` 查询资源、`POST /api/members/me/containers` 补申请在线 node。详见 [资源 API 与回收](bastion.md)。请求超时且结果未知时，可由管理员在列表中核实是否登记成功；重试同一用户名不会再次消耗名额。
 
-公网 registry 在网络分享和跳板公钥就绪后，引导用户接受 Tailscale 分享、登录客户端并连接 VPN，提供本人资源令牌复制和总控状态页链接。之后所有容器查看、申请及 SSH 教程均通过总控。令牌在同一注册会话刷新后仍可复制，不放入状态页 URL。
+公网 registry 在网络分享和跳板公钥就绪后，引导用户接受 Tailscale 分享、登录客户端并连接 VPN，提供总控状态页链接，并提示用注册时设置的密码登录。之后所有容器查看、申请及 SSH 教程均通过总控。注册重试和进度查询所用资源令牌由服务端处理，不返回注册页。
 
-使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册返回的 `resource_token` 后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回创建结果，失败显示具体错误；不需要运维平台登录。
+使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册时设置的密码后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回创建结果，失败显示具体错误；不需要运维平台登录。状态页提供修改密码入口，需输入当前密码和新密码；修改后所有状态页会话失效，之后新建的容器使用新密码，已有容器密码保持不变，可在容器内自行修改。
 
 | 状态码 | 含义 |
 | --- | --- |

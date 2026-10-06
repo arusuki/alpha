@@ -110,7 +110,7 @@ func TestClusterNodeLifecycleAndAggregate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = memberStore.RegisterWith(members.Registration{SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: invitation.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, nil); err != nil {
+	if _, err = memberStore.RegisterWith(members.Registration{Password: "Member-password-123", SSHKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f", Username: "alice", InvitationCode: invitation.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, nil); err != nil {
 		t.Fatal(err)
 	}
 	response := f.request(t, "GET", "/api/cluster/overview", nil)

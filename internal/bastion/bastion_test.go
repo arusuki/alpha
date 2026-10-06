@@ -62,7 +62,7 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	m, e := store.RegisterWith(members.Registration{Username: "alice", SSHKey: testKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, h.Reserve)
+	m, e := store.RegisterWith(members.Registration{Password: "Member-password-123", Username: "alice", SSHKey: testKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, h.Reserve)
 	if e != nil {
 		t.Fatal(e)
 	}

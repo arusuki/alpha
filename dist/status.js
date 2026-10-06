@@ -4,19 +4,19 @@
   const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const username=decodeURIComponent(location.pathname.split('/')[2]);
   const endpoint='/api/status/'+encodeURIComponent(username);
-  const storageKey='alpha.member-token.'+username;
+  const storageKey='alpha.member-session.'+username;
   const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null};
   const labels={unallocated:'尚无容器',pending:'等待创建',running:'正在创建',ready:'已分配容器',failed:'创建失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
   function controls(){
-    $('tokenSubmit').disabled=state.busy;
-    $('refreshStatus').disabled=state.busy;
+    $('loginSubmit').disabled=state.busy;
+    $('refreshStatus').disabled=state.busy;$('passwordSubmit').disabled=state.busy;
     document.querySelectorAll('[data-apply]').forEach(button=>{button.disabled=state.busy||button.dataset.available!=='true';});
   }
   function clearSession(message=''){
     state.epoch++;state.request?.abort();state.request=null;
     clearTimeout(state.timer);state.token='';state.data=null;state.busy=false;state.applying=null;stored('');
-    $('resourceToken').value='';$('tokenPanel').hidden=false;$('statusContent').hidden=true;
+    $('loginPassword').value='';$('passwordForm').reset();$('passwordError').textContent='';$('loginPanel').hidden=false;$('statusContent').hidden=true;
     $('statusNodes').replaceChildren();$('sshConfig').textContent='';$('sshCommands').replaceChildren();$('controlStatusAddress').textContent='';$('memberIdentity').textContent='使用者 · '+username;
     $('statusError').textContent=message;$('statusMessage').textContent='';$('sshCopyStatus').textContent='';controls();
   }
@@ -54,7 +54,7 @@
   function render(){
     const data=state.data;
     $('memberIdentity').textContent=data.username+' · '+data.member_id;
-    $('tokenPanel').hidden=true;$('statusContent').hidden=false;
+    $('loginPanel').hidden=true;$('statusContent').hidden=false;
     $('totalNodes').textContent=data.nodes.length;
     $('onlineNodes').textContent=data.nodes.filter(n=>n.online).length;
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
@@ -93,7 +93,7 @@
     try{
       const data=await request(endpoint);
       if(epoch!==state.epoch)return;
-      state.data=data;stored(state.token);$('resourceToken').value='';$('statusError').textContent='';render();
+      state.data=data;stored(state.token);$('loginPassword').value='';$('statusError').textContent='';render();
     }catch(error){if(epoch===state.epoch)failed(error);}
     finally{if(epoch===state.epoch){state.busy=false;controls();schedule();}}
   }
@@ -118,14 +118,36 @@
       if(epoch===state.epoch){state.busy=false;state.applying=null;if(state.data)render();else controls();schedule();}
     }
   }
-  $('tokenForm').addEventListener('submit',event=>{event.preventDefault();if(state.busy)return;state.token=$('resourceToken').value.trim();refresh();});
+  $('loginForm').addEventListener('submit',async event=>{
+    event.preventDefault();if(state.busy)return;
+    const epoch=state.epoch;state.busy=true;controls();
+    try{
+      const value=await request(endpoint+'/login',{method:'POST',body:JSON.stringify({password:$('loginPassword').value})});
+      if(epoch!==state.epoch)return;
+      state.token=value.session_token;stored(state.token);$('loginPassword').value='';
+    }catch(error){if(epoch===state.epoch)failed(error);}
+    finally{if(epoch===state.epoch){state.busy=false;controls();if(state.token)refresh();}}
+  });
+  $('passwordForm').addEventListener('submit',async event=>{
+    event.preventDefault();if(state.busy)return;
+    if($('newMemberPassword').value!==$('confirmMemberPassword').value){$('passwordError').textContent='两次输入的密码不一致。';return;}
+    const epoch=state.epoch;state.busy=true;clearTimeout(state.timer);controls();$('passwordError').textContent='';
+    try{
+      await request(endpoint+'/password',{method:'POST',body:JSON.stringify({current_password:$('currentPassword').value,password:$('newMemberPassword').value})});
+      if(epoch===state.epoch){clearSession('密码已修改，请使用新密码登录。');$('loginPassword').focus();}
+    }catch(error){if(epoch===state.epoch){if(error.status===401)clearSession(error.message);else $('passwordError').textContent=error.message;}}
+    finally{if(epoch===state.epoch){state.busy=false;controls();schedule();}}
+  });
   $('refreshStatus').addEventListener('click',()=>refresh());
   $('copySSHConfig').addEventListener('click',async()=>{
     const epoch=state.epoch;
     try{await navigator.clipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请保存到 ~/.ssh/config 并修改私钥路径。';}
     catch{if(epoch===state.epoch)$('sshCopyStatus').textContent='请手动复制上方 SSH 配置。';}
   });
-  $('forgetToken').addEventListener('click',()=>{clearSession();$('resourceToken').focus();});
+  $('logout').addEventListener('click',()=>{
+    const token=state.token;clearSession();$('loginPassword').focus();
+    fetch(endpoint+'/logout',{method:'POST',credentials:'omit',headers:{Authorization:'Bearer '+token}}).catch(()=>{});
+  });
   $('statusNodes').addEventListener('click',event=>{const button=event.target.closest('[data-apply]');if(button&&!button.disabled)apply(button.dataset.apply);});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(state.timer);else refresh();});
   window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);state.request?.abort();});

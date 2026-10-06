@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"project-alpha/internal/credentials"
+	"project-alpha/internal/httpapi"
+
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
@@ -138,7 +141,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if strings.Contains(string(raw), "resource_token") {
 		t.Fatal("resource token was returned before registration")
 	}
-	body := map[string]any{"username": "alice", "ssh_public_key": resourceTestKey, "schema_revision": 1, "profile": map[string]string{}}
+	body := map[string]any{"username": "alice", "ssh_public_key": resourceTestKey, "password": "Member-password-123", "schema_revision": 1, "profile": map[string]string{}}
 	for _, origin := range []string{"https://evil.test", ""} {
 		b, _ := json.Marshal(body)
 		r, _ := http.NewRequest("POST", s.URL+base+"/api/register", bytes.NewReader(b))
@@ -155,21 +158,23 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if status != 200 {
 		t.Fatalf("register %d %s", status, registered)
 	}
-	var registrationResult struct {
-		Token string `json:"resource_token"`
-	}
-	if err = json.Unmarshal(registered, &registrationResult); err != nil || len(registrationResult.Token) != 64 {
-		t.Fatalf("registration did not return the member token: %s %v", registered, err)
+	if strings.Contains(string(registered), "resource_token") || strings.Contains(string(registered), "Member-password-123") {
+		t.Fatal("registration exposed credentials")
 	}
 	_, restored := registryHTTP(t, client, "GET", s.URL+base+"/api/session", "", "", nil)
-	var restoredResult struct {
-		Token string `json:"resource_token"`
+	if strings.Contains(string(restored), "resource_token") || strings.Contains(string(restored), "Member-password-123") {
+		t.Fatal("session exposed credentials")
 	}
-	if err = json.Unmarshal(restored, &restoredResult); err != nil || restoredResult.Token != registrationResult.Token {
-		t.Fatalf("registry refresh lost member token: %s %v", restored, err)
+	var sessionHash, saved string
+	if err = h.DB.SQL.QueryRow("SELECT token_hash,registration FROM registry_sessions").Scan(&sessionHash, &saved); err != nil || saved != "" {
+		t.Fatalf("completed registration kept secret: %q %v", saved, err)
+	}
+	pending, err := credentials.EncryptExisting(h.DB.Directory, "registry-registration.key", "registry.registration/"+sessionHash, httpapi.JSONText(body))
+	if err != nil {
+		t.Fatal(err)
 	}
 	// Emulate a committed registration whose acknowledgment was lost on the gateway.
-	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0"); err != nil {
+	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0,registration=?", pending); err != nil {
 		t.Fatal(err)
 	}
 	if status, raw := registryHTTP(t, client, "POST", s.URL+base+"/api/register", s.URL, initial.CSRF, map[string]string{}); status != 200 {
@@ -186,7 +191,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if err = store.DeleteInvitation(i.ID, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0"); err != nil {
+	if _, err = h.DB.SQL.Exec("UPDATE registry_sessions SET registered=0,registration=?", pending); err != nil {
 		t.Fatal(err)
 	}
 	if status, raw := registryHTTP(t, client, "POST", s.URL+base+"/api/register", s.URL, initial.CSRF, map[string]string{}); status != 200 {

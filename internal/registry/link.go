@@ -22,8 +22,8 @@ import (
 
 const LinkPath = "/api/registry/connect"
 const InfoPath = "/api/registry/info"
-const Protocol = 2
-const protocol = "alpha-registry-v2"
+const Protocol = 3
+const protocol = "alpha-registry-v3"
 
 var identityPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
