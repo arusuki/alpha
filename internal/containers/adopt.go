@@ -18,9 +18,6 @@ type Check struct {
 }
 type Report struct {
 	OK     bool    `json:"ok"`
-	ID     string  `json:"id"`
-	Name   string  `json:"name"`
-	Spec   Spec    `json:"spec"`
 	Checks []Check `json:"checks"`
 }
 
@@ -30,9 +27,9 @@ func (r *Report) add(name string, ok bool, reason string) {
 		r.OK = false
 	}
 }
-func (h *Handler) check(ctx context.Context, cfg Config, ref, owner string) (Report, Record) {
+func (h *Handler) check(ctx context.Context, cfg Config, ref string) (Report, Record) {
 	report := Report{OK: true, Checks: []Check{}}
-	record := Record{Endpoint: cfg.Endpoint, Owner: owner, Origin: "adopt", Initialized: true}
+	record := Record{Endpoint: cfg.Endpoint, Origin: "adopt", Initialized: true}
 	daemon, err := h.daemon(ctx, cfg.Endpoint)
 	if err != nil {
 		report.add("Docker 连接", false, err.Error())
@@ -48,8 +45,6 @@ func (h *Handler) check(ctx context.Context, cfg Config, ref, owner string) (Rep
 	record.ID = c.ID
 	record.Name = strings.TrimPrefix(c.Name, "/")
 	record.Fingerprint = fingerprint(c)
-	report.ID = c.ID
-	report.Name = record.Name
 	report.add("容器身份", validName.MatchString(record.Name), "完整 ID: "+c.ID+"；名称: "+record.Name)
 	records, err := h.records()
 	if err != nil {
@@ -143,7 +138,6 @@ func (h *Handler) check(ctx context.Context, cfg Config, ref, owner string) (Rep
 			}
 		}
 	}
-	report.Spec = spec
 	record.Spec = spec
 	return report, record
 }

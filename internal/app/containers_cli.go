@@ -87,6 +87,7 @@ func containersCLI(ctx context.Context, args []string) error {
 在容器所在节点执行，--data-dir 必须指向该节点的 worker 数据目录，不能使用总控目录。
 省略容器名时扫描全部容器；指定名称或完整 ID 时，须放在所有选项之后。
 导入会检查容器是否符合训练容器配置，只登记通过检查的容器；已登记项会跳过。
+新接管的容器默认为未归属，容器名和 Docker 标签不作为使用者身份；之后可领养或由管理员分配。
 建议先停止 worker，导入后使用相同 --data-dir 和 --worker 启动。
 --dry-run 不登记容器，但新数据目录仍会初始化数据库。
 

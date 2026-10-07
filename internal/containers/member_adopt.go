@@ -25,6 +25,9 @@ func (h *Handler) adoptMember(ctx context.Context, cfg Config, id, username, key
 			return fail(fmt.Errorf("该使用者在此 node 已有容器 %s", v.Name))
 		}
 	}
+	if record.ID == "" {
+		return fail(fmt.Errorf("容器未接管，请先通过 CLI 导入"))
+	}
 	// Include live containers not yet imported or scanned, so choosing adoption
 	// cannot bypass the per-node limit through an incomplete inventory.
 	refs, err := h.run(ctx, cfg.Endpoint, []string{"ps", "-aq", "--no-trunc"}, "")
@@ -49,40 +52,6 @@ func (h *Handler) adoptMember(ctx context.Context, cfg Config, id, username, key
 		if owner == username {
 			return fail(fmt.Errorf("该使用者在此 node 已有容器 %s", strings.TrimPrefix(c.Name, "/")))
 		}
-	}
-	if record.ID == "" {
-		c, err := h.inspect(ctx, cfg.Endpoint, target)
-		if err != nil {
-			return fail(err)
-		}
-		owner := inspectionOwner(c)
-		if h.ReadOwner != nil {
-			owner, err = h.ReadOwner(c.ID, owner)
-			if err != nil {
-				return fail(err)
-			}
-		}
-		if owner != expectedOwner {
-			return fail(fmt.Errorf("容器归属已变化，请刷新后重试"))
-		}
-		report, checked := h.check(ctx, cfg, target, username)
-		if !report.OK {
-			reasons := []string{}
-			for _, check := range report.Checks {
-				if !check.OK {
-					reasons = append(reasons, check.Name+": "+check.Reason)
-				}
-			}
-			return fail(fmt.Errorf("容器不符合领养要求：%s", strings.Join(reasons, "；")))
-		}
-		if checked.Fingerprint != fingerprint(c) {
-			return fail(fmt.Errorf("容器配置在领养检查期间发生变化，请重试"))
-		}
-		if err := h.save(checked, actor); err != nil {
-			return fail(err)
-		}
-		record = checked
-		expectedOwner = username
 	}
 	if record.Owner != expectedOwner {
 		return fail(fmt.Errorf("容器归属已变化，请刷新后重试"))

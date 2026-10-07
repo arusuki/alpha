@@ -83,14 +83,15 @@ func (h *Handler) Import(ctx context.Context, opts ImportOptions, out io.Writer)
 			skipped++
 			continue
 		}
-		owner := strings.TrimPrefix(c.Name, "/")
-		report, record := h.check(ctx, cfg, c.ID, owner)
+		// Import establishes management, not a member assignment. Container names
+		// and Docker labels must not implicitly claim a registered username.
+		report, record := h.check(ctx, cfg, c.ID)
 		// Bind the check to the daemon and configuration originally discovered.
 		if report.OK && (record.Daemon != daemon || record.Fingerprint != fingerprint(c)) {
 			report.add("容器身份", false, "扫描期间 Docker daemon 或容器配置发生变化，请重试")
 		}
 		if !report.OK {
-			fmt.Fprintf(out, "失败 %s (%s)\n", owner, c.ID)
+			fmt.Fprintf(out, "失败 %s (%s)\n", strings.TrimPrefix(c.Name, "/"), c.ID)
 			for _, check := range report.Checks {
 				if !check.OK {
 					fmt.Fprintf(out, "  %s：%s\n", check.Name, check.Reason)
@@ -100,7 +101,7 @@ func (h *Handler) Import(ctx context.Context, opts ImportOptions, out io.Writer)
 			continue
 		}
 		if opts.DryRun {
-			fmt.Fprintf(out, "可导入 %s (%s)：所属用户 %s，SSH %d\n", record.Name, record.ID, record.Owner, record.Spec.Port)
+			fmt.Fprintf(out, "可导入 %s (%s)：未归属，SSH %d\n", record.Name, record.ID, record.Spec.Port)
 			ready++
 			continue
 		}
@@ -130,7 +131,7 @@ func (h *Handler) Import(ctx context.Context, opts ImportOptions, out io.Writer)
 		}
 		original = cfg
 		imported++
-		fmt.Fprintf(out, "已导入 %s (%s)：所属用户 %s，SSH %d\n", record.Name, record.ID, record.Owner, record.Spec.Port)
+		fmt.Fprintf(out, "已导入 %s (%s)：未归属，SSH %d\n", record.Name, record.ID, record.Spec.Port)
 	}
 	fmt.Fprintf(out, "导入 %d，可导入 %d，已登记跳过 %d，失败 %d\n", imported, ready, skipped, failed)
 	if failed > 0 {

@@ -12,12 +12,13 @@ import (
 
 func TestImportDryRunAndRepeat(t *testing.T) {
 	h, f, cfg := fixture(t)
+	f.c.Config.Labels = map[string]string{"project-alpha.owner": "alice"}
 	var out bytes.Buffer
 	if err := h.Import(context.Background(), ImportOptions{DryRun: true}, &out); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := h.records()
-	if len(rows) != 0 || !strings.Contains(out.String(), "可导入 alice") || strings.Contains(out.String(), "legacy-secret") {
+	if len(rows) != 0 || !strings.Contains(out.String(), "可导入 alice") || !strings.Contains(out.String(), "未归属") || strings.Contains(out.String(), "legacy-secret") {
 		t.Fatalf("dry run: %s %+v", &out, rows)
 	}
 	for _, query := range []string{"SELECT COUNT(*) FROM audit", "SELECT COUNT(*) FROM managed_containers"} {
@@ -29,11 +30,19 @@ func TestImportDryRunAndRepeat(t *testing.T) {
 	if err := h.Import(context.Background(), ImportOptions{Containers: []string{"alice", f.c.ID}}, &out); err != nil {
 		t.Fatal(err)
 	}
+	rows, err := h.records()
+	if err != nil || len(rows) != 1 || rows[0].Owner != "" {
+		t.Fatalf("import assigned an owner from the name or label: %+v %v", rows, err)
+	}
+	// A subsequent explicit assignment must survive repeated imports.
+	if _, err := h.db.SQL.Exec("UPDATE managed_containers SET owner='bob' WHERE id=?", f.c.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := h.Import(context.Background(), ImportOptions{}, &out); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ = h.records()
-	if len(rows) != 1 || rows[0].Owner != "alice" || !strings.Contains(out.String(), "已登记跳过 1") {
+	if len(rows) != 1 || rows[0].Owner != "bob" || !strings.Contains(out.String(), "已登记跳过 1") {
 		t.Fatalf("repeat import: %s %+v", &out, rows)
 	}
 	current, _ := h.config()

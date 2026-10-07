@@ -86,7 +86,7 @@ owner 必须填写总控已登记的集群使用者 `username`，image 默认使
 
 删除使用 `docker rm <完整ID>`，无 `--force`、无 `--volumes`。Docker 命令参数参见 [Docker create 文档](https://docs.docker.com/reference/cli/docker/container/create/) 与 [inspect 文档](https://docs.docker.com/reference/cli/docker/container/inspect/)。
 
-CLI 导入保留原有文本归属，未登记标识在总控统计中明确单列。
+CLI 新接管的容器默认为未归属，容器名和 Docker 标签不会自动成为使用者归属；之后由使用者领养或管理员分配给已登记使用者。重复导入跳过已接管的容器，保留其当前归属。总控将空归属及未匹配已登记使用者的容器统一显示为未归属，不另设“未登记使用者”分组。
 
 ## 使用者自动分配
 

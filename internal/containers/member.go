@@ -169,7 +169,21 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	if err != nil {
 		return fail(err)
 	}
-	_, err = h.db.SQL.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted,mode,container_id) VALUES(?,?,'',0,?,?) ON CONFLICT(member_id) DO NOTHING", id, req.Username, req.Mode, req.ContainerID)
+	err = h.db.Transaction(func(tx *sql.Tx) error {
+		// Validate the target and reserve it together; rejected unmanaged targets
+		// must not leave a slot that blocks this member's later choice.
+		if req.Mode == "adopt" {
+			var exists bool
+			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM managed_containers WHERE id=?)", req.ContainerID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return fmt.Errorf("容器未接管，请先通过 CLI 导入")
+			}
+		}
+		_, err := tx.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted,mode,container_id) VALUES(?,?,'',0,?,?) ON CONFLICT(member_id) DO NOTHING", id, req.Username, req.Mode, req.ContainerID)
+		return err
+	})
 	if err != nil {
 		if platform.IsConstraint(err) {
 			return fail(fmt.Errorf("容器已领养或该使用者在此 node 已有分配"))
@@ -215,7 +229,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	for _, v := range records {
 		if v.Name == "alpha-"+id {
 			record = v
-		} else if v.Owner == owner && r.Method == "PUT" {
+		} else if v.Owner == owner {
 			return fail(fmt.Errorf("该使用者在此 node 已有容器 %s", v.Name))
 		}
 	}

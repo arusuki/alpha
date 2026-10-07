@@ -28,7 +28,7 @@ func TestContainersImportCLI(t *testing.T) {
 	id := strings.Repeat("a", 64)
 	container := map[string]any{
 		"Id": id, "Name": "/alice", "Image": "sha256:test",
-		"Config": map[string]any{"Image": "training:test", "Hostname": "docker-alice", "Tty": true},
+		"Config": map[string]any{"Image": "training:test", "Hostname": "docker-alice", "Tty": true, "Labels": map[string]string{"project-alpha.owner": "alice"}},
 		"HostConfig": map[string]any{
 			"NetworkMode": "bridge", "IpcMode": "host", "RestartPolicy": map[string]string{"Name": "unless-stopped"},
 			"Ulimits":        []map[string]any{{"Name": "memlock", "Soft": -1, "Hard": -1}},
@@ -76,7 +76,7 @@ esac
 		t.Fatalf("records: %d %v", count, err)
 	}
 	var owner string
-	if err := db.SQL.QueryRow("SELECT owner FROM owners WHERE container_id=?", id).Scan(&owner); err != nil || owner != "alice" {
+	if err := db.SQL.QueryRow("SELECT owner FROM owners WHERE container_id=?", id).Scan(&owner); err != nil || owner != "" {
 		t.Fatalf("owner: %q %v", owner, err)
 	}
 	if err := db.SQL.QueryRow("SELECT COUNT(*) FROM audit WHERE actor='cli' AND action='container.adopt'").Scan(&count); err != nil || count != 1 {

@@ -243,7 +243,7 @@ func TestAdoptionFailureReasons(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h, f, cfg := fixture(t)
 			tc.change(f, cfg)
-			report, _ := h.check(context.Background(), cfg, "alice", "alice")
+			report, _ := h.check(context.Background(), cfg, "alice")
 			if report.OK {
 				t.Fatal("accepted unsafe container")
 			}
@@ -381,8 +381,8 @@ func TestHostAdoptionAndSymlinkRejection(t *testing.T) {
 	f.c.HostConfig.NetworkMode = "host"
 	f.c.HostConfig.PortBindings = nil
 	f.sshPort = 2233
-	report, _ := h.check(context.Background(), cfg, "alice", "alice")
-	if !report.OK || report.Spec.Port != 2233 {
+	report, record := h.check(context.Background(), cfg, "alice")
+	if !report.OK || record.Spec.Port != 2233 {
 		t.Fatalf("host adoption: %+v", report)
 	}
 	path := filepath.Join(cfg.BaseDir, "alice", "home")
@@ -392,7 +392,7 @@ func TestHostAdoptionAndSymlinkRejection(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), path); err != nil {
 		t.Fatal(err)
 	}
-	report, _ = h.check(context.Background(), cfg, "alice", "alice")
+	report, _ = h.check(context.Background(), cfg, "alice")
 	if report.OK {
 		t.Fatal("adopted symlink")
 	}
@@ -453,8 +453,8 @@ func TestCreateCanBeReadopted(t *testing.T) {
 	if status != 200 {
 		t.Fatal(body)
 	}
-	report, _ := h.check(context.Background(), cfg, "bob", "bob")
-	if !report.OK || report.Spec.Port != 32190 {
+	report, record := h.check(context.Background(), cfg, "bob")
+	if !report.OK || record.Spec.Port != 32190 {
 		t.Fatalf("cannot readopt: %+v", report)
 	}
 }

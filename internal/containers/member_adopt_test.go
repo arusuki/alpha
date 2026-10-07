@@ -86,7 +86,7 @@ func TestAdoptionRejectsSecondContainerForOwner(t *testing.T) {
 	}
 }
 
-func TestAdoptUnmanagedDockerContainerDirectly(t *testing.T) {
+func TestCandidatesListOnlyManagedContainersWithoutDocker(t *testing.T) {
 	h, f, _ := fixture(t)
 	id := strings.Repeat("3", 32)
 	candidates, err := h.candidates()
@@ -97,18 +97,9 @@ func TestAdoptUnmanagedDockerContainerDirectly(t *testing.T) {
 	if strings.Contains(string(raw), f.c.ID) {
 		t.Fatal("unmanaged Docker container offered for adoption")
 	}
-	body, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123", "mode": "adopt", "container_id": f.c.ID, "expected_owner": "alice"})
-	if status, out := call(h, "PUT", "/api/containers/members/"+id, string(body), admin); status != 200 {
-		t.Fatalf("direct adoption: %d %s", status, out)
-	}
-	records, err := h.records()
-	if err != nil || len(records) != 1 || records[0].Owner != "bob" || records[0].Origin != "adopt" {
-		t.Fatalf("missing adopted record: %+v %v", records, err)
-	}
-	for _, args := range f.calls {
-		if args[0] == "create" || args[0] == "start" || args[0] == "stop" || args[0] == "rm" {
-			t.Fatalf("adoption changed lifecycle: %v", args)
-		}
+	adopt(t, h)
+	if status, out := adoptionCall(h, id, "bob", f.c.ID); status != 200 {
+		t.Fatalf("adoption: %d %s", status, out)
 	}
 	// Once managed, the container remains listed with its claim even if Docker
 	// cannot be queried; unrelated live containers are never enumerated.
@@ -128,29 +119,23 @@ func TestAdoptUnmanagedDockerContainerDirectly(t *testing.T) {
 		t.Fatalf("candidate list queried Docker: %v", f.calls)
 	}
 }
-func TestUnmanagedAdoptionRejectsTemplateAndMarksReservation(t *testing.T) {
+func TestUnmanagedAdoptionRejectsWithoutReservation(t *testing.T) {
 	h, f, _ := fixture(t)
-	f.c.HostConfig.Privileged = true
 	id := strings.Repeat("4", 32)
-	body, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123", "mode": "adopt", "container_id": f.c.ID, "expected_owner": "alice"})
-	if status, out := call(h, "PUT", "/api/containers/members/"+id, string(body), admin); status == 200 || !strings.Contains(out, "不符合领养要求") {
-		t.Fatalf("template check: %d %s", status, out)
+	if status, out := adoptionCall(h, id, "bob", f.c.ID); status == 200 || !strings.Contains(out, "请先通过 CLI 导入") {
+		t.Fatalf("unmanaged adoption: %d %s", status, out)
 	}
-	records, _ := h.records()
-	if len(records) != 0 {
-		t.Fatal("registered invalid container")
+	var slots int
+	if err := h.db.SQL.QueryRow("SELECT count(*) FROM member_container_slots").Scan(&slots); err != nil || slots != 0 {
+		t.Fatalf("rejected adoption left a reservation: %d %v", slots, err)
 	}
-	value, err := h.candidates()
-	if err != nil {
-		t.Fatal(err)
+	if len(f.calls) != 0 {
+		t.Fatalf("unmanaged adoption called Docker: %v", f.calls)
 	}
-	raw, _ := json.Marshal(value)
-	if strings.Contains(string(raw), f.c.ID) {
-		t.Fatal("unmanaged reservation offered for adoption")
-	}
-	var reserved string
-	if err := h.db.SQL.QueryRow("SELECT container_id FROM member_container_slots WHERE member_id=? AND deleted=0", id).Scan(&reserved); err != nil || reserved != f.c.ID {
-		t.Fatalf("pending claim lost: %s %v", reserved, err)
+	// After an explicit import, the same member can claim the container.
+	adopt(t, h)
+	if status, out := adoptionCall(h, id, "bob", f.c.ID); status != 200 {
+		t.Fatalf("adoption after import: %d %s", status, out)
 	}
 }
 
