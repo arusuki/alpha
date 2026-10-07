@@ -178,7 +178,7 @@
   $('refreshStatus').addEventListener('click',()=>refresh());
   $('copySSHConfig').addEventListener('click',async()=>{
     const epoch=state.epoch;
-    try{await navigator.clipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请追加保存到本机 ~/.ssh/config；仅使用自定义私钥路径时需要修改注释项。';}
+    try{await AlphaClipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请追加保存到本机 ~/.ssh/config；仅使用自定义私钥路径时需要修改注释项。';}
     catch{if(epoch===state.epoch)$('sshCopyStatus').textContent='请手动复制上方 SSH 配置。';}
   });
   $('logout').addEventListener('click',()=>{

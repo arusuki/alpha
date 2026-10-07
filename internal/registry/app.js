@@ -4,6 +4,22 @@
   const base = document.body.dataset.base;
   let csrf = '', schema, stream, nodeChoices = null, optionsRequest = 0, optionsLoading = false;
   const message = text => { $('message').textContent = text; };
+  let errorField, progressError = '';
+  function showError(text, field) {
+    message(text);
+    $('errorMessage').textContent = text;
+    errorField = field;
+    if (!$('errorDialog').open) $('errorDialog').showModal();
+  }
+  $('errorDialog').addEventListener('close', () => { errorField?.focus(); errorField = null; });
+  $('registration').addEventListener('invalid', event => {
+    event.preventDefault();
+    if (!$('errorDialog').open) {
+      const field = event.target;
+      const label = field.labels?.[0]?.textContent.trim() || '注册信息';
+      showError(`${label}：${field.validationMessage}`, field);
+    }
+  }, true);
   async function api(action, body) {
     const response = await fetch(`${base}/api/${action}`, {
       method: body === undefined ? 'GET' : 'POST', credentials: 'same-origin', cache: 'no-store',
@@ -82,7 +98,7 @@
       }
       if (!nodeChoices.length) $('nodeChoices').textContent='暂无计算节点；管理员添加节点后，可在状态页申请。';
       updateChoiceSummary();
-    } catch (error) { if(request===optionsRequest){nodeChoices=null; message(error.message);} }
+    } catch (error) { if(request===optionsRequest){nodeChoices=null; showError(error.message);} }
     finally {if(request===optionsRequest){optionsLoading=false; $('submit').disabled=nodeChoices===null; $('reloadNodes').disabled=false;}}
   }
   $('reloadNodes').onclick = loadNodes;
@@ -113,6 +129,10 @@
     $('progressTitle').textContent = percent === 100 ? '你的工作空间已就绪' : failed ? '部分资源需要处理' : '正在准备你的工作空间';
     $('retry').hidden = !failed;
     message(failed ? '已完成的资源会保留。可重试未完成项；分享结果未知时需管理员核对。' : percent === 100 ? '注册与资源分配已完成。' : '注册已完成，资源分配进度会自动更新。');
+    const problems = rows.filter(row => !['ready','invited','accepted'].includes(row.state) && (row.error || ['failed','unknown'].includes(row.state)))
+      .map(row => `${row.name}：${row.error || labels[row.state]}`).join('\n');
+    if (problems && problems !== progressError) showError(`${problems}\n\n注册信息和已完成的资源会保留，请处理后重试未完成项。`);
+    progressError = problems;
     let link;
     try { link = new URL(access.invite_url); } catch (_) { /* No link yet. */ }
     $('share').hidden = !(link && link.protocol === 'https:' && link.host === 'login.tailscale.com' && !link.username && !link.password && ['invited','accepted'].includes(access.invite_state));
@@ -137,7 +157,7 @@
     if (stream) stream.close();
     stream = new EventSource(`${base}/api/events`);
     stream.addEventListener('progress', event => { render(JSON.parse(event.data)); });
-    stream.addEventListener('problem', event => { message(JSON.parse(event.data).error); });
+    stream.addEventListener('problem', event => { showError(JSON.parse(event.data).error); });
     stream.onerror = () => message('进度连接中断，正在自动重连；已提交的注册会继续处理。');
   }
   async function register(body) {
@@ -145,20 +165,19 @@
     message('正在提交注册…');
     try { await api('register', body); $('registration').elements.password.value = ''; $('registration').elements.password_confirm.value = ''; watch(); }
     catch (error) {
-      message(error.message);
+      showError(error.status === 409 ? `${error.message}。若注册字段已更新，请刷新页面。` : error.message);
       if (error.status >= 400 && error.status < 500) {
         $('registration').hidden = false;
-        if (error.status === 409) message(`${error.message}。若注册字段已更新，请刷新页面。`);
       } else { $('registration').hidden = true; $('resume').hidden = false; }
     } finally { $('submit').disabled = optionsLoading || nodeChoices === null; }
   }
   $('registration').addEventListener('submit', event => {
     event.preventDefault();
     const form = $('registration');
-    if (form.elements.password.value !== form.elements.password_confirm.value) { message('两次输入的密码不一致。'); return; }
-    if (optionsLoading || nodeChoices === null) { message('请先载入节点与容器列表。'); return; }
+    if (form.elements.password.value !== form.elements.password_confirm.value) { showError('两次输入的密码不一致。', form.elements.password_confirm); return; }
+    if (optionsLoading || nodeChoices === null) { showError('请先载入节点与容器列表。'); return; }
     const containers = Array.from($('nodeChoices').querySelectorAll('input:checked')).map(input => ({node_id:input.dataset.node,mode:input.value==='create'?'create':'adopt',container_id:input.value==='create'?'':input.value}));
-    if (containers.length !== nodeChoices.length) {message('请为每个节点选择领养或新建。');return;}
+    if (containers.length !== nodeChoices.length) {showError('请为每个节点选择领养或新建。');return;}
     const profile = Object.create(null);
     for (const input of $('fields').querySelectorAll('[data-key]')) profile[input.dataset.key] = input.value;
     register({password:$('registration').elements.password.value, username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile, containers});
@@ -166,16 +185,16 @@
   $('resume').onclick = () => register({});
   $('retry').onclick = async () => {
     $('retry').disabled = true;
-    try { await api('retry', {}); message('已请求重试，正在等待分配结果。'); } catch (error) { message(error.message); }
+    try { await api('retry', {}); message('已请求重试，正在等待分配结果。'); } catch (error) { showError(error.message); }
     finally { $('retry').disabled = false; }
   };
   $('copy').onclick = async () => {
-    try { await navigator.clipboard.writeText($('shareLink').href); message('分享链接已复制。'); }
-    catch (_) { message('请长按或右键上方分享链接复制。'); }
+    try { await AlphaClipboard.writeText($('shareLink').href); message('分享链接已复制。'); }
+    catch (_) { showError('浏览器未允许复制，请长按或右键上方分享链接复制。'); }
   };
   $('copyControl').onclick = async () => {
-    try { await navigator.clipboard.writeText($('controlStatusLink').href); message('总控地址已复制。登录成功后请收藏此地址，以后无需再打开注册页。'); }
-    catch (_) { message('请手动复制下方显示的总控地址。'); }
+    try { await AlphaClipboard.writeText($('controlStatusLink').href); message('总控地址已复制。登录成功后请收藏此地址，以后无需再打开注册页。'); }
+    catch (_) { showError('浏览器未允许复制，请手动复制下方显示的总控地址。'); }
   };
   addEventListener('pagehide', () => stream?.close());
   async function load() {
@@ -185,7 +204,7 @@
       if (value.registered) watch();
       else if (value.submitted) await register({});
       else { $('registration').hidden = false; message('邀请码已验证，请填写注册信息并选择各节点的容器。'); await loadNodes(); }
-    } catch (error) { message(`${error.message}，请刷新页面重试。`); }
+    } catch (error) { showError(`${error.message}，请刷新页面重试。`); }
   }
   load();
 })();

@@ -165,7 +165,7 @@ $('memberInvitationForm').addEventListener('submit',submitInvitation);
 $('memberInvitationsPanel').addEventListener('submit',submitInvitation);
 $('memberInvitationCopy').addEventListener('click',async()=>{
   const code=$('memberInvitationCode').value,epoch=state.epoch;
-  try{await navigator.clipboard.writeText(code);if(epoch===state.epoch&&code===$('memberInvitationCode').value)$('memberInvitationCopyStatus').textContent='已复制。';}
+  try{await AlphaClipboard.writeText(code);if(epoch===state.epoch&&code===$('memberInvitationCode').value)$('memberInvitationCopyStatus').textContent='已复制。';}
   catch(_){if(epoch===state.epoch&&code===$('memberInvitationCode').value){$('memberInvitationCode').select();$('memberInvitationCopyStatus').textContent='请手动复制所选邀请码。';}}
 });
 $('memberInvitationClose').addEventListener('click',()=>{clearCode();$('memberInvitationDialog').close();});

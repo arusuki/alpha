@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	web "project-alpha/dist"
 	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
@@ -172,7 +173,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	base := "/registry/" + match[1] + "/" + match[2]
 	action := match[3]
-	if !((action == "" || action == "/" || action == "/app.js" || action == "/style.css" || action == "/guide/tailscale-shared-machine.jpg" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
+	if !((action == "" || action == "/" || action == "/app.js" || action == "/clipboard.js" || action == "/style.css" || action == "/guide/tailscale-shared-machine.jpg" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
 		panic(http.ErrAbortHandler)
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -233,6 +234,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(http.ErrAbortHandler)
 	}
 	switch action {
+	case "/clipboard.js":
+		body, err := web.Assets.ReadFile("clipboard.js")
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		w.Write(body)
 	case "/app.js", "/style.css", "/guide/tailscale-shared-machine.jpg":
 		body, err := assets.ReadFile(strings.TrimPrefix(action, "/"))
 		if err != nil {

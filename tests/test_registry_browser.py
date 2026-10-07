@@ -112,6 +112,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             expect(admin.locator('#registryShareURL')).to_have_value(entry)
             expect(admin.locator('#registryShareCopy')).to_be_enabled()
             context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=control_url)
+            admin.evaluate("() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; }")
             admin.locator('#registryShareCopy').click()
             expect(admin.locator('#registryShareStatus')).to_have_text('链接已复制。')
             assert admin.evaluate('navigator.clipboard.readText()') == entry
@@ -178,13 +179,19 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             page.locator('[name=ssh_public_key]').fill(ssh_key)
             page.locator('[data-key=group]').select_option('A组')
             page.locator('#submit').click()
-            expect(page.locator('#message')).to_contain_text('两次输入的密码不一致')
+            expect(page.locator('#errorDialog')).to_be_visible()
+            expect(page.locator('#errorMessage')).to_contain_text('两次输入的密码不一致')
+            page.locator('#errorDialog button').click()
+            expect(page.locator('[name=password_confirm]')).to_be_focused()
             page.locator('[name=password_confirm]').fill('Member-password-123')
             page.locator('#submit').click()
             expect(page.locator('#progress')).to_be_visible()
             expect(page.locator('#retry')).to_be_visible()
             expect(page.locator('#share')).to_be_hidden()
             expect(page.locator('#steps')).to_contain_text('暂无可分配')
+            expect(page.locator('#errorDialog')).to_be_visible()
+            expect(page.locator('#errorMessage')).to_contain_text('暂无可分配')
+            page.locator('#errorDialog button').click()
             member_id = sql('control', 'SELECT id FROM members WHERE username=?', ('alice',))[0][0]
             for _ in range(100):
                 if sql('control', 'SELECT pending FROM member_work WHERE member_id=?', (member_id,))[0][0] == 0:
@@ -210,6 +217,10 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             assert image_response.status == 200
             assert image_response.headers['content-type'] == 'image/jpeg'
             context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=registry_url)
+            page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; }")
+            page.locator('#copy').click()
+            expect(page.locator('#message')).to_contain_text('分享链接已复制')
+            assert page.evaluate('navigator.clipboard.readText()') == page.locator('#shareLink').get_attribute('href')
             page.locator('#copyControl').click()
             expect(page.locator('#message')).to_contain_text('总控地址已复制')
             assert page.evaluate('navigator.clipboard.readText()') == 'http://100.64.0.2:9765/status/alice'

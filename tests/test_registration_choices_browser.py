@@ -28,6 +28,9 @@ with sync_playwright() as p:
         if path == '/':
             mime = 'text/html'
             body = (repo / 'internal/registry/page.html').read_text().replace('{{.Base}}', '')
+        elif path == '/clipboard.js':
+            mime = 'application/javascript'
+            body = (repo / 'dist/clipboard.js').read_text()
         elif path in ('/app.js', '/style.css'):
             mime = 'application/javascript' if path.endswith('.js') else 'text/css'
             body = (repo / 'internal/registry' / path[1:]).read_text()
@@ -59,12 +62,23 @@ with sync_playwright() as p:
     assert page.locator('#nodeChoices img').count() == 0
     page.locator('#submit').click()
     assert not submitted, 'submitted without per-node choices'
+    expect(page.locator('#errorDialog')).to_be_visible()
+    page.locator('#errorDialog button').click()
     page.locator(f'input[data-node="{node_a}"][value="{free}"]').check()
     page.locator(f'input[data-node="{node_b}"][value=create]').check()
     expect(page.locator('#choiceSummary')).to_have_text('已选择 2 / 2 个节点')
     page.locator('#nodeChoices').screenshot(path='/tmp/alpha-registration-choices-desktop.png')
     page.locator('#submit').click()
-    expect(page.locator('#message')).to_contain_text('保留表单')
+    expect(page.locator('#errorDialog')).to_be_visible()
+    expect(page.locator('#errorMessage')).to_contain_text('保留表单')
+    expect(page.locator('#errorDialog button')).to_be_focused()
+    page.set_viewport_size(dict(width=390, height=844))
+    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+    page.screenshot(path='/tmp/alpha-registration-error.png')
+    page.keyboard.press('Escape')
+    expect(page.locator('#errorDialog')).to_be_hidden()
+    expect(page.locator('[name=username]')).to_have_value('alice')
+    expect(page.locator('[name=password]')).to_have_value('Member-password-123')
     assert submitted[-1]['containers'] == [
         dict(node_id=node_a, mode='adopt', container_id=free),
         dict(node_id=node_b, mode='create', container_id='')]
@@ -79,6 +93,22 @@ with sync_playwright() as p:
     page.set_viewport_size(dict(width=390, height=844))
     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     page.screenshot(path='/tmp/alpha-registration-choices.png', full_page=True)
+    page.route('**/api/options', lambda r: r.fulfill(status=503, json=dict(error='节点列表暂不可用')))
+    page.locator('#reloadNodes').click()
+    expect(page.locator('#errorMessage')).to_have_text('节点列表暂不可用')
+    expect(page.locator('#errorDialog')).to_be_visible()
+    page.locator('#errorDialog button').click()
+    expect(page.locator('#submit')).to_be_disabled()
+    page.unroute('**/api/options')
+    page.locator('#reloadNodes').click()
+    expect(page.locator('#submit')).to_be_enabled()
+    page.locator(f'input[data-node="{node_a}"][value=create]').check()
+    page.route('**/api/register', lambda r: r.fulfill(status=503, json=dict(error='注册结果暂不可用')))
+    page.locator('#submit').click()
+    expect(page.locator('#errorDialog')).to_be_visible()
+    expect(page.locator('#errorMessage')).to_have_text('注册结果暂不可用')
+    page.locator('#errorDialog button').click()
+    expect(page.locator('#resume')).to_be_visible()
     assert not errors, errors
     browser.close()
 print('Registration container choice browser checks passed.')

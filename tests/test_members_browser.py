@@ -68,6 +68,11 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 page.locator('#memberInvitationDialog').wait_for(state='visible')
                 code = page.locator('#memberInvitationCode').input_value()
                 assert len(code) == 48
+                context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=url)
+                page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; }")
+                page.locator('#memberInvitationCopy').click()
+                expect(page.locator('#memberInvitationCopyStatus')).to_have_text('已复制。')
+                assert page.evaluate('navigator.clipboard.readText()') == code
                 page.locator('#memberInvitationClose').click()
                 assert page.locator('#memberInvitationCode').input_value() == ''
                 invitation_label = page.locator('[data-update-invitation] input[name="label"]')

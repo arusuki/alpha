@@ -71,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, dict(member_id=member, username='alice', ssh_public_key=member_keys, control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.lstrip('/')
-        if filename not in ('status.html', 'status.js', 'status.css'):
+        if filename not in ('status.html', 'status.js', 'status.css', 'clipboard.js'):
             self.send(404, {})
             return
         mime = {'html': 'text/html', 'js': 'application/javascript', 'css': 'text/css'}[filename.split('.')[-1]]
@@ -149,6 +149,7 @@ try:
         expect(page.locator('#sshConfig')).to_contain_text('Port 2222')
         expect(page.locator('#sshConfig')).to_contain_text('ProxyJump alpha-jump')
         page.context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=url)
+        page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; }")
         page.locator('#copySSHConfig').click()
         expect(page.locator('#sshCopyStatus')).to_contain_text('SSH 配置已复制')
         assert page.evaluate('navigator.clipboard.readText()') == page.locator('#sshConfig').inner_text()

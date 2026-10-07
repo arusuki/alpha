@@ -265,7 +265,7 @@ $('registryShareCreate').addEventListener('click',()=>{
 });
 $('registryShareCopy').addEventListener('click',async()=>{
   const url=$('registryShareURL').value,sequence=state.shareSequence;if(!url)return;
-  try{await navigator.clipboard.writeText(url);if(sequence===state.shareSequence)$('registryShareStatus').textContent='链接已复制。';}
+  try{await AlphaClipboard.writeText(url);if(sequence===state.shareSequence)$('registryShareStatus').textContent='链接已复制。';}
   catch(_){if(sequence===state.shareSequence){$('registryShareURL').select();$('registryShareStatus').textContent='请手动复制所选链接。';}}
 });
 $('nodeForm').addEventListener('submit',async e=>{

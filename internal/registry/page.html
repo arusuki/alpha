@@ -4,6 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>注册 · Project Alpha</title>
   <link rel="stylesheet" href="{{.Base}}/style.css">
+  <script defer src="{{.Base}}/clipboard.js"></script>
   <script defer src="{{.Base}}/app.js"></script>
 </head>
 <body data-base="{{.Base}}">
@@ -89,5 +90,10 @@
   <button type="button" id="resume" hidden>继续查询注册结果</button>
   <footer id="registrationFooter">进入总控前，本页可刷新恢复进度，请暂时保留当前浏览器的注册会话。登录总控后，日常操作统一在总控完成。</footer>
 </main>
+<dialog id="errorDialog" role="alertdialog" aria-labelledby="errorTitle" aria-describedby="errorMessage">
+  <h2 id="errorTitle">操作未完成</h2>
+  <p id="errorMessage"></p>
+  <form method="dialog"><button autofocus>知道了</button></form>
+</dialog>
 </body>
 </html>
