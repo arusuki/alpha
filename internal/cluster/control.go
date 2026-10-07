@@ -200,6 +200,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 					if count > 0 {
 						return httpapi.NewError(409, "节点仍有使用者资源记录，请先回收关联使用者资源")
 					}
+					if _, err := tx.Exec("DELETE FROM member_key_sync WHERE node_id=?", n.ID); err != nil {
+						return err
+					}
 					if _, err := tx.Exec("DELETE FROM cluster_nodes WHERE id=?", n.ID); err != nil {
 						return err
 					}

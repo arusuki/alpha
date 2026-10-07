@@ -79,7 +79,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	p.BoolVar(&o.databaseOnly, "database-only", false, "离线备份并原地升级数据库，不更新二进制")
 	showVersion := p.Bool("version", false, "显示更新器版本")
 	p.Usage = func() {
-		fmt.Fprintln(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n先停止使用这些文件的服务，以可写入数据和二进制目录的账号运行。\n支持从 v0.3.1 升级；不自动启动/停止服务。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。")
+		fmt.Fprintf(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n离线数据库升级：alpha-updater --database-only --data-dir DIR\n目标数据库版本：%d；支持范围由构建时的 Git tag 升级窗口决定。\n先停止使用这些文件的服务，以可写入数据和二进制目录的账号运行；不自动启动/停止服务。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。\n", platform.DatabaseVersion)
 		p.PrintDefaults()
 	}
 	if err := p.Parse(args); err != nil {

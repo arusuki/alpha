@@ -35,6 +35,7 @@ type databaseUpgrade struct {
 // the generated BaseSchema can be removed when that retention window advances.
 var databaseUpgrades = []databaseUpgrade{
 	{From: 33, To: 34, Apply: upgradeContainerChoices},
+	{From: 34, To: 35, Apply: upgradeMemberKeys},
 }
 
 func databaseUpgradePlan(version int) ([]databaseUpgrade, error) {

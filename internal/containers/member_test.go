@@ -86,8 +86,8 @@ func TestMemberRetryAfterCreateStartFailureAndUnassign(t *testing.T) {
 			t.Fatalf("delete %d %s", status, body)
 		}
 	}
-	if len(f.calls) != callsBeforeDelete || f.absent || !f.c.State.Running {
-		t.Fatal("unassignment changed the Docker container")
+	if len(f.calls) <= callsBeforeDelete || f.absent || !f.c.State.Running {
+		t.Fatal("deletion must revoke keys and keep the container running")
 	}
 	records, err := h.records()
 	if err != nil || len(records) != 1 || records[0].Owner != "" {
@@ -151,7 +151,7 @@ func TestMemberRecoversDockerSuccessBeforeDatabaseWrite(t *testing.T) {
 		t.Fatal("duplicate create")
 	}
 }
-func TestMemberDeleteUnassignsWhenDaemonUnavailable(t *testing.T) {
+func TestMemberDeletePreservesOwnershipWhenDaemonUnavailable(t *testing.T) {
 	h, f, _ := fixture(t)
 	f.absent = true
 	id := strings.Repeat("e", 32)
@@ -159,15 +159,11 @@ func TestMemberDeleteUnassignsWhenDaemonUnavailable(t *testing.T) {
 		t.Fatalf("create %d %s", status, body)
 	}
 	f.failAction = "info"
-	callsBeforeDelete := len(f.calls)
-	if status, body := memberCall(h, "DELETE", id); status != 200 {
-		t.Fatalf("unassign with unavailable daemon: %d %s", status, body)
-	}
-	if len(f.calls) != callsBeforeDelete {
-		t.Fatal("unassignment called Docker")
+	if status, _ := memberCall(h, "DELETE", id); status == 200 {
+		t.Fatal("deletion succeeded without revoking keys")
 	}
 	records, e := h.records()
-	if e != nil || len(records) != 1 || records[0].Owner != "" {
+	if e != nil || len(records) != 1 || records[0].Owner != "bob" {
 		t.Fatal("record/ownership lost")
 	}
 	f.failAction = ""
@@ -192,5 +188,51 @@ func TestMemberCannotClaimOtherManagedContainer(t *testing.T) {
 		if c[0] == "exec" || c[0] == "start" || c[0] == "rm" {
 			t.Fatalf("mutated unrelated container: %v", c)
 		}
+	}
+}
+
+func TestMemberKeyPatchAndDelete(t *testing.T) {
+	h, f, _ := fixture(t)
+	f.absent = true
+	id := strings.Repeat("9", 32)
+	if code, body := memberCall(h, "PUT", id); code != 200 {
+		t.Fatal(code, body)
+	}
+	// Existing public fixture; never generate test keys.
+	other := "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBIvR3cOir2XFsX4NiA4QO1JKQ7c87emaiV0rBXS3fiseEt0seHFTvuv2Tl0Zz5jQJS1Ko0oVLFAQZ4BtLtn6hKg="
+	patch := func(keys string) (int, string) {
+		raw, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": keys})
+		return call(h, "PATCH", "/api/containers/members/"+id, string(raw), admin)
+	}
+	before := len(f.inputs)
+	if code, body := patch(memberKey + "\n" + other); code != 200 {
+		t.Fatal(code, body)
+	}
+	if !strings.Contains(f.inputs[len(f.inputs)-1], memberKey) || !strings.Contains(f.inputs[len(f.inputs)-1], other) {
+		t.Fatal("keys not delivered", f.inputs[before:])
+	}
+	if code, body := patch(other); code != 200 {
+		t.Fatal(code, body)
+	}
+	if strings.Contains(f.inputs[len(f.inputs)-1], memberKey) {
+		t.Fatal("old key delivered")
+	}
+	f.failAction = "exec"
+	if code, _ := memberCall(h, "DELETE", id); code == 200 {
+		t.Fatal("ignored key removal failure")
+	}
+	records, _ := h.records()
+	if records[0].Owner != "bob" {
+		t.Fatal("released ownership before revocation")
+	}
+	f.failAction = ""
+	if code, body := memberCall(h, "DELETE", id); code != 200 {
+		t.Fatal(code, body)
+	}
+	if f.inputs[len(f.inputs)-1] != "" {
+		t.Fatal("deletion installed a key")
+	}
+	if code, _ := patch(other); code == 200 {
+		t.Fatal("accepted patch after deletion")
 	}
 }

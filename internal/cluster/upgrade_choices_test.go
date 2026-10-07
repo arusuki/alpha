@@ -33,7 +33,8 @@ func TestControlUpgradeRetainsChoiceAndRegistrationRetry(t *testing.T) {
 	if _, err = db.SQL.Exec("INSERT INTO member_node_resources(member_id,node_id,state,container_id,name,port,updated_at) VALUES(?,?,'ready',?,'existing',2222,123)", m.ID, node, target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec(`ALTER TABLE members DROP COLUMN registration_containers;
+	if _, err = db.SQL.Exec(`DROP TABLE member_key_sync; DROP TABLE member_key_revocations;
+ ALTER TABLE members DROP COLUMN registration_containers;
  ALTER TABLE member_node_resources DROP COLUMN mode; ALTER TABLE member_node_resources DROP COLUMN target_id; PRAGMA user_version=33;`); err != nil {
 		t.Fatal(err)
 	}

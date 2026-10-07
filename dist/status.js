@@ -5,18 +5,19 @@
   const username=decodeURIComponent(location.pathname.split('/')[2]);
   const endpoint='/api/status/'+encodeURIComponent(username);
   const storageKey='alpha.member-session.'+username;
-  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null};
+  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null,keysDirty:false,keysSaving:false};
   const labels={unallocated:'尚无容器',pending:'等待分配',running:'正在分配',ready:'已分配容器',failed:'分配失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
   function controls(){
     document.querySelectorAll('[data-choice]').forEach(input=>{input.disabled=state.busy||input.dataset.unavailable==='true';});
-    $('loginSubmit').disabled=state.busy;
+    $('loginSubmit').disabled=state.busy;$('keysSubmit').disabled=state.busy;$('memberKeys').disabled=state.keysSaving;
     $('refreshStatus').disabled=state.busy;$('passwordSubmit').disabled=state.busy;
     document.querySelectorAll('[data-apply]').forEach(button=>{button.disabled=state.busy||button.dataset.available!=='true';});
   }
   function clearSession(message=''){
     state.epoch++;state.request?.abort();state.request=null;
     clearTimeout(state.timer);state.token='';state.data=null;state.busy=false;state.applying=null;stored('');
+    state.keysDirty=false;state.keysSaving=false;$('keysForm').reset();$('keysError').textContent='';$('keysMessage').textContent='';$('keysSyncState').textContent='';
     $('loginPassword').value='';$('passwordForm').reset();$('passwordError').textContent='';$('loginPanel').hidden=false;$('statusContent').hidden=true;
     $('statusNodes').replaceChildren();$('sshConfig').textContent='';$('sshCommands').replaceChildren();$('controlStatusAddress').textContent='';$('memberIdentity').textContent='使用者 · '+username;
     $('statusError').textContent=message;$('statusMessage').textContent='';$('sshCopyStatus').textContent='';controls();
@@ -39,7 +40,7 @@
   function renderGuide(data){
     const control=data.control,access=data.access;
     $('controlStatusAddress').textContent=control.status_url?'我的总控入口 · '+control.status_url:'尚未分配 share node，请联系管理员。';
-    $('sshAccessState').textContent=access.key_state==='ready'?'注册公钥已添加到跳板。':'跳板公钥尚未就绪，请联系管理员。'+(access.error||'');
+    $('sshAccessState').textContent=access.key_state==='ready'?'当前公钥已同步到跳板。':'跳板公钥尚未就绪，请联系管理员。'+(access.error||'');
     const config=access.share_host?['Host alpha-jump','  HostName '+access.share_host,'  User alpha-jump','  Port '+access.share_ssh_port,'  # 自定义私钥路径时，取消下面两行注释并修改路径','  # IdentityFile ~/.ssh/id_ed25519','  # IdentitiesOnly yes']:[];
     const connections=[];
     for(const node of data.nodes){
@@ -71,6 +72,9 @@
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
     $('checkedAt').textContent='更新于 '+new Date(data.checked_at*1000).toLocaleTimeString();
     renderGuide(data);
+    if(!state.keysDirty)$('memberKeys').value=data.ssh_public_key;
+    const keyLabels={pending:'等待下发',failed:'下发失败',ready:'已同步'};
+    $('keysSyncState').textContent=['跳板 · '+(keyLabels[data.access.key_state]||'等待下发')+(data.access.error?' · '+data.access.error:''),...data.nodes.filter(n=>n.key_state).map(n=>n.node_name+' · '+(keyLabels[n.key_state]||n.key_state)+(n.key_error?' · '+n.key_error:''))].join('\n');
     const active=document.activeElement;
     const focused={apply:active?.dataset?.apply,choice:active?.dataset?.choice,value:active?.value};
     const choices=new Map(Array.from(document.querySelectorAll('[data-choice]:checked')).map(el=>[el.dataset.choice,el.value]));
@@ -150,6 +154,16 @@
       state.token=value.session_token;stored(state.token);$('loginPassword').value='';
     }catch(error){if(epoch===state.epoch)failed(error);}
     finally{if(epoch===state.epoch){state.busy=false;controls();if(state.token)refresh();}}
+  });
+  $('memberKeys').addEventListener('input',()=>{state.keysDirty=true;$('keysMessage').textContent='';});
+  $('keysForm').addEventListener('submit',async event=>{
+    event.preventDefault();if(state.busy)return;
+    const epoch=state.epoch;state.busy=true;state.keysSaving=true;clearTimeout(state.timer);controls();$('keysError').textContent='';$('keysMessage').textContent='';
+    try{
+      await request(endpoint+'/keys',{method:'POST',body:JSON.stringify({ssh_public_key:$('memberKeys').value})});
+      if(epoch===state.epoch){state.keysDirty=false;$('keysMessage').textContent='公钥已保存，已提交自动下发。下方显示同步结果；失败后处理节点问题并再次保存即可重试。';}
+    }catch(error){if(epoch===state.epoch){if(error.status===401||error.status===403)clearSession(error.message);else $('keysError').textContent=error.message;}}
+    finally{if(epoch===state.epoch){state.busy=false;state.keysSaving=false;controls();refresh();}}
   });
   $('passwordForm').addEventListener('submit',async event=>{
     event.preventDefault();if(state.busy)return;

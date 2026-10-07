@@ -18,15 +18,15 @@
   </ol>
   <p id="message" role="status" aria-live="polite">正在载入注册信息…</p>
   <form id="registration" hidden>
-    <div class="form-heading"><span class="eyebrow">STEP 01 / 只需注册一次</span><h2>准备你的登录资料</h2><p class="hint">准备一个使用者标识、登录密码，以及这台电脑的 SSH 公钥。Tailscale 账号在下一步使用，与这里的账号分别登录。</p></div>
+    <div class="form-heading"><span class="eyebrow">STEP 01 / 只需注册一次</span><h2>准备你的登录资料</h2><p class="hint">准备一个使用者标识、登录密码，以及各台电脑的 SSH 公钥。Tailscale 账号在下一步使用，与这里的账号分别登录。</p></div>
     <label>使用者标识<input name="username" required minlength="3" maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="username" placeholder="例如 alice"></label>
     <p class="hint">以小写字母开头，3–32 位字母、数字、下划线或短横线。</p>
     <label>密码<input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
     <label>确认密码<input name="password_confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
     <p class="hint">12–256 字节，不能含换行或冒号。用于总控个人状态页登录，也是新建容器的初始 root 密码；领养容器保留原密码。</p>
     <div id="fields"></div>
-    <label>SSH 公钥<textarea name="ssh_public_key" required rows="3" maxlength="16384" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
-    <p class="hint">粘贴这台电脑的 <code>.pub</code> 公钥全文，用于 SSH 跳板认证。私钥留在本机，不要粘贴到这里。</p>
+    <label>SSH 公钥（一行一个）<textarea name="ssh_public_key" required rows="5" maxlength="32768" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
+    <p class="hint">粘贴各台电脑的 <code>.pub</code> 公钥全文，一行一个，最多 64 个。注册后可在 status 状态页修改，自动同步到跳板和容器。私钥留在本机，不要粘贴到这里。</p>
     <details class="help"><summary>在哪里找到 SSH 公钥？</summary>
       <p>在自己的电脑打开终端（Windows 使用 PowerShell），读取已有公钥：</p>
       <p class="command-label">macOS / Linux</p><pre><code>cat ~/.ssh/id_ed25519.pub</code></pre>

@@ -1,6 +1,6 @@
 # 测试环境更新器
 
-`alpha-updater` 是独立的一次性命令，用于 1.0 之前的本机测试环境升级。支持 Linux amd64/arm64；首次支持从 **v0.3.1（数据库 33）升级到当前实现（数据库 34）**。只更新执行命令的本机，每台 control、worker、registry、share node 分别运行。
+`alpha-updater` 是独立的一次性命令，用于 1.0 之前的本机测试环境升级。支持 Linux amd64/arm64；首次支持从 **v0.3.1（数据库 33）升级到当前实现（数据库 35）**。只更新执行命令的本机，每台 control、worker、registry、share node 分别运行。
 
 ## 获取与使用
 
@@ -63,6 +63,8 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 例如带有数据库变更的 tag 是 A、B、C，期间无变更的 tag 和普通提交都不计数；窗口为 A/B/C。新的开发变更仍不挤出 A；该变更打 tag D 后，窗口才变成 B/C/D。可升级的最早数据库版本是窗口中最早一次更新的**输入版本**。
 
 `internal/platform/upgrade_history.json` 是构建时嵌入的窗口信息，由 `go generate ./internal/platform` 从实际 Git tags 生成。发布工作流取完整 Git 历史、生成窗口，并验证发布 tag 确实指向 HEAD，二进制运行时无需 Git。浅克隆或缺少基线 tag 会明确失败；源码构建前应同步 tags 并重新生成。更新包仍按 release 下载，未发布提交不会成为远端更新目标。
+
+当前 34 → 35 迁移为多公钥管理新增待撤销公钥和节点下发状态表，保留原有用户、公钥和资源记录。`cmd/alpha-updater` 的 `--database-only` 与发布更新使用的 `_migrate` 入口共用此迁移链；构建后的命令帮助显示目标数据库版本。
 
 新增数据库变更时，在 `internal/platform/upgrade_history.go` 登记对应版本的迁移步骤；同一 tag 内的步骤保留为完整事务链，不分别占用名额。窗口前移后可清除低于 `base_schema` 的旧步骤和实现；没有完整迁移链时构建检查或升级会报错，不跳过缺失步骤。未发布的开发迁移也必须保留数据，但不作为已发布 update 历史。
 

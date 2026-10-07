@@ -19,3 +19,6 @@ CREATE TABLE member_access (
  error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX member_invite_id ON member_access(invite_id) WHERE invite_id<>'';
+CREATE TABLE member_key_revocations (
+ member_id TEXT NOT NULL REFERENCES members(id), public_key TEXT NOT NULL,
+ PRIMARY KEY(member_id,public_key));

@@ -44,11 +44,15 @@ func poolMembers(q platform.Queryer, node string) ([]poolMember, error) {
 		if err = rows.Scan(&m.ID, &m.Username, &m.PublicKey, &m.Status); err != nil {
 			return nil, err
 		}
-		m.PublicKey, err = sshkeys.Normalize(m.PublicKey)
+		m.PublicKey, err = sshkeys.NormalizeList(m.PublicKey)
 		if err != nil {
 			return nil, fmt.Errorf("使用者 %s 的公钥无效: %w", m.Username, err)
 		}
-		out = append(out, m)
+		for _, key := range strings.Split(m.PublicKey, "\n") {
+			entry := m
+			entry.PublicKey = key
+			out = append(out, entry)
+		}
 	}
 	return out, rows.Err()
 }
@@ -146,6 +150,49 @@ func (h *Handler) keyPool(ctx context.Context) ([]poolKey, string, error) {
 	}
 	return out, strings.Join(errors, "；"), nil
 }
+
+// ChangeMemberKeys serializes desired-key changes with pool synchronization and
+// cleanup. The callback commits the control work queue in the same transaction.
+func (h *Handler) ChangeMemberKeys(member, value string, queue func(*sql.Tx) error) error {
+	value, err := sshkeys.NormalizeList(value)
+	if err != nil {
+		return httpapi.NewError(400, err.Error())
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.DB.Transaction(func(tx *sql.Tx) error {
+		var old, status string
+		if err := tx.QueryRow("SELECT ssh_public_key,status FROM members WHERE id=?", member).Scan(&old, &status); err != nil {
+			return err
+		}
+		if status != "active" {
+			return httpapi.NewError(409, "使用者正在删除，不能修改公钥")
+		}
+		wanted := map[string]bool{}
+		for _, key := range strings.Split(value, "\n") {
+			wanted[key] = true
+		}
+		old, err = sshkeys.NormalizeList(old)
+		if err != nil {
+			return err
+		}
+		for _, key := range strings.Split(old, "\n") {
+			if !wanted[key] {
+				if _, err := tx.Exec("INSERT OR IGNORE INTO member_key_revocations VALUES(?,?)", member, key); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := tx.Exec("UPDATE members SET ssh_public_key=? WHERE id=?", value, member); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("UPDATE member_access SET key_state='pending',error='' WHERE member_id=?", member); err != nil {
+			return err
+		}
+		return queue(tx)
+	})
+}
+
 func (h *Handler) editMemberKey(ctx context.Context, member, key string) error {
 	var node string
 	if err := h.DB.SQL.QueryRow("SELECT COALESCE(tailscale_id,'') FROM member_access WHERE member_id=?", member).Scan(&node); err != nil {
@@ -161,67 +208,78 @@ func (h *Handler) editMemberKey(ctx context.Context, member, key string) error {
 	if err != nil {
 		return err
 	}
+	wanted := map[string]bool{}
 	if key != "" {
-		key, err = sshkeys.Normalize(key)
+		key, err = sshkeys.NormalizeList(key)
 		if err != nil {
 			return err
 		}
-		_, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: []string{key}})
-		return err
+		keys := strings.Split(key, "\n")
+		for _, k := range keys {
+			wanted[k] = true
+		}
+		if _, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: keys}); err != nil {
+			return err
+		}
 	}
+	// Keep the revocation journal until every remote operation succeeds. Replay is
+	// idempotent if SSH succeeds but the response or local commit is lost.
 	return h.DB.Transaction(func(tx *sql.Tx) error {
-		var revoked string
-		if err = tx.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", member).Scan(&revoked); err != nil {
-			return err
-		}
-		revoked, err = sshkeys.Normalize(revoked)
+		revoked, err := platform.Rows(tx, "SELECT public_key FROM member_key_revocations WHERE member_id=?", member)
 		if err != nil {
 			return err
+		}
+		if key == "" {
+			var current string
+			if err = tx.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", member).Scan(&current); err != nil {
+				return err
+			}
+			current, err = sshkeys.NormalizeList(current)
+			if err != nil {
+				return err
+			}
+			for _, k := range strings.Split(current, "\n") {
+				revoked = append(revoked, map[string]any{"public_key": k})
+			}
 		}
 		members, err := poolMembers(tx, node)
 		if err != nil {
 			return err
 		}
-		for _, other := range keyReferences(members, revoked) {
-			if other.ID != member {
-				return nil
+		for _, row := range revoked {
+			k := row["public_key"].(string)
+			referenced := wanted[k]
+			for _, other := range keyReferences(members, k) {
+				if other.ID != member {
+					referenced = true
+				}
+			}
+			if !referenced {
+				if _, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "remove", Key: k}); err != nil {
+					return err
+				}
 			}
 		}
-		_, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "remove", Key: revoked})
+		_, err = tx.Exec("DELETE FROM member_key_revocations WHERE member_id=?", member)
 		return err
 	})
 }
 func (h *Handler) SyncKeys(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	shares, err := h.shares()
+	rows, err := platform.Rows(h.DB.SQL, "SELECT m.id,m.ssh_public_key FROM members m JOIN member_access a ON a.member_id=m.id WHERE m.status='active' AND a.tailscale_id IS NOT NULL")
 	if err != nil {
 		return err
 	}
 	problems := []string{}
-	for _, s := range shares {
-		err = h.DB.Transaction(func(tx *sql.Tx) error {
-			members, e := poolMembers(tx, s.ID)
-			if e != nil {
-				return e
-			}
-			keys := []string{}
-			for _, m := range members {
-				if m.Status == "active" {
-					keys = append(keys, m.PublicKey)
-				}
-			}
-			if len(keys) == 0 {
-				return nil
-			}
-			if _, e = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: keys}); e != nil {
-				return e
-			}
-			_, e = tx.Exec("UPDATE member_access SET key_state='ready',updated_at=? WHERE tailscale_id=? AND member_id IN (SELECT id FROM members WHERE status='active')", platform.Now(), s.ID)
-			return e
-		})
+	for _, row := range rows {
+		id := row["id"].(string)
+		err = h.editMemberKey(ctx, id, row["ssh_public_key"].(string))
+		if err == nil {
+			_, err = h.DB.SQL.Exec("UPDATE member_access SET key_state='ready',updated_at=? WHERE member_id=?", platform.Now(), id)
+		}
 		if err != nil {
-			problems = append(problems, s.Name+": "+err.Error())
+			problems = append(problems, id+": "+err.Error())
 		}
 	}
 	if len(problems) > 0 {

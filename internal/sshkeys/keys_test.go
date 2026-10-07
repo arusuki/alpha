@@ -112,3 +112,32 @@ func TestMemberCommentsPreserveOtherKeys(t *testing.T) {
 		t.Fatalf("modified unrelated key %q %v", final, e)
 	}
 }
+
+func TestMultipleKeysNormalizeAndRewrite(t *testing.T) {
+	keys, err := NormalizeList("\n" + testKey + " laptop\r\n" + ecdsaTestKey + " desktop\n" + testKey + " duplicate\n")
+	if err != nil || keys != testKey+"\n"+ecdsaTestKey {
+		t.Fatalf("normalize: %q %v", keys, err)
+	}
+	for _, bad := range []string{" \n", testKey + "\ncommand=\"id\" " + ecdsaTestKey, strings.Repeat(" ", 65537)} {
+		if _, err := NormalizeList(bad); err == nil {
+			t.Fatal("accepted invalid list")
+		}
+	}
+	if _, err := NormalizeList(testKey + "\ninvalid"); err == nil || !strings.Contains(err.Error(), "第 2 行") {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("a", 32)
+	unrelated := "# unrelated\n" + testKey + " external\n"
+	old, err := Rewrite([]byte(unrelated), id, keys)
+	if err != nil || strings.Count(string(old), Marker(id)) != 3 {
+		t.Fatalf("rewrite: %s %v", old, err)
+	}
+	replaced, err := Rewrite(old, id, ecdsaTestKey)
+	if err != nil || string(replaced) != unrelated+"# "+Marker(id)+"\n"+ecdsaTestKey+" "+Marker(id)+"\n" {
+		t.Fatalf("replace: %s %v", replaced, err)
+	}
+	removed, err := Rewrite(old, id, "")
+	if err != nil || string(removed) != unrelated {
+		t.Fatalf("remove: %s %v", removed, err)
+	}
+}

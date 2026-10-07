@@ -75,7 +75,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 `password` 必填，长度为 12–256 字节，不得包含换行、冒号或 NUL；不去掉首尾空格。此密码用于 `/status` 登录及新容器的初始 root 密码。总控保存 PBKDF2-SHA256 摘要和用于异步创建的 AES-GCM 密文，密钥为数据目录的 `member-password.key`（0600），备份时必须一并保存；缺失时恢复原密钥或使用新数据目录。registry 的待提交注册使用 `registry-registration.key` 加密，注册完成后移除该提交内容。
 
-`ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
+`ssh_public_key` 必填，接受一行一个的 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，至少一个、最多 64 个，总长度不超过 32768 字节。忽略空行和重复公钥，按规范化内容存储；无效行返回行号。不接受 authorized_keys 选项、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
 
 注册前调用 `POST /api/members/registration-options`，提交 `{invitation_code,username}`，取得 `nodes[]` 的 `node_id/node_name/containers/error`。每个容器提供完整 `id`、名称、归属和 `claimed`。已领养项保留显示并置灰，排在可领养项之后；容器列表只包含节点上已接管的容器，不包含仅由 Docker 扫描发现的容器。节点查询失败会显示错误，仍可选择新建并在恢复后重试。
 
@@ -99,14 +99,14 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 公网 registry 在网络分享和跳板公钥就绪后，引导用户接受 Tailscale 分享、登录客户端并连接 VPN，提供总控状态页链接，并提示用注册时设置的密码登录。之后所有容器查看、申请及 SSH 教程均通过总控。注册重试和进度查询所用资源令牌由服务端处理，不返回注册页。
 
-使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册时设置的密码后可查看全部 node 及自己的容器，在未分配的在线 node 选择领养或新建后点击加号申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回分配结果，失败显示具体错误；不需要运维平台登录。状态页提供修改密码入口，需输入当前密码和新密码；修改后所有状态页会话失效，之后新建的容器使用新密码，已有容器密码保持不变，可在容器内自行修改。
+使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册时设置的密码后可查看全部 node 及自己的容器，在未分配的在线 node 选择领养或新建后点击加号申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回分配结果，失败显示具体错误；不需要运维平台登录。状态页可编辑公钥列表，保存后自动同步到分配的跳板及本人容器；显示各节点下发状态和错误，失败后再次保存可重试。状态页提供修改密码入口，需输入当前密码和新密码；修改后所有状态页会话失效，之后新建的容器使用新密码，已有容器密码保持不变，可在容器内自行修改。
 
 | 状态码 | 含义 |
 | --- | --- |
 | 400 | 字段、类型、选项无效，或邀请码不存在、用尽、作废 |
 | 401 / 403 | 管理接口未登录、权限不足、CSRF 或 Host/Origin 校验失败 |
 | 409 | 使用者标识已存在，或 schema 版本已变化，需重新获取表单 |
-| 413 / 415 | 请求超过 65536 字节，或未使用 `application/json` |
+| 413 / 415 | 请求超过 32768 字节，或未使用 `application/json` |
 | 429 | 同一来源 IP 在 5 分钟内超过 20 次注册尝试；成功和失败均计数 |
 
 公开接口继承平台 Host/Origin 检查，不开放跨域浏览器注册。外部注册服务可由服务端调用 API，或通过同源反向代理接入；所有 schema 字段名称和选项对注册客户端可见。限流按直接连接 IP 计算，不信任客户端提供的转发头；经代理调用时共享代理的额度。邀请码管理和使用者列表始终仅向管理员开放。

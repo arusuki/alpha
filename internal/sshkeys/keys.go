@@ -89,6 +89,36 @@ func positiveMPInt(v []byte) bool {
 	return len(v) > 0 && v[0]&128 == 0 && (v[0] != 0 || len(v) > 1 && v[1]&128 != 0)
 }
 
+// NormalizeList accepts one public key per nonempty line and deduplicates by key
+// material. The canonical persisted representation is newline-separated keys.
+func NormalizeList(value string) (string, error) {
+	if len(value) > 32768 {
+		return "", fmt.Errorf("SSH 公钥总长度不能超过 32768 字节")
+	}
+	keys := []string{}
+	seen := map[string]bool{}
+	for i, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		key, err := Normalize(line)
+		if err != nil {
+			return "", fmt.Errorf("第 %d 行：%w", i+1, err)
+		}
+		if !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	if len(keys) == 0 {
+		return "", fmt.Errorf("请至少提供一个 SSH 公钥，一行一个")
+	}
+	if len(keys) > 64 {
+		return "", fmt.Errorf("最多提供 64 个 SSH 公钥")
+	}
+	return strings.Join(keys, "\n"), nil
+}
+
 func Marker(id string) string { return "project-alpha:member:" + id }
 
 // Rewrite preserves unrelated lines byte-for-byte, including identical keys
@@ -99,7 +129,7 @@ func Rewrite(old []byte, id, key string) ([]byte, error) {
 	}
 	if key != "" {
 		var err error
-		key, err = Normalize(key)
+		key, err = NormalizeList(key)
 		if err != nil {
 			return nil, err
 		}
@@ -117,7 +147,10 @@ func Rewrite(old []byte, id, key string) ([]byte, error) {
 		if out.Len() > 0 && !strings.HasSuffix(out.String(), "\n") {
 			out.WriteByte('\n')
 		}
-		out.WriteString("# " + marker + "\n" + key + " " + marker + "\n")
+		out.WriteString("# " + marker + "\n")
+		for _, line := range strings.Split(key, "\n") {
+			out.WriteString(line + " " + marker + "\n")
+		}
 	}
 	return []byte(out.String()), nil
 }

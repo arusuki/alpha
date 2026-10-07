@@ -30,6 +30,10 @@ nodes[1]['candidates'] = [
     dict(id='f' * 64, name='pytorch-workspace', owner='legacy', claimed=False),
     dict(id='9' * 64, name='another-workspace', claimed_by='bob', claimed=True),
 ]
+public_key = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f'
+second_key = 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBIvR3cOir2XFsX4NiA4QO1JKQ7c87emaiV0rBXS3fiseEt0seHFTvuv2Tl0Zz5jQJS1Ko0oVLFAQZ4BtLtn6hKg='
+member_keys = public_key
+key_writes = []
 writes = []
 fail = True
 hold = threading.Event()
@@ -64,7 +68,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith('/api/status/'):
             if self.authorized():
-                self.send(200, dict(member_id=member, username='alice', control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
+                self.send(200, dict(member_id=member, username='alice', ssh_public_key=member_keys, control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.lstrip('/')
         if filename not in ('status.html', 'status.js', 'status.css'):
@@ -74,6 +78,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, (repo / 'dist' / filename).read_bytes(), mime + '; charset=utf-8')
 
     def do_POST(self):
+        global member_keys
         if self.path.endswith('/login'):
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             if self.path != endpoint + '/login':
@@ -89,6 +94,15 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path == endpoint + '/keys':
+            if body['ssh_public_key'] == 'invalid':
+                self.send(400, dict(error='第 1 行：请提供有效公钥'))
+                return
+            key_writes.append(body)
+            member_keys = body['ssh_public_key']
+            nodes[0].update(key_state='failed', key_error='容器已停止，请启动后重试')
+            self.send(202, dict(ok=True))
+            return
         writes.append(body)
         started.set()
         hold.wait(15)
@@ -149,6 +163,21 @@ try:
         assert page.locator('#loginPassword').input_value() == ''
         page.reload()
         expect(page.locator('#statusContent')).to_be_visible()
+        expect(page.locator('#memberKeys')).to_have_value(public_key)
+        page.locator('#memberKeys').fill('invalid')
+        page.locator('#keysSubmit').click()
+        expect(page.locator('#keysError')).to_contain_text('第 1 行')
+        expect(page.locator('#memberKeys')).to_have_value('invalid')
+        keys = public_key + '\n' + second_key
+        page.locator('#memberKeys').fill(keys)
+        page.locator('#refreshStatus').click()
+        expect(page.locator('#refreshStatus')).to_be_enabled()
+        expect(page.locator('#memberKeys')).to_have_value(keys)
+        page.locator('#keysSubmit').click()
+        expect(page.locator('#keysMessage')).to_contain_text('公钥已保存')
+        expect(page.locator('#keysSyncState')).to_contain_text('下发失败 · 容器已停止')
+        expect(page.locator('#memberKeys')).to_have_value(keys)
+        assert key_writes == [dict(ssh_public_key=keys)]
         target = page.locator('[data-apply="' + nodes[1]['node_id'] + '"]')
         expect(page.locator('[data-choice][value="' + '9' * 64 + '"]')).to_be_disabled()
         expect(page.locator('[data-choice="' + nodes[2]['node_id'] + '"]')).to_be_disabled()
@@ -200,6 +229,7 @@ try:
         expect(page.locator('#statusContent')).to_be_hidden()
         assert page.locator('#statusNodes').inner_text() == ''
         assert page.locator('#sshConfig').inner_text() == ''
+        assert page.locator('#memberKeys').input_value() == ''
         assert page.evaluate('sessionStorage.length') == 0
         page.wait_for_timeout(200)
         expect(page.locator('#statusContent')).to_be_hidden()

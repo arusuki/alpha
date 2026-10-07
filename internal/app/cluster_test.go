@@ -64,14 +64,23 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 	if strings.Contains(string(raw), "fingerprint") || strings.Contains(string(raw), "unix:///test.sock") {
 		t.Fatal("inventory leaked internal management metadata")
 	}
-	// Deleting the member clears both managed and scanned ownership without
-	// contacting Docker; another member's containers keep their ownership.
+	// Unreachable Docker must prevent deletion before keys can be revoked.
+	// The ownership callback then clears managed and scanned ownership together.
 	h := newContainerHandler(db)
 	r := httptest.NewRequest("DELETE", "/api/containers/members/"+strings.Repeat("b", 32), strings.NewReader(`{"username":"alice"}`))
 	r.Header.Set("Content-Type", "application/json")
 	status, _, err := h.Dispatch(httptest.NewRecorder(), r, platform.User{Username: "admin", Role: "admin"})
-	if err != nil || status != 200 {
-		t.Fatalf("unassign: %d %v", status, err)
+	if err == nil || status == 200 {
+		t.Fatalf("deleted without confirming key revocation: %d %v", status, err)
+	}
+	var owner string
+	if err = db.SQL.QueryRow("SELECT owner FROM managed_containers WHERE id='one'").Scan(&owner); err != nil || owner != "alice" {
+		t.Fatalf("released ownership before key revocation: %s %v", owner, err)
+	}
+	// Exercise the callback used after successful revocation; Docker/key writes
+	// and deletion retries are covered by the containers package's member tests.
+	if err = db.Transaction(func(tx *sql.Tx) error { return h.UnassignOwner(tx, "alice") }); err != nil {
+		t.Fatal(err)
 	}
 	for range 2 {
 		inv, err = inventory(db)

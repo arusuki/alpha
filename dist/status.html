@@ -21,7 +21,7 @@
     </section>
     <p id="statusError" class="error" role="alert"></p>
     <section id="statusContent" hidden aria-label="我的节点资源">
-      <div class="workspace-intro"><strong>日常管理，就在这里</strong><p>查看容器、申请容器、获取 SSH 配置和修改密码，都在此总控页面完成。保持 Tailscale 已连接；注册页现在可以关闭。</p><p id="controlStatusAddress" class="muted"></p><p class="muted">收藏此地址：macOS 按 ⌘D，Windows / Linux 按 Ctrl+D。</p><nav class="quick-links" aria-label="使用指引"><a href="#statusNodes">查看我的容器 ↓</a><a href="#accessGuideTitle">配置 SSH 连接 ↓</a><a href="#connectionHelp">连接问题排查 ↓</a></nav></div>
+      <div class="workspace-intro"><strong>日常管理，就在这里</strong><p>查看容器、申请容器、获取 SSH 配置、管理公钥和修改密码，都在此总控页面完成。保持 Tailscale 已连接；注册页现在可以关闭。</p><p id="controlStatusAddress" class="muted"></p><p class="muted">收藏此地址：macOS 按 ⌘D，Windows / Linux 按 Ctrl+D。</p><nav class="quick-links" aria-label="使用指引"><a href="#statusNodes">查看我的容器 ↓</a><a href="#memberKeysTitle">管理 SSH 公钥 ↓</a><a href="#accessGuideTitle">配置 SSH 连接 ↓</a><a href="#connectionHelp">连接问题排查 ↓</a></nav></div>
       <div class="summary" aria-label="资源汇总">
         <div><span>全部节点</span><strong id="totalNodes">0</strong></div>
         <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
@@ -31,6 +31,18 @@
       <p id="statusMessage" class="message" role="status" aria-live="polite"></p>
       <div id="statusNodes" class="nodes"></div>
       <p class="footnote">每个节点选择新建或领养，再点击「申请容器」。领养保留原数据和密码。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
+      <section class="guide" aria-labelledby="memberKeysTitle">
+        <h2 id="memberKeysTitle">SSH 公钥</h2>
+        <p class="muted">一行一个，最多 64 个；至少保留一个公钥。保存后自动同步到跳板和你的容器，移除的公钥会撤销。私钥留在本机。</p>
+        <form id="keysForm" class="keys-form">
+          <label for="memberKeys">我的公钥</label>
+          <textarea id="memberKeys" required rows="6" maxlength="32768" spellcheck="false" placeholder="ssh-ed25519 AAAA…"></textarea>
+          <button id="keysSubmit" class="primary">保存并下发公钥</button>
+          <p id="keysMessage" class="message" role="status" aria-live="polite"></p>
+          <p id="keysError" class="error" role="alert"></p>
+        </form>
+        <p id="keysSyncState" class="muted" role="status" aria-live="polite"></p>
+      </section>
       <details class="guide">
         <summary>修改密码</summary>
         <p class="muted">修改后所有状态页会话退出，新建容器使用新密码；已有容器的密码不变。</p>
@@ -61,7 +73,7 @@
         <p class="muted">配置中的地址和端口来自你的实际分配记录，直接复制本页生成的值即可。不要使用教程截图里的示例地址。</p>
         <details class="connection-help" id="connectionHelp"><summary>连接失败时，按这个顺序检查</summary>
           <dl><div><dt>总控或 SSH 连接超时</dt><dd>检查本机 Tailscale 客户端是否已连接，登录账号是否与接受分享邀请的账号一致。Machines 页面中远程节点的 Connected 仅说明那台节点在线。</dd></div>
-          <div><dt>Permission denied (publickey)</dt><dd>确认当前电脑使用的是注册公钥对应的私钥；自定义文件名时填写 IdentityFile。如果失败的是容器认证，请向管理员确认容器内公钥或使用该容器的密码。</dd></div>
+          <div><dt>Permission denied (publickey)</dt><dd>确认当前电脑的公钥已添加到上方公钥列表，并使用对应的私钥；自定义文件名时填写 IdentityFile。如果失败的是容器认证，请向管理员确认容器内公钥或使用该容器的密码。</dd></div>
           <div><dt>提示输入密码</dt><dd>私钥 passphrase 是你本机密钥的口令；容器 root 密码则遵循上方新建 / 领养的规则。两者都不是 Tailscale 密码。</dd></div>
           <div><dt>没有连接命令，或节点离线</dt><dd>先完成容器分配并等待节点恢复。已有容器但缺少端口时，请联系管理员补充连接信息，无需返回注册页。</dd></div></dl>
           <a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">在新电脑安装 Tailscale ↗</a>

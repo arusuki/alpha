@@ -28,6 +28,8 @@ type memberNodeResource struct {
 	Port        int    `json:"port"`
 	InternalIP  string `json:"internal_ip"`
 	Error       string `json:"error"`
+	KeyState    string `json:"key_state"`
+	KeyError    string `json:"key_error"`
 }
 
 type memberResourceView struct {
@@ -55,7 +57,7 @@ type memberNodeStatus struct {
 	CandidatesError string               `json:"candidates_error,omitempty"`
 }
 
-var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password)?$`)
+var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password|/keys)?$`)
 
 // statusPublic binds the username in both reads and applications to the login session's member.
 // The HTML shell is public; a username alone never grants access to resources.
@@ -97,6 +99,9 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 	if parts[2] == "/logout" {
 		return 200, map[string]bool{"ok": true}, store.Logout(token)
 	}
+	if parts[2] == "/keys" {
+		return h.changeMemberKeys(w, r, id)
+	}
 	if parts[2] == "/password" {
 		var req struct {
 			CurrentPassword string `json:"current_password"`
@@ -121,6 +126,10 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error) {
 	resources, err := h.memberResources(id)
 	if err != nil {
+		return 0, nil, err
+	}
+	var keys string
+	if err := h.DB.SQL.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", id).Scan(&keys); err != nil {
 		return 0, nil, err
 	}
 	nodes, err := h.nodes("worker")
@@ -196,7 +205,7 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 		})
 	}
 	wg.Wait()
-	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "control": resources.Control, "access": resources.Access, "nodes": out, "checked_at": platform.Now()}, nil
+	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "ssh_public_key": keys, "control": resources.Control, "access": resources.Access, "nodes": out, "checked_at": platform.Now()}, nil
 }
 
 func memberStatusURL(a bastion.Access) string {

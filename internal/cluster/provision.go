@@ -29,6 +29,9 @@ func initializeProvision(tx *sql.Tx) error {
  mode TEXT NOT NULL DEFAULT 'create' CHECK(mode IN ('create','adopt')), target_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(member_id,node_id));
  CREATE TABLE member_work (member_id TEXT PRIMARY KEY REFERENCES members(id),pending INTEGER NOT NULL);
+ CREATE TABLE member_key_sync (
+ member_id TEXT NOT NULL REFERENCES members(id), node_id TEXT NOT NULL REFERENCES cluster_nodes(id),
+ state TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(member_id,node_id));
  `)
 	return err
 }
@@ -163,6 +166,9 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 		}()
 	}
 	wg.Wait()
+	if !removing {
+		problems = append(problems, h.syncMemberKeys(ctx, id, name, key))
+	}
 	if removing && errors.Join(problems...) == nil {
 		return h.DB.Transaction(func(tx *sql.Tx) error {
 			var count int
@@ -172,7 +178,7 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 			if count != 0 {
 				return httpapi.NewError(409, "仍有节点未完成容器归属清除，请重试删除")
 			}
-			for _, table := range []string{"member_node_resources", "member_access", "member_work"} {
+			for _, table := range []string{"member_key_sync", "member_key_revocations", "member_node_resources", "member_access", "member_work"} {
 				if _, e := tx.Exec("DELETE FROM "+table+" WHERE member_id=?", id); e != nil {
 					return e
 				}
@@ -278,7 +284,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),n.internal_ip,COALESCE(a.error,''),COALESCE(a.mode,''),COALESCE(a.target_id,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
+	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),n.internal_ip,COALESCE(a.error,''),COALESCE(a.mode,''),COALESCE(a.target_id,''),COALESCE(k.state,''),COALESCE(k.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? LEFT JOIN member_key_sync k ON k.node_id=n.id AND k.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id, id)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +292,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	v := &memberResourceView{MemberID: id, Status: status, Access: a, Control: memberControlAccess{StatusURL: memberStatusURL(a)}, Nodes: []memberNodeResource{}}
 	for rows.Next() {
 		var n memberNodeResource
-		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error, &n.Mode, &n.TargetID); err != nil {
+		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error, &n.Mode, &n.TargetID, &n.KeyState, &n.KeyError); err != nil {
 			return nil, err
 		}
 		v.Nodes = append(v.Nodes, n)

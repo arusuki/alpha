@@ -74,11 +74,41 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	if err := httpapi.DecodeBody(w, r, &req); err != nil {
 		return 0, nil, err
 	}
-	if r.Method != "PUT" && r.Method != "DELETE" {
+	if r.Method != "PUT" && r.Method != "DELETE" && r.Method != "PATCH" {
 		return 0, nil, httpapi.NewError(405, "不支持该方法")
 	}
 	if !validOwner(req.Username) {
 		return fail(fmt.Errorf("使用者标识无效"))
+	}
+	if r.Method == "PATCH" || r.Method == "DELETE" {
+		var owner string
+		var deleted bool
+		err := h.db.SQL.QueryRow("SELECT username,deleted FROM member_container_slots WHERE member_id=?", id).Scan(&owner, &deleted)
+		if err != nil && err != sql.ErrNoRows {
+			return fail(err)
+		}
+		if err == nil && owner != req.Username {
+			return fail(fmt.Errorf("使用者身份不匹配"))
+		}
+		if deleted {
+			if r.Method == "PATCH" {
+				return fail(fmt.Errorf("该使用者已删除，不能修改公钥"))
+			}
+			return 200, map[string]bool{"ok": true}, nil
+		}
+		keys := ""
+		if r.Method == "PATCH" {
+			keys, err = sshkeys.NormalizeList(req.SSHKey)
+			if err != nil {
+				return fail(err)
+			}
+		}
+		if err = h.syncOwnerKeys(r.Context(), req.Username, id, keys); err != nil {
+			return fail(err)
+		}
+		if r.Method == "PATCH" {
+			return 200, map[string]bool{"ok": true}, nil
+		}
 	}
 	if r.Method == "DELETE" {
 		err := h.db.Transaction(func(tx *sql.Tx) error {
@@ -135,7 +165,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		return 0, nil, err
 	}
 	var err error
-	req.SSHKey, err = sshkeys.Normalize(req.SSHKey)
+	req.SSHKey, err = sshkeys.NormalizeList(req.SSHKey)
 	if err != nil {
 		return fail(err)
 	}
@@ -271,6 +301,31 @@ func checkMemberContainer(c inspection, p memberPlan, id string) error {
 	}
 	if len(expected) != 0 {
 		return bad
+	}
+	return nil
+}
+
+// Clear member-marked keys before releasing ownership. If Docker is unavailable
+// or a container is stopped, keep the ownership and report a retryable failure.
+func (h *Handler) syncOwnerKeys(ctx context.Context, username, id, keys string) error {
+	records, err := h.records()
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.Owner != username {
+			continue
+		}
+		c, err := h.verify(ctx, record)
+		if err != nil {
+			return err
+		}
+		if !c.State.Running {
+			return fmt.Errorf("容器 %s 已停止，请启动后重试公钥同步或删除", record.Name)
+		}
+		if err = h.installMemberKey(ctx, record, id, keys); err != nil {
+			return err
+		}
 	}
 	return nil
 }

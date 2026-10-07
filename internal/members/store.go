@@ -378,7 +378,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 	if req.SchemaRevision < 1 || req.Profile == nil {
 		return m, httpapi.NewError(400, "请提供 schema_revision 和 profile 对象")
 	}
-	key, keyErr := sshkeys.Normalize(req.SSHKey)
+	key, keyErr := sshkeys.NormalizeList(req.SSHKey)
 	if keyErr != nil {
 		return m, httpapi.NewError(400, keyErr.Error())
 	}
