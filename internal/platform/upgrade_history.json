@@ -1,4 +1,10 @@
 {
   "base_schema": 33,
-  "updates": []
+  "updates": [
+    {
+      "tag": "v0.4.0",
+      "from": 33,
+      "to": 34
+    }
+  ]
 }
