@@ -124,14 +124,14 @@ function openNode(id){
  state.node={id,enabled:saved?!!saved.enabled:true};$('bastionNodeError').textContent='';$('bastionNodeTitle').textContent=(saved?'配置':'加入')+' share node · '+(saved?.name||device?.hostname||device?.name);
  const addresses=device?.addresses||[saved.ssh_host];
  $('bastionNodeHost').innerHTML=addresses.map(ip=>`<option value="${esc(ip)}">${esc(ip)}</option>`).join('');
- $('bastionNodeHost').value=saved?.ssh_host||addresses[0];$('bastionNodeSSHPort').value=saved?.ssh_port||22;$('bastionNodeStatusPort').value=saved?.status_port||8765;
+ $('bastionNodeHost').value=saved?.ssh_host||addresses[0];$('bastionNodeSSHPort').value=saved?.ssh_port||22;
  $('bastionNodeDialog').showModal();controls();
 }
 $('bastionNodeClose').addEventListener('click',closeNode);
 $('bastionNodeDialog').addEventListener('close',()=>{state.node=null;});
 $('bastionNodeDialog').addEventListener('cancel',event=>{if(state.busy)event.preventDefault();});
 $('bastionNodeForm').addEventListener('submit',event=>{event.preventDefault();task(async epoch=>{
- const id=state.node.id,value={enabled:state.node.enabled,ssh_host:$('bastionNodeHost').value,ssh_port:Number($('bastionNodeSSHPort').value),status_port:Number($('bastionNodeStatusPort').value)};
+ const id=state.node.id,value={enabled:state.node.enabled,ssh_host:$('bastionNodeHost').value,ssh_port:Number($('bastionNodeSSHPort').value)};
  await api('/api/bastion/tailscale/'+encodeURIComponent(id),{method:'PUT',body:JSON.stringify(value)});
  if(epoch!==state.epoch)return;closeNode();$('bastionStatus').textContent='已校验 alpha-worker 免密登录并保存分享节点。';await load(epoch);
 });});

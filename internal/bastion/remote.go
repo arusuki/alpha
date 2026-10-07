@@ -18,11 +18,13 @@ import (
 )
 
 type commandRequest struct {
-	Version   int      `json:"version"`
-	Operation string   `json:"operation"`
-	Keys      []string `json:"keys,omitempty"`
-	Key       string   `json:"key,omitempty"`
-	Entry     string   `json:"entry,omitempty"`
+	// DiscoverConfig reads installation settings during admission; it is never sent over SSH.
+	DiscoverConfig bool     `json:"-"`
+	Version        int      `json:"version"`
+	Operation      string   `json:"operation"`
+	Keys           []string `json:"keys,omitempty"`
+	Key            string   `json:"key,omitempty"`
+	Entry          string   `json:"entry,omitempty"`
 }
 type commandReply struct {
 	Version    int               `json:"version"`
@@ -130,8 +132,17 @@ func (h *Handler) sshCommand(ctx context.Context, s ShareNode, req commandReques
 
 func (h *Handler) sshCommandWithIdentity(ctx context.Context, s ShareNode, req commandRequest, identity string) (commandReply, error) {
 	var reply commandReply
-	if err := s.validate(); err != nil {
-		return reply, err
+	var validationErr error
+	if req.DiscoverConfig {
+		if req.Operation != "inspect" {
+			return reply, httpapi.NewError(400, "仅 inspect 可读取分享节点配置")
+		}
+		validationErr = s.validateSSH()
+	} else {
+		validationErr = s.validate()
+	}
+	if validationErr != nil {
+		return reply, validationErr
 	}
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
@@ -161,9 +172,16 @@ func (h *Handler) sshCommandWithIdentity(ctx context.Context, s ShareNode, req c
 	if err = strictJSON(output.data, &reply); err != nil {
 		return reply, httpapi.NewError(502, "share node 管理响应无效，请更新跳板工具")
 	}
+	if req.DiscoverConfig {
+		s.StatusPort = reply.StatusPort
+		s.ControlURL = ""
+	}
 	return reply, checkReply(s, reply)
 }
 func checkReply(s ShareNode, r commandReply) error {
+	if err := s.validate(); err != nil {
+		return err
+	}
 	if r.Version != keyFormat || r.ListenHost != s.SSHHost || r.StatusPort != s.StatusPort {
 		return httpapi.NewError(409, "share node 的管理协议、监听 IP 或入口端口与池配置不一致，请核对跳板初始化参数")
 	}

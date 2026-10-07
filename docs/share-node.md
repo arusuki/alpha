@@ -14,7 +14,7 @@ share node 为成员提供两个入口：通过固定账号 `alpha-jump` 转发 
 | 总控内网 Web 地址 | `http://10.0.0.1:8765` | 总控监听参数、share node 的 `--control-url` |
 | share node Tailscale IP | `100.64.0.2` | `--listen-host`、总控分享池 |
 | share node OpenSSH 端口 | `22` | share node 的 sshd 配置、总控分享池 |
-| share node 网页入口端口 | `9765` | `--status-port`、总控分享池 |
+| share node 网页入口端口 | `9765` | `--status-port`；总控分享池自动读取 |
 | 计算节点内网 IP | `10.0.0.11` | 总控的计算节点配置 |
 | 成员容器 SSH 端口 | `2222` | worker 容器分配结果 |
 
@@ -205,8 +205,8 @@ printf '%s\n' '{"version":2,"operation":"inspect"}' | \
 
 1. 展开“全局连接设置”，保存 Tailscale Tailnet 和 API Key（`tskey-api-…`），该凭据须允许查询设备及创建、查询、撤销节点分享。不要填写用于机器入网的 Auth Key。
 2. 点击“测试连接”，再点击“查询并添加节点”。
-3. 为已授权的自有 share node 点击“配置并加入分享池”。填写 Tailscale IP `100.64.0.2`、实际 OpenSSH 端口 `22`、网页入口端口 `9765`。
-4. 点击“校验并保存”。总控用服务账号登录 `alpha-worker`，核对管理协议、监听 IP 和网页入口端口，并保存返回的总控代理地址。校验失败不会保存节点。
+3. 为已授权的自有 share node 点击“配置并加入分享池”。选择 Tailscale IP `100.64.0.2`，填写实际 OpenSSH 端口 `22`；网页入口端口 `9765` 和总控代理地址在保存时自动读取，无需手填。
+4. 点击“校验并保存”。总控用服务账号登录 `alpha-worker`，校验管理协议、监听 IP 和端口有效性，并保存读取到的网页入口端口与总控代理地址。校验失败不会保存节点。
 
 加入后，从有网络权限的客户端验证网页入口：
 

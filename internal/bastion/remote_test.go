@@ -29,13 +29,13 @@ func TestShareAdmissionRequiresSSHProtocolAndOwnedDevice(t *testing.T) {
 	fail := true
 	h.RemoteCommand = func(ctx context.Context, s ShareNode, req commandRequest) (commandReply, error) {
 		calls++
-		if s.SSHHost != "100.64.0.3" || s.SSHPort != 2222 || req.Operation != "inspect" {
+		if s.SSHHost != "100.64.0.3" || s.SSHPort != 2222 || req.Operation != "inspect" || !req.DiscoverConfig {
 			t.Errorf("bad admission: %+v %+v", s, req)
 		}
 		if fail {
 			return commandReply{}, httpapi.NewError(502, "SSH 认证失败")
 		}
-		return commandReply{Version: keyFormat, ListenHost: s.SSHHost, StatusPort: s.StatusPort, ControlURL: "http://10.0.0.1:8765", Keys: map[string]string{}}, nil
+		return commandReply{Version: keyFormat, ListenHost: s.SSHHost, StatusPort: 9765, ControlURL: "http://10.0.0.1:8765", Keys: map[string]string{}}, nil
 	}
 	dispatch := func(body string) error {
 		r := httptest.NewRequest("PUT", "/api/bastion/tailscale/new-share", strings.NewReader(body))
@@ -56,7 +56,7 @@ func TestShareAdmissionRequiresSSHProtocolAndOwnedDevice(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, err := h.share("new-share")
-	if err != nil || s.ControlURL != "http://10.0.0.1:8765" {
+	if err != nil || s.StatusPort != 9765 || s.ControlURL != "http://10.0.0.1:8765" {
 		t.Fatalf("%+v %v", s, err)
 	}
 	if err = dispatch(`{"enabled":false}`); err != nil {
@@ -68,12 +68,15 @@ func TestShareAdmissionRequiresSSHProtocolAndOwnedDevice(t *testing.T) {
 	if dispatch(`{"enabled":true,"ssh_host":"100.64.99.99"}`) == nil {
 		t.Fatal("foreign IP accepted")
 	}
-	if err = dispatch(`{"enabled":false,"ssh_port":2222,"status_port":8765}`); err != nil {
+	if err = dispatch(`{"enabled":false,"ssh_port":2222}`); err != nil {
 		t.Fatal(err)
 	}
 	s, err = h.share("new-share")
 	if err != nil || s.Enabled || calls != 3 {
 		t.Fatalf("disabled configuration was not checked and preserved: %+v %d %v", s, calls, err)
+	}
+	if err = dispatch(`{"enabled":true,"status_port":9765}`); err == nil || calls != 3 {
+		t.Fatalf("manual entry port was not rejected before SSH: %v, calls=%d", err, calls)
 	}
 }
 
@@ -88,7 +91,7 @@ func TestShareAddressChangeChecksReferencesAfterSSH(t *testing.T) {
 		if _, err := h.DB.SQL.Exec("UPDATE member_access SET tailscale_id=? WHERE member_id=?", s.ID, member.ID); err != nil {
 			t.Fatal(err)
 		}
-		return commandReply{ControlURL: s.ControlURL}, nil
+		return commandReply{Version: keyFormat, ListenHost: s.SSHHost, StatusPort: 9765, ControlURL: s.ControlURL, Keys: map[string]string{}}, nil
 	}
 	r := httptest.NewRequest("PUT", "/api/bastion/tailscale/node-a", strings.NewReader(`{"enabled":true,"ssh_host":"100.64.0.3"}`))
 	r.Header.Set("Content-Type", "application/json")
@@ -100,6 +103,78 @@ func TestShareAddressChangeChecksReferencesAfterSSH(t *testing.T) {
 	s, err := h.share("node-a")
 	if err != nil || s.SSHHost != "100.64.0.2" {
 		t.Fatalf("rejected update changed the address: %+v %v", s, err)
+	}
+}
+
+func TestShareDiscoveryValidatesConfigAndProtectsReferencedPort(t *testing.T) {
+	for _, kind := range []string{"port-zero", "port-low", "port-high", "port-ssh", "host", "version", "target", "keys", "referenced", "unreferenced", "disabled", "reenable"} {
+		t.Run(kind, func(t *testing.T) {
+			h, f, member := fixture(t)
+			h.Tailscale = deviceNetwork{f, []tailscale.Device{{NodeID: "node-a", Hostname: "Node A", Authorized: true, Addresses: []string{"100.64.0.2"}}}}
+			reply := commandReply{Version: keyFormat, ListenHost: "100.64.0.2", StatusPort: 9765, ControlURL: "http://10.0.0.9:8765", Keys: map[string]string{}}
+			switch kind {
+			case "port-zero":
+				reply.StatusPort = 0
+			case "port-low":
+				reply.StatusPort = 1023
+			case "port-high":
+				reply.StatusPort = 65536
+			case "port-ssh":
+				reply.StatusPort = 2222
+			case "host":
+				reply.ListenHost = "100.64.0.99"
+			case "version":
+				reply.Version = 0
+			case "target":
+				reply.ControlURL = "file:///tmp/invalid"
+			case "keys":
+				reply.Keys = map[string]string{"bad": "bad"}
+			}
+			// Only the referenced case should fail because members use the old port.
+			if kind != "referenced" {
+				if _, err := h.DB.SQL.Exec("UPDATE member_access SET tailscale_id=NULL WHERE member_id=?", member.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if kind == "disabled" || kind == "reenable" {
+				if _, err := h.DB.SQL.Exec("UPDATE bastion_tailscale SET enabled=0 WHERE id='node-a'"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := h.share("node-a")
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.RemoteCommand = func(_ context.Context, _ ShareNode, req commandRequest) (commandReply, error) {
+				if req.Operation != "inspect" || !req.DiscoverConfig {
+					t.Fatalf("not discovering config: %+v", req)
+				}
+				return reply, nil
+			}
+			enabled, sshPort := kind != "disabled", 2222
+			req := shareUpdate{Enabled: &enabled, SSHPort: &sshPort}
+			if kind == "referenced" || kind == "reenable" {
+				req.SSHPort = nil
+			}
+			err = h.updateShare(context.Background(), "node-a", req, "admin")
+			saved, readErr := h.share("node-a")
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if kind == "unreferenced" || kind == "disabled" || kind == "reenable" {
+				if err != nil || saved.StatusPort != reply.StatusPort || saved.ControlURL != reply.ControlURL || saved.Enabled != enabled {
+					t.Fatalf("configuration not discovered: %+v %v", saved, err)
+				}
+			} else if err == nil || saved != before {
+				t.Fatalf("invalid or referenced configuration saved: %+v %v", saved, err)
+			}
+			if kind == "referenced" {
+				var api *httpapi.Error
+				if !errors.As(err, &api) || api.Status != 409 {
+					t.Fatalf("expected reference conflict: %v", err)
+				}
+			}
+		})
 	}
 }
 func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {

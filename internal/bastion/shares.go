@@ -18,18 +18,26 @@ type ShareNode struct {
 	ControlURL string `json:"control_url"`
 }
 type shareUpdate struct {
-	Enabled    *bool   `json:"enabled"`
-	SSHHost    *string `json:"ssh_host"`
-	SSHPort    *int    `json:"ssh_port"`
-	StatusPort *int    `json:"status_port"`
+	Enabled *bool   `json:"enabled"`
+	SSHHost *string `json:"ssh_host"`
+	SSHPort *int    `json:"ssh_port"`
 }
 
-func (s ShareNode) validate() error {
+func (s ShareNode) validateSSH() error {
 	host, err := platform.InternalIP(s.SSHHost)
 	if err != nil {
 		return err
 	}
-	if host != s.SSHHost || s.SSHPort < 1 || s.SSHPort > 65535 || s.StatusPort < 1024 || s.StatusPort > 65535 || s.SSHPort == s.StatusPort {
+	if host != s.SSHHost || s.SSHPort < 1 || s.SSHPort > 65535 {
+		return httpapi.NewError(400, "分享节点需使用有效 IP 和 SSH 端口")
+	}
+	return nil
+}
+func (s ShareNode) validate() error {
+	if err := s.validateSSH(); err != nil {
+		return err
+	}
+	if s.StatusPort < 1024 || s.StatusPort > 65535 || s.SSHPort == s.StatusPort {
 		return httpapi.NewError(400, "分享节点需使用有效 IP、SSH 端口及不同的 1024–65535 入口端口")
 	}
 	return nil
@@ -67,7 +75,7 @@ func (h *Handler) updateShare(ctx context.Context, id string, req shareUpdate, a
 	}
 	candidate := saved
 	if !exists {
-		candidate = ShareNode{ID: id, SSHPort: 22, StatusPort: 8765}
+		candidate = ShareNode{ID: id, SSHPort: 22}
 	}
 	candidate.Enabled = *req.Enabled
 	if req.SSHHost != nil {
@@ -76,13 +84,10 @@ func (h *Handler) updateShare(ctx context.Context, id string, req shareUpdate, a
 	if req.SSHPort != nil {
 		candidate.SSHPort = *req.SSHPort
 	}
-	if req.StatusPort != nil {
-		candidate.StatusPort = *req.StatusPort
-	}
 	if !candidate.Enabled && !exists {
 		return httpapi.NewError(404, "节点池资源不存在")
 	}
-	checkNode := candidate.Enabled || req.SSHHost != nil || req.SSHPort != nil || req.StatusPort != nil
+	checkNode := candidate.Enabled || req.SSHHost != nil || req.SSHPort != nil
 	if checkNode {
 		devices, e := h.Tailscale.Devices(ctx)
 		if e != nil {
@@ -114,16 +119,22 @@ func (h *Handler) updateShare(ctx context.Context, id string, req shareUpdate, a
 			return httpapi.NewError(400, "请选择当前网络已授权的自有节点及其 Tailscale IP")
 		}
 	}
-	if e := candidate.validate(); e != nil {
+	if e := candidate.validateSSH(); e != nil {
 		return e
 	}
 	if checkNode {
-		candidate.ControlURL = ""
-		reply, e := h.RemoteCommand(ctx, candidate, commandRequest{Operation: "inspect"})
+		reply, e := h.RemoteCommand(ctx, candidate, commandRequest{Operation: "inspect", DiscoverConfig: true})
 		if e != nil {
 			return e
 		}
+		candidate.StatusPort = reply.StatusPort
 		candidate.ControlURL = reply.ControlURL
+		if e := checkReply(candidate, reply); e != nil {
+			return e
+		}
+	}
+	if e := candidate.validate(); e != nil {
+		return e
 	}
 	return h.DB.Transaction(func(tx *sql.Tx) error {
 		if exists && (saved.SSHHost != candidate.SSHHost || saved.SSHPort != candidate.SSHPort || saved.StatusPort != candidate.StatusPort) {

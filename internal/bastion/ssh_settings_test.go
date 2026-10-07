@@ -359,3 +359,30 @@ func TestSSHRequiresManagedIdentityBeforeConnecting(t *testing.T) {
 		t.Fatal("SSH ran before identity selection")
 	}
 }
+
+func TestSSHConfigDiscoveryPreservesNormalDriftChecks(t *testing.T) {
+	h, client := sshSettingsFixture(t)
+	mockIdentityCommands(t)
+	client.Login(true, "operator", "A-test-password-123")
+	identity := client.Expect(201, "POST", "/api/bastion/ssh/generate", map[string]any{"name": "control"}, nil)["identity_file"].(string)
+	s := ShareNode{SSHHost: "100.64.0.2", SSHPort: 22}
+	req := commandRequest{Operation: "inspect", DiscoverConfig: true}
+	for _, stored := range []bool{false, true} {
+		if stored {
+			s.StatusPort = 9765
+			s.ControlURL = "http://10.0.0.9:8765"
+		}
+		reply, err := h.sshCommandWithIdentity(context.Background(), s, req, identity)
+		if err != nil || reply.StatusPort != 8765 || reply.ControlURL != "http://10.0.0.1:8765" {
+			t.Fatalf("discovery failed: %+v %v", reply, err)
+		}
+		if _, err := h.sshCommandWithIdentity(context.Background(), s, commandRequest{Operation: "inspect"}, identity); err == nil {
+			t.Fatal("normal inspection accepted missing or changed configuration")
+		}
+	}
+	// Discovery cannot bypass saved configuration checks for key mutations.
+	req.Operation = "ensure"
+	if _, err := h.sshCommandWithIdentity(context.Background(), s, req, identity); err == nil {
+		t.Fatal("key mutation accepted discovery mode")
+	}
+}
