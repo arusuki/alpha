@@ -7,7 +7,7 @@ const actionNames = {'bastion.key.sync':'补齐跳板用户公钥','bastion.key.
 const dateTime = value => value ? new Date(value*1000).toLocaleString('zh-CN') : '—';
 function apiURL(path) {
   if(path==='/api/agent/settings')return path;
-  return platform.nodeID && /^\/api\/(state|settings|jobs|owners|containers|process|agent|snapshot)([/?]|$)/.test(path) ? `/api/cluster/nodes/${platform.nodeID}${path}` : path;
+  return platform.nodeID && /^\/api\/(state|settings|jobs|owners|containers|process|gpu|agent|snapshot)([/?]|$)/.test(path) ? `/api/cluster/nodes/${platform.nodeID}${path}` : path;
 }
 async function api(path,options={}) {
   const response=await fetch(apiURL(path),{credentials:'same-origin',cache:'no-store',...options,headers:{'Content-Type':'application/json','X-CSRF-Token':platform.csrf,...options.headers}});

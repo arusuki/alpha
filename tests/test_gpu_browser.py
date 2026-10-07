@@ -3,7 +3,7 @@ import math
 import time
 from pathlib import Path
 from urllib.parse import urlsplit, parse_qs
-from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
+from browser_support import NodeHandler, NODE_PATH, PROXY_PATH, launch_options, start_server
 from playwright.sync_api import sync_playwright
 
 calls=[]
@@ -39,7 +39,10 @@ class Handler(NodeHandler):
         if path=='/api/session':return self.respond(dict(user=dict(id='admin',username='admin',role='admin'),csrf='test',setup_required=False))
         if path=='/api/state':return self.respond(dict(jobs=[],directory_jobs=[],latest_id=None,active=None,interval_minutes=30))
         if path=='/api/gpu/overview':
-            calls.append(self.path)
+            request_path=self.requestline.split()[1]
+            calls.append(request_path)
+            if urlsplit(request_path).path!=PROXY_PATH+'/api/gpu/overview':
+                return self.respond(dict(error='接口不存在，请先选择节点'),404)
             if mode=='error':return self.respond(dict(error='节点离线'),503)
             data=overview(parse_qs(urlsplit(self.path).query));data['history']['from']=data['history'].pop('from_')
             return self.respond(data)
@@ -100,6 +103,7 @@ with sync_playwright() as p:
     page.evaluate("document.querySelector('#gpuRefresh').click()")
     page.wait_for_timeout(100)
     assert len(calls)==n
+    assert calls and all(urlsplit(path).path==PROXY_PATH+'/api/gpu/overview' for path in calls)
     assert not errors,errors
     browser.close()
 server.shutdown()
