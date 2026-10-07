@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"project-alpha/internal/procfs"
 )
 
 // fakeProcFS lays out a procfs tree so the probe can be exercised without
@@ -48,7 +50,7 @@ func statLine(pid uint32, comm string, state byte, startTicks uint64) string {
 func TestProcProberAlive(t *testing.T) {
 	const pid = 4242
 	start := epoch.Add(2 * time.Hour)
-	ticks := uint64(2*time.Hour/time.Second) * procClockTicks
+	ticks := uint64(2*time.Hour/time.Second) * procfs.ClockTicks
 
 	cases := []struct {
 		name  string
@@ -59,7 +61,7 @@ func TestProcProberAlive(t *testing.T) {
 		{"running and matching", statLine(pid, "daemon", 'S', ticks), start, true},
 		{"start time within tolerance", statLine(pid, "daemon", 'S', ticks), start.Add(time.Second), true},
 		{"start time too far off", statLine(pid, "daemon", 'S', ticks), start.Add(time.Minute), false},
-		{"pid recycled later", statLine(pid, "other", 'S', ticks+uint64(time.Hour/time.Second)*procClockTicks), start, false},
+		{"pid recycled later", statLine(pid, "other", 'S', ticks+uint64(time.Hour/time.Second)*procfs.ClockTicks), start, false},
 		{"zombie", statLine(pid, "daemon", 'Z', ticks), start, false},
 		{"already reaped", statLine(pid, "daemon", 'X', ticks), start, false},
 		// The comm field is parenthesised and may itself contain spaces and
@@ -84,7 +86,7 @@ func TestProcProberAlive(t *testing.T) {
 func TestProcProberUnknownCases(t *testing.T) {
 	const pid = 4242
 	start := epoch.Add(2 * time.Hour)
-	ticks := uint64(2*time.Hour/time.Second) * procClockTicks
+	ticks := uint64(2*time.Hour/time.Second) * procfs.ClockTicks
 	running := statLine(pid, "daemon", 'S', ticks)
 
 	t.Run("missing process", func(t *testing.T) {
@@ -135,7 +137,7 @@ func TestProcProberAgreesWithHostProcFS(t *testing.T) {
 	if err != nil {
 		t.Skipf("cannot read /proc/self/stat: %v", err)
 	}
-	_, ticks, ok := parseStat(data)
+	_, ticks, ok := procfs.ParseStat(data)
 	if !ok {
 		t.Fatal("could not parse /proc/self/stat")
 	}

@@ -7,6 +7,8 @@
 
 updater 按实际 Git tag 保留从最新向前数的 3 次有数据库变更的 update。没有引入数据库变更的 tag 不计数；未打 tag 的开发提交不计数，同一 tag 下的多个迁移步骤合并计为一次。未发布迁移仍需保留数据；构建前运行 `go generate ./internal/platform` 生成升级窗口，发布构建必须使用完整 Git 历史与 tags。窗口外的数据库明确报错，保留已有数据。
 
+每次数据库变更必须同步更新 `DatabaseVersion`、初始化 schema 和 updater 共用的迁移链，并重新生成升级窗口；不能只更新服务启动时的初始化逻辑或文档。使用实际构建的 `alpha-updater` 验证 `--database-only` 和发布安装调用的 `_migrate` 入口，覆盖本次变更涉及的角色和旧版本，确认原地升级后的版本、表结构及已有数据，并验证重复执行和失败回滚。按上述要求执行开发测试数据库的原地升级；升级说明引用命令帮助和生成的窗口，不在多处手写“当前数据库版本”。
+
 跳板账号固定为 share node 上的 `alpha-jump`，总控通过服务用户已有的 SSH 身份登录 `alpha-worker`，远程管理成员公钥。
 加入分享池时校验免密登录及管理协议；share node 使用 Go HTTP 反向代理提供总控网页入口，直接连接总控内网 Web 地址，不建立 SSH 反向隧道。
 主命令提供 share-node 初始化两个账号、sshd 和代理服务，--uninstall 撤销安装。日常运行不使用 root。

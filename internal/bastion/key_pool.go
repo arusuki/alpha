@@ -242,44 +242,91 @@ func (h *Handler) editMemberKey(ctx context.Context, member, key string) error {
 				revoked = append(revoked, map[string]any{"public_key": k})
 			}
 		}
+		if len(revoked) == 0 {
+			return nil
+		}
 		members, err := poolMembers(tx, node)
 		if err != nil {
 			return err
 		}
-		for _, row := range revoked {
-			k := row["public_key"].(string)
-			referenced := wanted[k]
-			for _, other := range keyReferences(members, k) {
-				if other.ID != member {
-					referenced = true
-				}
-			}
-			if !referenced {
-				if _, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "remove", Key: k}); err != nil {
-					return err
-				}
+		for _, other := range members {
+			if other.ID != member {
+				wanted[other.PublicKey] = true
 			}
 		}
+		if err := h.removeRevokedKeys(ctx, s, revoked, wanted); err != nil {
+			return err
+		}
+
 		_, err = tx.Exec("DELETE FROM member_key_revocations WHERE member_id=?", member)
 		return err
 	})
 }
+
+// Remove each unreferenced key once; callers retain the journal on failure.
+func (h *Handler) removeRevokedKeys(ctx context.Context, s ShareNode, revoked []map[string]any, retained map[string]bool) error {
+	for _, row := range revoked {
+		key := row["public_key"].(string)
+		if retained[key] {
+			continue
+		}
+		if _, err := h.RemoteCommand(ctx, s, commandRequest{Operation: "remove", Key: key}); err != nil {
+			return err
+		}
+		retained[key] = true
+	}
+	return nil
+}
+
 func (h *Handler) SyncKeys(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	rows, err := platform.Rows(h.DB.SQL, "SELECT m.id,m.ssh_public_key FROM members m JOIN member_access a ON a.member_id=m.id WHERE m.status='active' AND a.tailscale_id IS NOT NULL")
+	shares, err := h.shares()
 	if err != nil {
 		return err
 	}
 	problems := []string{}
-	for _, row := range rows {
-		id := row["id"].(string)
-		err = h.editMemberKey(ctx, id, row["ssh_public_key"].(string))
-		if err == nil {
-			_, err = h.DB.SQL.Exec("UPDATE member_access SET key_state='ready',updated_at=? WHERE member_id=?", platform.Now(), id)
-		}
+	for _, s := range shares {
+		err := h.DB.Transaction(func(tx *sql.Tx) error {
+			members, err := poolMembers(tx, s.ID)
+			if err != nil {
+				return err
+			}
+			keys := []string{}
+			desired := map[string]bool{}
+			retained := map[string]bool{}
+			for _, m := range members {
+				retained[m.PublicKey] = true
+				if m.Status == "active" && !desired[m.PublicKey] {
+					keys = append(keys, m.PublicKey)
+					desired[m.PublicKey] = true
+				}
+			}
+			if len(keys) == 0 {
+				return nil
+			}
+			if _, err = h.RemoteCommand(ctx, s, commandRequest{Operation: "ensure", Keys: keys}); err != nil {
+				return err
+			}
+			revoked, err := platform.Rows(tx, `SELECT r.public_key FROM member_key_revocations r
+ JOIN members m ON m.id=r.member_id JOIN member_access a ON a.member_id=m.id
+ WHERE m.status='active' AND a.tailscale_id=?`, s.ID)
+			if err != nil {
+				return err
+			}
+			if err = h.removeRevokedKeys(ctx, s, revoked, retained); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`DELETE FROM member_key_revocations WHERE member_id IN
+ (SELECT m.id FROM members m JOIN member_access a ON a.member_id=m.id WHERE m.status='active' AND a.tailscale_id=?)`, s.ID); err != nil {
+				return err
+			}
+			_, err = tx.Exec(`UPDATE member_access SET key_state='ready',updated_at=?
+ WHERE tailscale_id=? AND member_id IN (SELECT id FROM members WHERE status='active')`, platform.Now(), s.ID)
+			return err
+		})
 		if err != nil {
-			problems = append(problems, id+": "+err.Error())
+			problems = append(problems, s.Name+": "+err.Error())
 		}
 	}
 	if len(problems) > 0 {

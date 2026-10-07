@@ -49,6 +49,12 @@ func TestMultipleKeyRotationRetriesRevocationAndDeletion(t *testing.T) {
 	if err := h.ChangeMemberKeys(m.ID, managerTestKey, queue); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.SyncKeys(ctx); err == nil {
+		t.Fatal("batch sync ignored failed revoke")
+	}
+	if err := h.DB.SQL.QueryRow("SELECT count(*) FROM member_key_revocations WHERE member_id=?", m.ID).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("batch sync lost pending revoke: %d %v", pending, err)
+	}
 	failRemove = false
 	if err := h.SyncKeys(ctx); err != nil || len(pool) != 1 || !pool[managerTestKey] {
 		t.Fatalf("retry: %v %v", pool, err)

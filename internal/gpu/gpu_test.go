@@ -58,16 +58,26 @@ func TestHistoryUnionSharedCardsRollingAndGaps(t *testing.T) {
 	if err := m.persist(next); err != nil {
 		t.Fatal(err)
 	}
-	// No bridge over a collection failure, delay, removal, or a service restart.
-	for _, prev := range []Snapshot{{}, sample(now-60, "alice"), sample(now+1, "alice")} {
-		m.previous = prev
-		if err := m.persist(sample(now)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	m.previous = sample(now, "alice")
-	if err := m.persist(Snapshot{At: now, Error: "driver unavailable"}); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name           string
+		previous, next Snapshot
+	}{
+		{"restart", Snapshot{}, sample(now)},
+		{"delay", sample(now-60, "alice"), sample(now)},
+		{"backward clock", sample(now+1, "alice"), sample(now)},
+		{"failure", sample(now-30, "alice"), Snapshot{At: now - 15, Devices: sample(0).Devices, Error: "driver unavailable"}},
+		{"device removed", sample(now-30, "alice"), Snapshot{At: now - 15, Devices: []Device{}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m.previous = tc.previous
+			if err := m.persist(tc.next); err != nil {
+				t.Fatal(err)
+			}
+			var count int
+			if err := m.db.SQL.QueryRow("SELECT count(*) FROM gpu_intervals").Scan(&count); err != nil || count != 3 {
+				t.Fatalf("invalid interval persisted: count=%d err=%v", count, err)
+			}
+		})
 	}
 	h, err := m.history(now, now-3600, now, 60)
 	if err != nil {
@@ -84,7 +94,9 @@ func TestHistoryUnionSharedCardsRollingAndGaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	var count int
-	m.db.SQL.QueryRow("SELECT count(*) FROM gpu_intervals").Scan(&count)
+	if err := m.db.SQL.QueryRow("SELECT count(*) FROM gpu_intervals").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
 	if count != 0 {
 		t.Fatalf("failed samples did not prune: %d", count)
 	}

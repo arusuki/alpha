@@ -4,19 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
+
+	"project-alpha/internal/procfs"
 )
 
-const (
-	// procClockTicks is USER_HZ, the unit /proc/<pid>/stat reports starttime in.
-	// The kernel fixes it at 100 for procfs regardless of the scheduler's
-	// CONFIG_HZ, so it is a constant rather than something to read at runtime.
-	procClockTicks = 100
-	// Allow five seconds of skew between procfs and collector start timestamps.
-	startTolerance = 5 * time.Second
-)
+// Allow five seconds of skew between procfs and collector start timestamps.
+const startTolerance = 5 * time.Second
 
 // Prober checks PID and start time. A false result includes unreadable procfs;
 // after repeated cache misses, that process may be removed from the display.
@@ -47,7 +42,7 @@ func (p *ProcProber) Alive(pid uint32, start time.Time) bool {
 		// Gone, or not readable. Either way we cannot claim it is running.
 		return false
 	}
-	state, ticks, ok := parseStat(data)
+	state, ticks, ok := procfs.ParseStat(data)
 	if !ok || state == 'Z' || state == 'X' {
 		// Zombie or already reaped: it has exited, whatever the cache says.
 		return false
@@ -58,7 +53,7 @@ func (p *ProcProber) Alive(pid uint32, start time.Time) bool {
 		// is harmless, whereas dropping a running process is not.
 		return true
 	}
-	started := boot.Add(time.Duration(int64(ticks/procClockTicks)) * time.Second)
+	started := boot.Add(time.Duration(int64(ticks/procfs.ClockTicks)) * time.Second)
 	if delta := started.Sub(start); delta < -startTolerance || delta > startTolerance {
 		// The PID was recycled by a different process; ours is no longer here.
 		return false
@@ -69,45 +64,6 @@ func (p *ProcProber) Alive(pid uint32, start time.Time) bool {
 // bootTime reads btime from <root>/stat. It cannot change while the host is up,
 // so it is read once and an unreadable procfs simply stays zero.
 func (p *ProcProber) bootTime() time.Time {
-	p.once.Do(func() {
-		data, err := os.ReadFile(filepath.Join(p.root, "stat"))
-		if err != nil {
-			return
-		}
-		for line := range strings.SplitSeq(string(data), "\n") {
-			value, found := strings.CutPrefix(line, "btime ")
-			if !found {
-				continue
-			}
-			seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-			if err != nil {
-				return
-			}
-			p.btime = time.Unix(seconds, 0)
-			return
-		}
-	})
+	p.once.Do(func() { p.btime = procfs.BootTime(p.root) })
 	return p.btime
-}
-
-// parseStat pulls the state and start time out of a /proc/<pid>/stat line. The
-// comm field is parenthesised and may itself contain spaces and parentheses, so
-// the remaining fields are counted from the last ')' rather than split naively.
-func parseStat(data []byte) (state byte, ticks uint64, ok bool) {
-	line := string(data)
-	end := strings.LastIndexByte(line, ')')
-	if end < 0 {
-		return 0, 0, false
-	}
-	fields := strings.Fields(line[end+1:])
-	// Fields are numbered from one and start at the state (3), so the start
-	// time (22) sits nineteen entries further along.
-	if len(fields) < 20 || fields[0] == "" {
-		return 0, 0, false
-	}
-	ticks, err := strconv.ParseUint(fields[19], 10, 64)
-	if err != nil {
-		return 0, 0, false
-	}
-	return fields[0][0], ticks, true
 }

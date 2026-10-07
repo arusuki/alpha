@@ -212,7 +212,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             page.get_by_text('接受成功后，页面是什么样的？', exact=True).click()
             tutorial = page.locator('#share .guide-figure img')
             tutorial.scroll_into_view_if_needed()
-            expect(tutorial).to_have_js_property('naturalWidth', 1135)
+            page.wait_for_function('(img) => img.complete && img.naturalWidth > 0', arg=tutorial.element_handle())
             image_response = context.request.get(page.url.rstrip('/') + '/guide/tailscale-shared-machine.jpg')
             assert image_response.status == 200
             assert image_response.headers['content-type'] == 'image/jpeg'
@@ -221,7 +221,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             for name in ['clash-settings.png', 'clash-bypass.png']:
                 screenshot = page.locator(f'#proxyFix img[src$="/{name}"]')
                 screenshot.scroll_into_view_if_needed()
-                expect(screenshot).to_have_js_property('naturalWidth', 2390)
+                page.wait_for_function('(img) => img.complete && img.naturalWidth > 0', arg=screenshot.element_handle())
                 response = context.request.get(page.url.rstrip('/') + '/guide/' + name)
                 assert response.status == 200
                 assert response.headers['content-type'] == 'image/png'

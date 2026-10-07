@@ -2,6 +2,7 @@ package bastion
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
@@ -199,6 +200,7 @@ func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 	charlie := register("charlie")
 	var mu sync.Mutex
 	pools := map[string]keySnapshot{}
+	ensures := map[string]int{}
 	h.RemoteCommand = func(ctx context.Context, s ShareNode, req commandRequest) (commandReply, error) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -208,6 +210,14 @@ func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 		}
 		switch req.Operation {
 		case "ensure":
+			ensures[s.ID]++
+			unique := map[string]bool{}
+			for _, key := range req.Keys {
+				if unique[key] {
+					t.Fatal("batch contains duplicate keys")
+				}
+				unique[key] = true
+			}
 			ensurePoolKeys(&v, req.Keys...)
 		case "remove":
 			for id, key := range v.Keys {
@@ -225,13 +235,29 @@ func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 		}
 		return commandReply{Version: keyFormat, ListenHost: s.SSHHost, StatusPort: s.StatusPort, ControlURL: s.ControlURL, Keys: copy}, nil
 	}
-	for _, m := range []members.Member{alice, bob, charlie} {
-		if err = h.editMemberKey(context.Background(), m.ID, testKey); err != nil {
-			t.Fatal(err)
-		}
+	if err = h.SyncKeys(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ensures["node-a"] != 1 || ensures["node-b"] != 1 {
+		t.Fatalf("sync did not batch per share node: %v", ensures)
 	}
 	if len(pools["node-a"].Keys) != 1 || len(pools["node-b"].Keys) != 1 {
 		t.Fatal(pools)
+	}
+	queue := func(*sql.Tx) error { return nil }
+	for _, rotation := range []struct {
+		key   string
+		count int
+	}{{managerTestKey, 2}, {testKey, 1}} {
+		if err = h.ChangeMemberKeys(alice.ID, rotation.key, queue); err != nil {
+			t.Fatal(err)
+		}
+		if err = h.SyncKeys(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(pools["node-a"].Keys) != rotation.count || len(pools["node-b"].Keys) != 1 {
+			t.Fatal("batch rotation removed a shared key or retained an unused key", pools)
+		}
 	}
 	h.DB.SQL.Exec("UPDATE members SET status='deleting' WHERE id=?", alice.ID)
 	if err = h.editMemberKey(context.Background(), alice.ID, ""); err != nil {

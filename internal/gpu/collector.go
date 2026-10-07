@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"project-alpha/internal/platform"
+	"project-alpha/internal/procfs"
 )
 
 type Process struct {
@@ -46,7 +47,6 @@ type smiDocument struct {
 	GPUs     []struct {
 		UUID      string `xml:"uuid"`
 		Name      string `xml:"product_name"`
-		Minor     string `xml:"minor_number"`
 		Util      string `xml:"utilization>gpu_util"`
 		Used      string `xml:"fb_memory_usage>used"`
 		Total     string `xml:"fb_memory_usage>total"`
@@ -125,16 +125,12 @@ func readProcess(root string, p *Process, boot float64) {
 	if err != nil {
 		return
 	}
-	end := strings.LastIndexByte(string(stat), ')')
-	if end < 0 {
+	_, ticks, ok := procfs.ParseStat(stat)
+	if !ok {
 		return
 	}
-	fields := strings.Fields(string(stat[end+1:]))
-	if len(fields) < 20 {
-		return
-	}
-	if ticks, err := strconv.ParseFloat(fields[19], 64); err == nil && boot > 0 {
-		v := boot + ticks/100
+	if boot > 0 {
+		v := boot + float64(ticks)/procfs.ClockTicks
 		p.StartedAt = &v
 	}
 	cg, err := os.ReadFile(filepath.Join(dir, "cgroup"))
@@ -169,16 +165,6 @@ func readProcess(root string, p *Process, boot float64) {
 		}
 	}
 }
-func bootTime(root string) float64 {
-	raw, _ := os.ReadFile(filepath.Join(root, "stat"))
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.HasPrefix(line, "btime ") {
-			n, _ := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(line, "btime ")), 64)
-			return n
-		}
-	}
-	return 0
-}
 func collect(ctx context.Context, db *platform.Database) ([]Device, string, error) {
 	raw, err := command(ctx, "nvidia-smi", "-q", "-x")
 	if err != nil {
@@ -199,7 +185,10 @@ func collect(ctx context.Context, db *platform.Database) ([]Device, string, erro
 		ownerMap[id] = r["owner"].(string)
 		names[id] = r["name"].(string)
 	}
-	boot := bootTime("/proc")
+	boot := float64(0)
+	if at := procfs.BootTime("/proc"); !at.IsZero() {
+		boot = float64(at.Unix())
+	}
 	missingNames := false
 	for i := range devices {
 		for j := range devices[i].Processes {
