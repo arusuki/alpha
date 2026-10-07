@@ -142,6 +142,7 @@
     const guideReady = access.key_state === 'ready' && ['invited','accepted'].includes(access.invite_state)
       && statusURL && ['http:','https:'].includes(statusURL.protocol) && !statusURL.username && !statusURL.password;
     $('controlGuide').hidden = !guideReady;
+    $('proxyFix').hidden = !guideReady;
     $('pageTitle').textContent = '注册已提交，继续连接总控';
     $('pageIntro').textContent = '资料已登记，无需再次注册。完成 Tailscale 连接并登录总控后，就可以关闭本页；之后统一在总控管理。';
     $('journeyRegister').removeAttribute('aria-current');
@@ -150,6 +151,9 @@
     if (guideReady) {
       $('controlStatusLink').href = statusURL.href;
       $('controlAddress').textContent = statusURL.href;
+      const bypassHost = statusURL.hostname.replace(/^\[|\]$/g, '');
+      if ($('proxyBypassHost').textContent !== bypassHost) $('proxyCopyStatus').textContent = '';
+      $('proxyBypassHost').textContent = bypassHost;
     }
   }
   function watch() {
@@ -195,6 +199,14 @@
   $('copyControl').onclick = async () => {
     try { await AlphaClipboard.writeText($('controlStatusLink').href); message('总控地址已复制。登录成功后请收藏此地址，以后无需再打开注册页。'); }
     catch (_) { showError('浏览器未允许复制，请手动复制下方显示的总控地址。'); }
+  };
+  $('copyProxyBypass').onclick = async () => {
+    try {
+      await AlphaClipboard.writeText($('proxyBypassHost').textContent);
+      $('proxyCopyStatus').textContent = '绕过地址已复制。粘贴到 Clash Verge，点击「新建」后再「保存」。';
+    } catch (_) {
+      $('proxyCopyStatus').textContent = '浏览器未允许复制，请选中上方地址手动复制。';
+    }
   };
   addEventListener('pagehide', () => stream?.close());
   async function load() {

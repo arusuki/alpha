@@ -210,12 +210,21 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             # The embedded tutorial image must be allowed by the real registry CSP
             # and served through the authenticated registration asset route.
             page.get_by_text('接受成功后，页面是什么样的？', exact=True).click()
-            tutorial = page.locator('.guide-figure img')
+            tutorial = page.locator('#share .guide-figure img')
             tutorial.scroll_into_view_if_needed()
             expect(tutorial).to_have_js_property('naturalWidth', 1135)
             image_response = context.request.get(page.url.rstrip('/') + '/guide/tailscale-shared-machine.jpg')
             assert image_response.status == 200
             assert image_response.headers['content-type'] == 'image/jpeg'
+            expect(page.locator('#proxyFix')).to_be_visible()
+            expect(page.locator('#proxyBypassHost')).to_have_text('100.64.0.2')
+            for name in ['clash-settings.png', 'clash-bypass.png']:
+                screenshot = page.locator(f'#proxyFix img[src$="/{name}"]')
+                screenshot.scroll_into_view_if_needed()
+                expect(screenshot).to_have_js_property('naturalWidth', 2390)
+                response = context.request.get(page.url.rstrip('/') + '/guide/' + name)
+                assert response.status == 200
+                assert response.headers['content-type'] == 'image/png'
             context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=registry_url)
             page.evaluate("() => { navigator.clipboard.writeText = async () => { throw new DOMException('Denied', 'NotAllowedError'); }; }")
             page.locator('#copy').click()
@@ -224,6 +233,14 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             page.locator('#copyControl').click()
             expect(page.locator('#message')).to_contain_text('总控地址已复制')
             assert page.evaluate('navigator.clipboard.readText()') == 'http://100.64.0.2:9765/status/alice'
+            page.locator('#copyProxyBypass').click()
+            expect(page.locator('#proxyCopyStatus')).to_contain_text('绕过地址已复制')
+            assert page.evaluate('navigator.clipboard.readText()') == '100.64.0.2'
+            page.locator('#proxyFix').screenshot(path='/tmp/project-alpha-proxy-fix-desktop.png')
+            page.set_viewport_size(dict(width=390, height=844))
+            assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+            page.locator('#proxyFix').screenshot(path='/tmp/project-alpha-proxy-fix-mobile.png')
+            page.set_viewport_size(dict(width=1280, height=1000))
             assert page.locator('#memberResourceToken').count() == 0
             assert sql('registry', 'SELECT registration FROM registry_sessions')[0][0] == ''
             expect(page.locator('#retry')).to_be_hidden()

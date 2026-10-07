@@ -73,6 +73,29 @@
       <p class="hint">网页上看到分享节点，还不能代替本机客户端连接。换一台电脑使用时，也要在那台电脑安装并登录。</p>
     </div></div>
   </section>
+  <section id="proxyFix" class="proxy-fix" hidden aria-labelledby="proxyFixTitle">
+    <p class="eyebrow">连接不上？ / CLASH 代理修复</p>
+    <h2 id="proxyFixTitle">开了 Clash？先让 Tailscale 地址绕过系统代理</h2>
+    <p>本机 Tailscale 已连接，但总控仍超时、打不开？如果开启了 Clash / Clash Verge 的<strong>系统代理</strong>，浏览器可能把总控的 Tailscale IP 也交给代理节点，导致无法访问。将这个地址加入<strong>代理绕过</strong>，让它通过本机 Tailscale 直连。</p>
+    <ol class="proxy-fix-steps">
+      <li><strong>打开 Clash Verge → 设置</strong>，点击<strong>「系统代理」文字旁的小齿轮 ⚙</strong>。</li>
+      <li>找到<strong>「代理绕过设置」</strong>，保留已有条目，在输入框中填入下面的地址，再点<strong>「新建」</strong>。如果开启了「始终使用默认绕过」且无法编辑，先关闭该选项。</li>
+    </ol>
+    <div class="proxy-bypass-value">
+      <div><span class="hint">你的总控地址 · 只需填入这一项</span><code id="proxyBypassHost"></code></div>
+      <button type="button" id="copyProxyBypass">复制绕过地址</button>
+    </div>
+    <p id="proxyCopyStatus" class="hint" role="status" aria-live="polite"></p>
+    <p class="hint">已从下方总控链接中提取。不要填写 <code>http://</code>、端口或 <code>/status/…</code>，也不要照抄截图里的示例 IP。若通过域名访问，请添加实际使用的主机名。</p>
+    <ol class="proxy-fix-steps" start="3">
+      <li>确认地址已出现在绕过列表中，点击<strong>「保存」</strong>。保持 Tailscale 已连接，然后重新打开下方总控状态页。</li>
+    </ol>
+    <div class="proxy-screenshots">
+      <figure class="guide-figure"><a href="{{.Base}}/guide/clash-settings.png" target="_blank" rel="noopener noreferrer" aria-label="放大 Clash Verge 设置入口截图"><img src="{{.Base}}/guide/clash-settings.png" width="2390" height="1554" loading="lazy" alt="Clash Verge 设置页：左侧选择设置，系统设置区域的系统代理文字右侧有一个小齿轮。"></a><figcaption>① 设置 → 系统代理旁的小齿轮。点击截图放大。</figcaption></figure>
+      <figure class="guide-figure"><a href="{{.Base}}/guide/clash-bypass.png" target="_blank" rel="noopener noreferrer" aria-label="放大 Clash Verge 代理绕过设置截图"><img src="{{.Base}}/guide/clash-bypass.png" width="2390" height="1554" loading="lazy" alt="系统代理设置弹窗：下方代理绕过设置中已有示例地址 100.77.243.34，输入框旁是新建按钮，右下角是保存按钮。"></a><figcaption>② 代理绕过设置 → 填入你的地址 → 新建 → 保存。macOS · Clash Verge v2.5.2 实际截图；其他版本界面可能略有不同。</figcaption></figure>
+    </div>
+    <p class="hint">仍然不通？确认接受分享和本机登录的是同一个 Tailscale 账号。若还开启了 TUN（虚拟网卡）模式、PAC 模式或浏览器独立代理，需要另外检查对应的流量绕过设置；系统代理绕过不覆盖这些情况。可参考 <a href="https://www.clashverge.dev/guide/bypass.html" target="_blank" rel="noopener noreferrer">Clash Verge 官方绕过说明 ↗</a>。</p>
+  </section>
   <section id="controlGuide" class="handoff" hidden aria-labelledby="controlGuideTitle">
     <p class="eyebrow">STEP 03 / 以后从这里进入</p>
     <h2 id="controlGuideTitle">进入总控，完成最后一步</h2>
@@ -82,6 +105,7 @@
     <div class="checkpoint"><strong>登录成功后，请收藏总控并关闭本注册页</strong><p>以后查看容器、申请新节点的容器、获取 SSH 配置、修改登录密码，都在总控完成。无需再次注册，也无需保留注册链接。</p></div>
     <details class="help"><summary>总控打不开，或登录失败？</summary><ul>
       <li>网页超时：检查本机 Tailscale 是否已连接，且账号与接受分享的账号一致。</li>
+      <li>开了 Clash / Clash Verge：按上方独立的<a href="#proxyFix">「连接不上？ / Clash 代理修复」</a>添加代理绕过。</li>
       <li>找不到分享节点：回到上方邀请链接确认是否接受成功；邀请失效时联系管理员。</li>
       <li>能打开但密码错误：输入 Project Alpha 注册密码，不是 Tailscale 密码。</li>
       <li>以上都正常仍打不开：把本页显示的分配错误或总控地址发给管理员核查，无需重新注册。</li>

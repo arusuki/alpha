@@ -26,7 +26,7 @@ import (
 	"project-alpha/internal/updates"
 )
 
-//go:embed page.html app.js style.css guide/*.jpg
+//go:embed page.html app.js style.css guide/*.jpg guide/*.png
 var assets embed.FS
 var page = template.Must(template.ParseFS(assets, "page.html"))
 var passPattern = regexp.MustCompile(`^[A-Za-z0-9]{8}$`)
@@ -173,7 +173,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	base := "/registry/" + match[1] + "/" + match[2]
 	action := match[3]
-	if !((action == "" || action == "/" || action == "/app.js" || action == "/clipboard.js" || action == "/style.css" || action == "/guide/tailscale-shared-machine.jpg" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
+	if !((action == "" || action == "/" || action == "/app.js" || action == "/clipboard.js" || action == "/style.css" || action == "/guide/tailscale-shared-machine.jpg" || action == "/guide/clash-settings.png" || action == "/guide/clash-bypass.png" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
 		panic(http.ErrAbortHandler)
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -242,7 +242,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		w.Write(body)
-	case "/app.js", "/style.css", "/guide/tailscale-shared-machine.jpg":
+	case "/app.js", "/style.css", "/guide/tailscale-shared-machine.jpg", "/guide/clash-settings.png", "/guide/clash-bypass.png":
 		body, err := assets.ReadFile(strings.TrimPrefix(action, "/"))
 		if err != nil {
 			writeError(w, err)
@@ -253,6 +253,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			typ = "text/css; charset=utf-8"
 		} else if action == "/guide/tailscale-shared-machine.jpg" {
 			typ = "image/jpeg"
+		} else if strings.HasSuffix(action, ".png") {
+			typ = "image/png"
 		}
 		w.Header().Set("Content-Type", typ)
 		w.Write(body)
