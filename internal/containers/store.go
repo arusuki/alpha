@@ -136,6 +136,9 @@ func (h *Handler) saveTx(tx *sql.Tx, r Record, actor string) error {
 	if err != nil {
 		return err
 	}
+	if _, err := tx.Exec("UPDATE member_container_slots SET container_id=? WHERE member_id=? AND deleted=0 AND mode='create'", r.ID, strings.TrimPrefix(r.Name, "alpha-")); err != nil {
+		return err
+	}
 	if h.Owner != nil {
 		if err = h.Owner(tx, r.ID, r.Owner); err != nil {
 			return err

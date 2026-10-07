@@ -22,6 +22,7 @@ import (
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/updates"
 )
 
 //go:embed page.html app.js style.css
@@ -134,6 +135,33 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil || host.User != nil || host.Path != "" || !s.hosts[strings.ToLower(host.Hostname())] {
 		panic(http.ErrAbortHandler)
 	}
+	if s.Hub.Updates != nil && r.URL.RawQuery == "" && r.URL.RawPath == "" {
+		if r.URL.Path == updates.WebhookPath {
+			status, value, err := s.Hub.Updates.Webhook(w, r)
+			if err != nil {
+				writeError(w, err)
+			} else {
+				httpapi.WriteJSON(w, status, value)
+			}
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, updates.Path+"/") {
+			var bound string
+			err := s.DB.SQL.QueryRow("SELECT control_id FROM registry_control WHERE id=1").Scan(&bound)
+			id, _ := s.DB.CheckMode("registry")
+			if err != nil || bound == "" || r.Header.Get("X-Alpha-Control") != bound || r.Header.Get("X-Alpha-Node") != id || !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.Hub.Token)) {
+				writeError(w, httpapi.NewError(401, "管理接口仅允许已绑定的 control"))
+				return
+			}
+			status, value, err := s.Hub.Updates.Dispatch(w, r)
+			if err != nil {
+				writeError(w, err)
+			} else {
+				httpapi.WriteJSON(w, status, value)
+			}
+			return
+		}
+	}
 	if (r.URL.Path == LinkPath || r.URL.Path == InfoPath) && r.URL.RawQuery == "" && r.URL.RawPath == "" {
 		s.Hub.ServeHTTP(w, r)
 		return
@@ -144,7 +172,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	base := "/registry/" + match[1] + "/" + match[2]
 	action := match[3]
-	if !((action == "" || action == "/" || action == "/app.js" || action == "/style.css" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry") && r.Method == "POST") {
+	if !((action == "" || action == "/" || action == "/app.js" || action == "/style.css" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
 		panic(http.ErrAbortHandler)
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -219,6 +247,25 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write(body)
 	case "/api/session":
 		value := map[string]any{"schema": json.RawMessage(v.Schema), "csrf": v.CSRF, "submitted": v.Registered || v.Registration != "", "registered": v.Registered}
+		httpapi.WriteJSON(w, 200, value)
+	case "/api/options":
+		if !s.allow(r) {
+			writeError(w, httpapi.NewError(429, "请求过多，请稍后重试"))
+			return
+		}
+		var input struct {
+			Username string `json:"username"`
+		}
+		if err := httpapi.DecodeBody(w, r, &input); err != nil {
+			writeError(w, err)
+			return
+		}
+		body, _ := json.Marshal(input)
+		value, err := s.Hub.Call(r.Context(), Request{Action: "options", Invitation: match[2], Body: body})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		httpapi.WriteJSON(w, 200, value)
 	case "/api/register":
 		if !s.allow(r) {

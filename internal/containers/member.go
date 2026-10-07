@@ -64,9 +64,12 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		return 0, nil, httpapi.NewError(400, "使用者 ID 无效")
 	}
 	var req struct {
-		Password string `json:"password"`
-		Username string `json:"username"`
-		SSHKey   string `json:"ssh_public_key"`
+		Password      string `json:"password"`
+		Mode          string `json:"mode"`
+		ContainerID   string `json:"container_id"`
+		ExpectedOwner string `json:"expected_owner"`
+		Username      string `json:"username"`
+		SSHKey        string `json:"ssh_public_key"`
 	}
 	if err := httpapi.DecodeBody(w, r, &req); err != nil {
 		return 0, nil, err
@@ -90,6 +93,9 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 			}
 			if deleted {
 				return nil
+			}
+			if _, err = tx.Exec("UPDATE member_container_slots SET deleted=1 WHERE member_id=?", id); err != nil {
+				return err
 			}
 			if h.UnassignOwner != nil {
 				if err = h.UnassignOwner(tx, req.Username); err != nil {
@@ -122,6 +128,9 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		}
 		return 200, map[string]bool{"ok": true}, nil
 	}
+	if req.Mode != "create" && req.Mode != "adopt" || req.Mode == "create" && req.ContainerID != "" || req.Mode == "adopt" && !fullID.MatchString(req.ContainerID) {
+		return fail(fmt.Errorf("请选择新建或领养，领养须提供完整容器 ID"))
+	}
 	if err := members.ValidatePassword(req.Password); err != nil {
 		return 0, nil, err
 	}
@@ -130,13 +139,16 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	if err != nil {
 		return fail(err)
 	}
-	_, err = h.db.SQL.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted) VALUES(?,?,'',0) ON CONFLICT(member_id) DO NOTHING", id, req.Username)
+	_, err = h.db.SQL.Exec("INSERT INTO member_container_slots(member_id,username,plan,deleted,mode,container_id) VALUES(?,?,'',0,?,?) ON CONFLICT(member_id) DO NOTHING", id, req.Username, req.Mode, req.ContainerID)
 	if err != nil {
+		if platform.IsConstraint(err) {
+			return fail(fmt.Errorf("容器已领养或该使用者在此 node 已有分配"))
+		}
 		return fail(err)
 	}
-	var owner string
+	var owner, mode, target string
 	var deleted bool
-	if err = h.db.SQL.QueryRow("SELECT username,deleted FROM member_container_slots WHERE member_id=?", id).Scan(&owner, &deleted); err != nil {
+	if err = h.db.SQL.QueryRow("SELECT username,deleted,mode,container_id FROM member_container_slots WHERE member_id=?", id).Scan(&owner, &deleted, &mode, &target); err != nil {
 		return fail(err)
 	}
 	if owner != req.Username {
@@ -144,6 +156,12 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 	}
 	if deleted {
 		return fail(fmt.Errorf("该使用者已删除，不能重新分配资源"))
+	}
+	if mode != req.Mode || mode == "adopt" && target != req.ContainerID {
+		return fail(fmt.Errorf("已有分配计划，不能更改领养或新建选择"))
+	}
+	if mode == "adopt" {
+		return h.adoptMember(r.Context(), cfg, id, req.Username, req.SSHKey, target, req.ExpectedOwner, u.Username)
 	}
 	plan, err := h.memberPlan(id)
 	if err != nil {

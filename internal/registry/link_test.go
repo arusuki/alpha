@@ -123,3 +123,48 @@ func TestRegistryEndpointRejectsPublicPlaintextAndCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestStableLinkRejectsOnlyIncompatibleBusinessRequests(t *testing.T) {
+	calls := make(chan string, 2)
+	server := httptest.NewServer(websocket.Handler(func(conn *websocket.Conn) {
+		requests := []Request{{ID: strings.Repeat("a", 32), Action: "ping", Protocol: 999}, {ID: strings.Repeat("b", 32), Action: "release.v1", Protocol: 999}, {ID: strings.Repeat("c", 32), Action: "validate", Protocol: 999}}
+		for _, req := range requests {
+			if err := websocket.JSON.Send(conn, req); err != nil {
+				return
+			}
+			var res Response
+			if err := websocket.JSON.Receive(conn, &res); err != nil {
+				return
+			}
+			want := 200
+			if req.Action == "validate" {
+				want = 409
+			}
+			if res.Status != want {
+				calls <- "wrong-status"
+				return
+			}
+		}
+		calls <- "done"
+	}))
+	defer server.Close()
+	config, _ := websocket.NewConfig("ws"+strings.TrimPrefix(server.URL, "http"), server.URL)
+	conn, err := config.DialContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveControl(context.Background(), conn, func(_ context.Context, r Request) (any, error) {
+		calls <- r.Action
+		return map[string]bool{"accepted": true}, nil
+	}, func() {})
+	for _, want := range []string{"release.v1", "done"} {
+		select {
+		case got := <-calls:
+			if got != want {
+				t.Fatalf("got %s, want %s", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("missing stable protocol response")
+		}
+	}
+}

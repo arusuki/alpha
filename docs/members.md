@@ -4,7 +4,7 @@
 
 使用者、注册 schema 和邀请码由总控统一维护；registry 只为注册会话缓存表单定义与加密的待提交内容，成功后清除提交内容，邀请码仅存摘要；总控额外保存邀请码密文，用于管理员生成共享注册链接。`id` 是稳定主键，`username` 是唯一且不可修改的使用者标识，用来关联各 node 的容器归属。总控创建容器或设置非空归属时，要求选择已登记的 `username`。CLI 导入或 Docker 标签中尚未登记的归属会在“使用者容器”中单列为“未登记使用者”；同名使用者登记成功后自动归入其统计，node 原始数据保持不变。
 
-“使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册后自动分配分享节点、添加 alpha-jump 公钥，并在各 node 创建一个公钥登录容器；失败项可由使用者后续通过 API 补申请。详见 [跳板机与使用者资源](bastion.md)。
+“使用者容器”展示使用者在各 node 上的容器及数量，同一个容器 ID 出现在不同 node 时分别计数。统计规则和离线行为见 [集群管理](cluster.md)。注册时逐节点选择领养已有容器或新建一个，注册后自动分配分享节点、添加 alpha-jump 公钥，并执行所选容器分配；失败项可由使用者后续通过 API 补申请。详见 [跳板机与使用者资源](bastion.md)。
 
 公网用户可通过 [registry](operations.md#公网-registry) 注册同一类集群使用者：访问 `/registry/<8位 REG_PASS>/<邀请码>`，经 control 校验后填写表单并查看资源分配进度和 Tailscale 分享链接。registry 不创建平台管理员或只读账号；control 不需要对公网开放入站端口。
 
@@ -63,7 +63,11 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
     "invitation_code": "替换为管理员发放的邀请码",
     "ssh_public_key": "ssh-ed25519 AAAA…",
     "schema_revision": 2,
-    "profile": {"full_name":"张三","degree":"博士","group":"A组"}
+    "profile": {"full_name":"张三","degree":"博士","group":"A组"},
+    "containers": [
+      {"node_id":"11111111111111111111111111111111","mode":"create","container_id":""},
+      {"node_id":"22222222222222222222222222222222","mode":"adopt","container_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+    ]
   }'
 ```
 
@@ -73,7 +77,11 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 `ssh_public_key` 必填，接受单行 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，不接受 authorized_keys 选项、多行、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
 
-成功返回 `201`（资源后台创建）：
+注册前调用 `POST /api/members/registration-options`，提交 `{invitation_code,username}`，取得 `nodes[]` 的 `node_id/node_name/containers/error`。每个容器提供完整 `id`、名称、归属和 `claimed`。已领养项保留显示并置灰；容器列表包含已管理记录和当前 Docker 容器。节点查询失败会显示错误，仍可选择新建并在恢复后重试。
+
+`containers` 必须覆盖当前所有 worker 且每个节点恰好一项；没有节点时传 `[]`。`mode` 为 `create` 时 `container_id` 必须为空，为 `adopt` 时必须是候选容器的完整 ID。节点列表变化、缺漏、重复、未知节点和无效选择均拒绝，邀请码不扣名额。领养不要求额外密码验证或管理员审批，但已被其他成员占用的容器会拒绝。领养时保留原数据、配置和密码；未导入容器会先执行 [接管检查](containers.md#检查与身份约束)。
+
+成功返回 `201`（资源后台分配）：
 
 ```json
 {
@@ -91,7 +99,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 公网 registry 在网络分享和跳板公钥就绪后，引导用户接受 Tailscale 分享、登录客户端并连接 VPN，提供总控状态页链接，并提示用注册时设置的密码登录。之后所有容器查看、申请及 SSH 教程均通过总控。注册重试和进度查询所用资源令牌由服务端处理，不返回注册页。
 
-使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册时设置的密码后可查看全部 node 及自己的容器，在未分配的在线 node 点击加号立即申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回创建结果，失败显示具体错误；不需要运维平台登录。状态页提供修改密码入口，需输入当前密码和新密码；修改后所有状态页会话失效，之后新建的容器使用新密码，已有容器密码保持不变，可在容器内自行修改。
+使用者网页入口为通过分配 share node 代理的总控 `/status/<username>`，例如 `/status/alice`，其中 `username` 是注册时的唯一使用者标识。输入注册时设置的密码后可查看全部 node 及自己的容器，在未分配的在线 node 选择领养或新建后点击加号申请。页面同时提供使用分配 share node 和计算节点内网 IP 的 SSH config 示例；容器申请成功后补齐端口和命令。申请返回分配结果，失败显示具体错误；不需要运维平台登录。状态页提供修改密码入口，需输入当前密码和新密码；修改后所有状态页会话失效，之后新建的容器使用新密码，已有容器密码保持不变，可在容器内自行修改。
 
 | 状态码 | 含义 |
 | --- | --- |

@@ -69,11 +69,11 @@ For a persistent deployment, see the included [systemd and nginx configuration](
 
 The [Linux CI and Release workflow](.github/workflows/release.yml) runs Go race tests, `go vet`, and frontend JavaScript tests on pushes to `master`, pull requests targeting `master`, and manual runs, then builds Linux amd64 and arm64 packages. These builds are available as Artifacts on the Actions page for 14 days.
 
-To publish a release, create and push a new version tag on a commit containing the workflow. For example, when releasing version 0.3.1:
+To publish a release, create and push a new version tag on a commit containing the workflow. For example, when releasing version 0.4.0:
 
 ```bash
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
 After all checks and both architecture builds pass, a `v*` tag push creates a GitHub Release with:
@@ -82,9 +82,9 @@ After all checks and both architecture builds pass, a `v*` tag push creates a Gi
 - `project-alpha_<tag>_linux_arm64.tar.gz`
 - `SHA256SUMS`
 
-Tags containing a hyphen, such as `v0.3.1-rc.1`, are marked as prereleases. Failed runs can be rerun from Actions; assets with matching names are replaced if the Release already exists. Branch, pull request, and manual runs only produce Artifacts. The workflow uses the repository's built-in `GITHUB_TOKEN` and needs no additional Secret.
+Tags containing a hyphen, such as `v0.4.0-rc.1`, are marked as prereleases. Failed runs can be rerun from Actions; assets with matching names are replaced if the Release already exists. Branch, pull request, and manual runs only produce Artifacts. The workflow uses the repository's built-in `GITHUB_TOKEN` and needs no additional Secret.
 
-Each archive contains `bin/project-alpha`, `bin/rootless-docker`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
+Each archive contains `bin/project-alpha`, `bin/rootless-docker`, `bin/alpha-updater`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
 
 Run `project-alpha --version` to check the binary's version and build information. Use `project-alpha --help` for a short command overview, and `<subcommand> --help` (such as `serve --help` or `share-node --help`) for detailed options and examples.
 
@@ -92,13 +92,13 @@ The binaries are compiled natively for each architecture inside an Ubuntu 20.04 
 
 The workflow uses Ubuntu 24.04 runners with the compiler, headers, libraries, and packaged binary checks inside `ubuntu:20.04`. CI checks the container's glibc version and rejects binaries requiring GLIBC symbols newer than 2.31. Release builds do not reuse the host's Go/CGO caches.
 
-After downloading the archive for your architecture and `SHA256SUMS`, for example for version 0.3.1:
+After downloading the archive for your architecture and `SHA256SUMS`, for example for version 0.4.0:
 
 ```bash
 # Check only downloaded architectures; omit --ignore-missing if you downloaded both.
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf project-alpha_v0.3.1_linux_amd64.tar.gz
-cd project-alpha_v0.3.1_linux_amd64
+tar -xzf project-alpha_v0.4.0_linux_amd64.tar.gz
+cd project-alpha_v0.4.0_linux_amd64
 ./bin/project-alpha --control --data-dir ./control-data
 ```
 
@@ -132,4 +132,4 @@ for test in tests/test_*.js; do node "$test" || exit; done
 
 Frontend tests require Node.js 20+ and have no npm dependencies. See [development and verification](docs/development.md#验证) for browser regression tests and Docker integration tests.
 
-The current version is **0.3.1**, and the project is under active development. Before 1.0, database, configuration, API, and snapshot formats may change without migration support. If a data format does not match, use a new data directory; existing data is preserved. See [data storage and backups](docs/operations.md#配置与数据).
+The current version is **0.4.0**, and the project is under active development. Before 1.0, database, configuration, API, and snapshot formats may change. [alpha-updater](docs/updater.md) updates local release binaries and upgrades databases in place, starting with v0.3.1. Other incompatible formats require a new data directory; existing data is preserved. See [data storage and backups](docs/operations.md#配置与数据).

@@ -26,6 +26,7 @@ func initializeProvision(tx *sql.Tx) error {
  member_id TEXT NOT NULL REFERENCES members(id), node_id TEXT NOT NULL REFERENCES cluster_nodes(id),
  state TEXT NOT NULL, container_id TEXT NOT NULL DEFAULT '',name TEXT NOT NULL DEFAULT '',port INTEGER NOT NULL DEFAULT 0,
  error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL,
+ mode TEXT NOT NULL DEFAULT 'create' CHECK(mode IN ('create','adopt')), target_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(member_id,node_id));
  CREATE TABLE member_work (member_id TEXT PRIMARY KEY REFERENCES members(id),pending INTEGER NOT NULL);
  `)
@@ -33,14 +34,31 @@ func initializeProvision(tx *sql.Tx) error {
 }
 func (h *Control) initProvision() error {
 	h.Bastion = bastion.NewHandler(h.DB)
+	h.Members.Options = h.registrationOptions
 	h.Members.Reserve = func(tx *sql.Tx, m members.Member) error {
 		if err := h.Bastion.Reserve(tx, m); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("INSERT INTO member_node_resources(member_id,node_id,state,updated_at) SELECT ?,id,'pending',? FROM cluster_nodes WHERE kind='worker'", m.ID, platform.Now()); err != nil {
+		nodes, err := platform.Rows(tx, "SELECT id FROM cluster_nodes WHERE kind='worker'")
+		if err != nil {
 			return err
 		}
-		_, err := tx.Exec("INSERT INTO member_work VALUES(?,1)", m.ID)
+		if len(nodes) != len(m.Containers) {
+			return httpapi.NewError(409, "请为每个节点选择领养或新建；节点列表有变化时请重新载入")
+		}
+		valid := map[string]bool{}
+		for _, n := range nodes {
+			valid[n["id"].(string)] = true
+		}
+		for _, choice := range m.Containers {
+			if !valid[choice.NodeID] {
+				return httpapi.NewError(400, "所选节点不存在或不是 worker")
+			}
+			if _, err := tx.Exec("INSERT INTO member_node_resources(member_id,node_id,state,updated_at,mode,target_id) VALUES(?,?,'pending',?,?,?)", m.ID, choice.NodeID, platform.Now(), choice.Mode, choice.ContainerID); err != nil {
+				return err
+			}
+		}
+		_, err = tx.Exec("INSERT INTO member_work VALUES(?,1)", m.ID)
 		return err
 	}
 	h.provisionWake = make(chan struct{}, 1)
@@ -188,6 +206,14 @@ func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key str
 	}
 	payload := map[string]string{"username": name, "ssh_public_key": key}
 	if e == nil && !removing {
+		var mode, target string
+		e = h.DB.SQL.QueryRow("SELECT mode,target_id FROM member_node_resources WHERE member_id=? AND node_id=?", id, nodeID).Scan(&mode, &target)
+		payload["mode"], payload["container_id"] = mode, target
+		if e == nil && mode == "adopt" {
+			payload["expected_owner"], e = h.checkAdoption(ctx, node, name, id, target)
+		}
+	}
+	if e == nil && !removing {
 		payload["password"], e = (&members.Store{Database: h.DB}).InitialPassword(id)
 	}
 	if e == nil {
@@ -252,7 +278,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),n.internal_ip,COALESCE(a.error,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
+	rows, err := h.DB.SQL.Query(`SELECT n.id,n.name,COALESCE(a.state,'unallocated'),COALESCE(a.container_id,''),COALESCE(a.name,''),COALESCE(a.port,0),n.internal_ip,COALESCE(a.error,''),COALESCE(a.mode,''),COALESCE(a.target_id,'') FROM cluster_nodes n LEFT JOIN member_node_resources a ON a.node_id=n.id AND a.member_id=? WHERE n.kind='worker' ORDER BY n.created_at,n.id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +286,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 	v := &memberResourceView{MemberID: id, Status: status, Access: a, Control: memberControlAccess{StatusURL: memberStatusURL(a)}, Nodes: []memberNodeResource{}}
 	for rows.Next() {
 		var n memberNodeResource
-		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error); err != nil {
+		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error, &n.Mode, &n.TargetID); err != nil {
 			return nil, err
 		}
 		v.Nodes = append(v.Nodes, n)
@@ -275,9 +301,7 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 	if r.Method != "POST" && !(admin && r.Method == "DELETE" && action == "") {
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
-	var req struct {
-		NodeID string `json:"node_id"`
-	}
+	var req members.ContainerChoice
 	if e := httpapi.DecodeBody(w, r, &req); e != nil {
 		return 0, nil, e
 	}
@@ -315,8 +339,8 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
 	if !remove && action == "containers" {
-		if !identifier.MatchString(req.NodeID) {
-			return 0, nil, httpapi.NewError(400, "需提供 node_id")
+		if err := req.Validate(); err != nil {
+			return 0, nil, err
 		}
 		n, e := h.node(req.NodeID)
 		if e != nil {
@@ -325,8 +349,11 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 		if n.Kind != "worker" {
 			return 0, nil, httpapi.NewError(400, "只能在 worker 节点创建容器")
 		}
-		var state string
-		e = h.DB.SQL.QueryRow("SELECT state FROM member_node_resources WHERE member_id=? AND node_id=?", id, req.NodeID).Scan(&state)
+		var state, mode, target string
+		e = h.DB.SQL.QueryRow("SELECT state,mode,target_id FROM member_node_resources WHERE member_id=? AND node_id=?", id, req.NodeID).Scan(&state, &mode, &target)
+		if e == nil && (mode != req.Mode || target != req.ContainerID) {
+			return 0, nil, httpapi.NewError(409, "此节点已有分配计划，请按原选择重试")
+		}
 		if e != nil && e != sql.ErrNoRows {
 			return 0, nil, e
 		}
@@ -351,7 +378,7 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 				return e
 			}
 		} else if action == "containers" {
-			_, e := tx.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,updated_at) VALUES(?,?,'pending',?) ON CONFLICT(member_id,node_id) DO UPDATE SET state=CASE WHEN state='ready' THEN state ELSE 'pending' END,error='',updated_at=excluded.updated_at`, id, req.NodeID, platform.Now())
+			_, e := tx.Exec(`INSERT INTO member_node_resources(member_id,node_id,state,updated_at,mode,target_id) VALUES(?,?,'pending',?,?,?) ON CONFLICT(member_id,node_id) DO UPDATE SET state=CASE WHEN state='ready' THEN state ELSE 'pending' END,error='',updated_at=excluded.updated_at`, id, req.NodeID, platform.Now(), req.Mode, req.ContainerID)
 			if e != nil {
 				return e
 			}

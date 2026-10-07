@@ -22,9 +22,11 @@ import (
 	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
+	"project-alpha/internal/updates"
 )
 
 type Control struct {
+	Updates         *updates.Manager
 	identity        string
 	nodeMu          sync.Mutex
 	nodesClosed     bool
@@ -57,7 +59,19 @@ func NewControl(db *platform.Database) (*Control, error) {
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 3 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 		TLSHandshakeTimeout: 3 * time.Second, ResponseHeaderTimeout: 50 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 128, MaxIdleConnsPerHost: 8}
-	h := &Control{DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
+	identity, err := db.CheckMode("control")
+	if err != nil {
+		transport.CloseIdleConnections()
+		lock.Close()
+		return nil, err
+	}
+	updateManager, err := updates.New(db.Directory, "control", identity)
+	if err != nil {
+		transport.CloseIdleConnections()
+		lock.Close()
+		return nil, err
+	}
+	h := &Control{Updates: updateManager, DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if err := h.initProvision(); err != nil {
 		transport.CloseIdleConnections()
@@ -109,7 +123,7 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 		path, protocol = registry.InfoPath, registry.Protocol
 	}
 	err := h.call(ctx, n, "GET", path, nil, platform.User{}, &info)
-	if err == nil && (info.Mode != n.Kind || info.Protocol != protocol || !identifier.MatchString(info.ID)) {
+	if err == nil && (info.Mode != n.Kind || (info.Protocol != protocol && info.ManagementProtocol != updates.Protocol) || !identifier.MatchString(info.ID)) {
 		err = httpapi.NewError(409, "目标不是支持当前协议的 "+n.Kind)
 	}
 	return info, err
@@ -125,6 +139,9 @@ func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 }
 
 func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if strings.HasPrefix(r.URL.Path, "/api/updates/") {
+		return h.updateDispatch(w, r, user)
+	}
 	if r.URL.Path == "/api/agent/settings" {
 		return agent.NewHandler(agent.NewStore(h.DB), nil).Dispatch(w, r, user)
 	}
@@ -204,6 +221,13 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				return fail(httpapi.NewError(404, "registry 不提供计算节点操作"))
 			}
 			path := "/" + strings.Join(parts[1:], "/")
+			info, e := h.probe(r.Context(), n)
+			if e != nil {
+				return fail(e)
+			}
+			if info.ID != n.ID || info.Protocol != Protocol {
+				return fail(httpapi.NewError(409, "节点业务协议不一致，请在更新设置中统一版本；健康和更新功能仍可用"))
+			}
 			if agent.IsRoute(path) {
 				return h.dispatchAgent(w, r, user, n, path)
 			}

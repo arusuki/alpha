@@ -33,6 +33,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -45,6 +46,10 @@ jobs:
         run: |
           go mod download
           go mod verify
+      - name: Generate tagged database upgrade window
+        run: |
+          python3 scripts/test_upgrade_history.py
+          go generate ./internal/platform
       - name: Go tests
         run: go test -race ./...
       - name: Go vet
@@ -79,11 +84,12 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends build-essential ca-certificates git binutils tar gzip
+          apt-get install -y --no-install-recommends build-essential ca-certificates git binutils tar gzip python3
           test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@v7.0.0
         with:
           go-version-file: go.mod
@@ -109,11 +115,17 @@ jobs:
             echo "::error::Unsupported version/tag name: $version"
             exit 1
           fi
+          history_args=(--write)
+          if [[ "$REF_TYPE" == tag ]]; then
+            history_args+=(--release-tag "$REF_NAME")
+          fi
+          python3 scripts/upgrade-history.py "${history_args[@]}"
           package="project-alpha_${version}_linux_${GOARCH}"
           stage="$RUNNER_TEMP/$package"
           mkdir -p "$stage/bin" release
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/project-alpha" ./cmd/project-alpha
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
+          go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/alpha-updater" ./cmd/alpha-updater
           for binary in "$stage"/bin/*; do
             required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n1)"
             if [[ -n "$required" && "$(printf '%s\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
@@ -136,6 +148,9 @@ jobs:
           [[ "$binary_version" == "project-alpha $version (commit ${GITHUB_SHA:0:12}, "* ]]
           printf '%s\n' "$binary_version"
           "$RUNNER_TEMP/package-check/$package/bin/rootless-docker" --help
+          "$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --help
+          updater_version="$("$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --version)"
+          [[ "$updater_version" == "alpha-updater $version (commit ${GITHUB_SHA:0:12}, "* ]]
           cd release
           sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
           sha256sum --check "$package.tar.gz.sha256"

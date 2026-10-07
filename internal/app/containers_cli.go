@@ -14,7 +14,19 @@ import (
 
 func newContainerHandler(db *platform.Database) *containers.Handler {
 	h := containers.NewHandler(db)
+	h.CheckOwner = platform.CheckContainerOwner
+	h.ReadOwner = func(id, fallback string) (string, error) {
+		var owner string
+		err := db.SQL.QueryRow("SELECT owner FROM owners WHERE container_id=?", id).Scan(&owner)
+		if err == sql.ErrNoRows {
+			return fallback, nil
+		}
+		return owner, err
+	}
 	h.Owner = func(tx *sql.Tx, id, owner string) error {
+		if err := platform.CheckContainerOwner(tx, id, owner); err != nil {
+			return err
+		}
 		_, err := tx.Exec("INSERT INTO owners(container_id,owner) VALUES(?,?) ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner", id, owner)
 		return err
 	}

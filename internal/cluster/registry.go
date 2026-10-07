@@ -15,12 +15,25 @@ import (
 // RegistryDispatch is a narrow capability boundary: no admin or arbitrary proxy API.
 func (h *Control) RegistryDispatch(ctx context.Context, req registry.Request) (any, error) {
 	switch req.Action {
+	case "release.v1":
+		return h.releaseNotice(ctx, req.Body)
 	case "validate":
 		store := &members.Store{Database: h.DB}
 		if err := store.CheckInvitation(req.Invitation); err != nil {
 			return nil, err
 		}
 		return store.Schema()
+	case "options":
+		if err := (&members.Store{Database: h.DB}).CheckInvitation(req.Invitation); err != nil {
+			return nil, err
+		}
+		var input struct {
+			Username string `json:"username"`
+		}
+		if err := json.Unmarshal(req.Body, &input); err != nil {
+			return nil, httpapi.NewError(400, "使用者标识无效")
+		}
+		return h.registrationOptions(ctx, input.Username)
 	case "register":
 		var registration members.Registration
 		decoder := json.NewDecoder(bytes.NewReader(req.Body))

@@ -373,3 +373,11 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 @media(max-width:700px){.bastion-row{align-items:flex-start;flex-direction:column;gap:10px}.bastion-dialog{padding:18px}.bastion-row .actions{flex-wrap:wrap}}
 
 .pool-public-key{display:block;white-space:normal;overflow-wrap:anywhere;margin-top:8px}
+
+#updateFields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:20px}
+#updateFields .form-grid{margin-bottom:0}
+#updateWebhook{display:grid;gap:16px;border-top:1px solid var(--line);padding-top:20px}
+#updateWebhook[hidden]{display:none}
+#updateHealth{margin-top:14px}
+#updateStatus,#updateError{margin-top:12px;overflow-wrap:anywhere}
+#updateFields>button{justify-self:start}

@@ -141,7 +141,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 	if strings.Contains(string(raw), "resource_token") {
 		t.Fatal("resource token was returned before registration")
 	}
-	body := map[string]any{"username": "alice", "ssh_public_key": resourceTestKey, "password": "Member-password-123", "schema_revision": 1, "profile": map[string]string{}}
+	body := map[string]any{"containers": registrationChoices(t, f), "username": "alice", "ssh_public_key": resourceTestKey, "password": "Member-password-123", "schema_revision": 1, "profile": map[string]string{}}
 	for _, origin := range []string{"https://evil.test", ""} {
 		b, _ := json.Marshal(body)
 		r, _ := http.NewRequest("POST", s.URL+base+"/api/register", bytes.NewReader(b))
@@ -261,7 +261,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 			if err != nil || len(gateways) != 2 || gateways[0].Token == gateways[1].Token {
 				t.Fatalf("independent registry credentials: %v", err)
 			}
-			requireStatus(t, f.request(t, "POST", "/api/members/"+view.MemberID+"/containers", map[string]string{"node_id": gateways[0].ID}), 400)
+			requireStatus(t, f.request(t, "POST", "/api/members/"+view.MemberID+"/containers", map[string]string{"node_id": gateways[0].ID, "mode": "create"}), 400)
 			_, result, err := f.control.memberStatus(context.Background(), view.MemberID)
 			if err != nil || len(result.(map[string]any)["nodes"].([]memberNodeStatus)) != 1 {
 				t.Fatalf("registry included in member status: %v", err)

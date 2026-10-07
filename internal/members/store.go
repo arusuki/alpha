@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -42,6 +43,7 @@ type Schema struct {
 	Fields   []Field `json:"fields"`
 }
 type Member struct {
+	Containers    []ContainerChoice `json:"-"`
 	SSHKey        string            `json:"ssh_public_key"`
 	ResourceToken string            `json:"-"`
 	Status        string            `json:"status"`
@@ -282,7 +284,21 @@ func (s *Store) DeleteInvitation(id, actor string) error {
 	})
 }
 
+type ContainerChoice struct {
+	NodeID      string `json:"node_id"`
+	Mode        string `json:"mode"`
+	ContainerID string `json:"container_id"`
+}
+
+func (c ContainerChoice) Validate() error {
+	if !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(c.NodeID) || (c.Mode != "create" && c.Mode != "adopt") || (c.Mode == "create" && c.ContainerID != "") || (c.Mode == "adopt" && !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(c.ContainerID)) {
+		return httpapi.NewError(400, "每个节点请选择新建或领养；领养须提供完整容器 ID")
+	}
+	return nil
+}
+
 type Registration struct {
+	Containers     []ContainerChoice          `json:"containers"`
 	Password       string                     `json:"password"`
 	SSHKey         string                     `json:"ssh_public_key"`
 	Username       string                     `json:"username"`
@@ -340,7 +356,19 @@ func (s *Store) RegisterWith(req Registration, reserve func(*sql.Tx, Member) err
 // A registry persists this secret before sending a registration. Retrying after
 // a lost reply recovers the same member without consuming another invitation slot.
 func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member) error, token string) (Member, error) {
-	m := Member{ID: platform.RandomHex(16), Username: req.Username, CreatedAt: platform.Now()}
+	choices := append([]ContainerChoice{}, req.Containers...)
+	seen := map[string]bool{}
+	for _, choice := range choices {
+		if err := choice.Validate(); err != nil {
+			return Member{}, err
+		}
+		if seen[choice.NodeID] {
+			return Member{}, httpapi.NewError(400, "每个节点只能选择一个容器")
+		}
+		seen[choice.NodeID] = true
+	}
+	slices.SortFunc(choices, func(a, b ContainerChoice) int { return strings.Compare(a.NodeID, b.NodeID) })
+	m := Member{ID: platform.RandomHex(16), Username: req.Username, CreatedAt: platform.Now(), Containers: choices}
 	if !username.MatchString(req.Username) || req.Username == "data" {
 		return m, httpapi.NewError(400, "使用者标识需为小写字母开头的 3–32 位字母、数字、下划线或短横线，且不能为 data")
 	}
@@ -370,8 +398,8 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 	err = s.Transaction(func(tx *sql.Tx) error {
 		if token != "" {
 			var previous Member
-			var profile, schema, invitationHash, previousPassword string
-			err := tx.QueryRow(`SELECT id,username,profile,registration_schema,ssh_public_key,status,invitation_id,created_at,invitation_code_hash,password_hash FROM members WHERE resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash, &previousPassword)
+			var profile, schema, invitationHash, previousPassword, previousContainers string
+			err := tx.QueryRow(`SELECT id,username,profile,registration_schema,ssh_public_key,status,invitation_id,created_at,invitation_code_hash,password_hash,registration_containers FROM members WHERE resource_token_hash=?`, hashCode(token)).Scan(&previous.ID, &previous.Username, &profile, &schema, &previous.SSHKey, &previous.Status, &previous.InvitationID, &previous.CreatedAt, &invitationHash, &previousPassword, &previousContainers)
 			if err == nil {
 				if err = json.Unmarshal([]byte(schema), &previous.Schema); err != nil {
 					return err
@@ -379,11 +407,15 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 				if err = json.Unmarshal([]byte(profile), &previous.Profile); err != nil {
 					return err
 				}
+				if err = json.Unmarshal([]byte(previousContainers), &previous.Containers); err != nil {
+					return err
+				}
 				values, e := validateProfile(previous.Schema.Fields, req.Profile)
-				if e != nil || !platform.CheckPassword(req.Password, previousPassword) || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
+				if e != nil || httpapi.JSONText(previous.Containers) != httpapi.JSONText(choices) || !platform.CheckPassword(req.Password, previousPassword) || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
 					return httpapi.NewError(409, "此注册请求已提交，不能更改注册内容")
 				}
 				previous.ResourceToken = token
+				previous.Containers = choices
 				m = previous
 				return nil
 			}
@@ -424,7 +456,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,invitation_code_hash,created_at,ssh_public_key,resource_token_hash,status,password_hash,password_ciphertext) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, hashCode(req.InvitationCode), m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status, passwordHash, ciphertext); err != nil {
+		if _, err = tx.Exec("INSERT INTO members(id,username,profile,registration_schema,invitation_id,invitation_code_hash,created_at,ssh_public_key,resource_token_hash,status,password_hash,password_ciphertext,registration_containers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", m.ID, m.Username, httpapi.JSONText(m.Profile), httpapi.JSONText(m.Schema), m.InvitationID, hashCode(req.InvitationCode), m.CreatedAt, m.SSHKey, hashCode(m.ResourceToken), m.Status, passwordHash, ciphertext, httpapi.JSONText(choices)); err != nil {
 			if platform.IsConstraint(err) {
 				return httpapi.NewError(409, "该使用者标识已注册")
 			}

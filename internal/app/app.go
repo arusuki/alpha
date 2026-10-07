@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"project-alpha/internal/process"
 	"project-alpha/internal/registry"
 	"project-alpha/internal/storage"
+	"project-alpha/internal/updates"
 )
 
 type stringFlags []string
@@ -179,6 +181,13 @@ func Run(ctx context.Context, args []string) error {
 	if *registryMode {
 		mode, initialize = "registry", registry.Initialize
 	}
+	executable, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if _, err = os.Stat(filepath.Join(filepath.Dir(executable), ".alpha-update-pending")); !os.IsNotExist(err) {
+		return fmt.Errorf("interrupted update: inspect .alpha-update-pending and restore consistent binaries/database before starting; existing data preserved")
+	}
 	db, err := platform.OpenDatabase(directory, initialize)
 	if err != nil {
 		return err
@@ -187,6 +196,13 @@ func Run(ctx context.Context, args []string) error {
 	identity, err := db.CheckMode(mode)
 	if err != nil {
 		return err
+	}
+	var updateManager *updates.Manager
+	if mode != "control" {
+		updateManager, err = updates.New(db.Directory, mode, identity)
+		if err != nil {
+			return err
+		}
 	}
 	var handler http.Handler
 	if *worker {
@@ -203,7 +219,7 @@ func Run(ctx context.Context, args []string) error {
 		}
 		defer manager.Close()
 		storageHandler := storage.NewHandler(store, manager)
-		node := &cluster.Worker{ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
+		node := &cluster.Worker{Updates: updateManager, ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
 		var watcher *process.Watcher
 		if source, err := process.Dial(*tetragonSocket); err != nil {
 			log.Printf("未启用容器进程监控：%v", err)
@@ -226,6 +242,7 @@ func Run(ctx context.Context, args []string) error {
 			}
 		}
 		frontend := registry.NewServer(db, regPass, registryToken, hosts, *secure)
+		frontend.Hub.Updates = updateManager
 		defer frontend.Hub.Close()
 		handler = frontend
 	} else {
@@ -233,11 +250,23 @@ func Run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		updateManager = controlHandler.Updates
 		defer controlHandler.Close()
 		frontend := platform.NewServer(db, controlHandler, web.Assets, hosts, *secure)
 
 		handler = frontend
 	}
+	ctx, cancelService := context.WithCancel(ctx)
+	defer cancelService()
+	updateDone := make(chan struct{})
+	defer close(updateDone)
+	go func() {
+		select {
+		case <-updateManager.Requested:
+			cancelService()
+		case <-updateDone:
+		}
+	}()
 	listener, err := net.Listen("tcp", net.JoinHostPort(*host, strconv.Itoa(*port)))
 	if err != nil {
 		return err
@@ -268,6 +297,9 @@ func Run(ctx context.Context, args []string) error {
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {
 		<-shutdownDone
+		if handoff := updateManager.Handoff(); handoff != nil {
+			return handoff
+		}
 		return nil
 	}
 	return err

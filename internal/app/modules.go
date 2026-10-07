@@ -33,6 +33,9 @@ func Initialize(tx *sql.Tx) error {
 	if err := containers.Initialize(tx); err != nil {
 		return err
 	}
+	if err := platform.InstallContainerOwnership(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec("INSERT INTO service_identity VALUES(1,'worker',?)", platform.RandomHex(16))
 	return err
 }

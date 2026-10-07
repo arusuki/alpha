@@ -95,7 +95,16 @@ func TestContainersImportRejectsOldData(t *testing.T) {
 	}
 	db.SQL.Close()
 	err = Run(context.Background(), []string{"containers", "import", "--data-dir", dir})
-	if err == nil || !strings.Contains(err.Error(), "use a new data directory") {
+	if err == nil || !strings.Contains(err.Error(), "retained upgrade window") || !strings.Contains(err.Error(), "existing data preserved") {
 		t.Fatalf("expected format error: %v", err)
+	}
+	db, err = platform.OpenExistingDatabase(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	var version int
+	if err = db.SQL.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 1 {
+		t.Fatalf("rejected database was modified: version=%d err=%v", version, err)
 	}
 }

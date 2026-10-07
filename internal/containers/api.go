@@ -21,7 +21,9 @@ type Handler struct {
 	mu                sync.Mutex
 	permissionCommand func(context.Context, string, ...string) *exec.Cmd
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
-	Owner func(*sql.Tx, string, string) error
+	Owner      func(*sql.Tx, string, string) error
+	CheckOwner func(*sql.Tx, string, string) error
+	ReadOwner  func(string, string) (string, error)
 	// UnassignOwner clears shared and managed ownership in the same transaction.
 	UnassignOwner func(*sql.Tx, string) error
 }
@@ -48,6 +50,13 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return fail(err)
 	}
 	path := r.URL.Path
+	if path == "/api/containers/candidates" && r.Method == "GET" {
+		if user.Role != "admin" {
+			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
+		}
+		value, err := h.candidates(ctx, cfg)
+		return 200, value, err
+	}
 	if path == "/api/containers/permissions" {
 		return h.permissions(w, r.WithContext(ctx), user, cfg)
 	}
@@ -195,6 +204,16 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 }
 func (h *Handler) removeRecord(r Record, actor, action string) error {
 	return h.db.Transaction(func(tx *sql.Tx) error {
+		if action == "delete" {
+			if _, err := tx.Exec("UPDATE member_container_slots SET container_id='' WHERE container_id=?", r.ID); err != nil {
+				return err
+			}
+			if h.Owner != nil {
+				if err := h.Owner(tx, r.ID, ""); err != nil {
+					return err
+				}
+			}
+		}
 		if _, err := tx.Exec("DELETE FROM managed_containers WHERE id=?", r.ID); err != nil {
 			return err
 		}

@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/workspace.css">
   <link rel="stylesheet" href="/auth.css">
   <script src="/auth.js" defer></script>
-  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/agent.js" defer></script>
+  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-cache.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/updates.js" defer></script><script src="/agent.js" defer></script>
   <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/members.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script>
   <link rel="stylesheet" href="/cluster.css">
 </head>
@@ -69,6 +69,7 @@
       <button data-page="members" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
+      <button data-page="update-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>更新设置</button>
       <button class="account-nav" data-page="settings"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>设置</button>
     </nav>
     <div class="sidebar-note"><span class="status-dot"></span><span>一个工作台，连接整个集群<small>存储 · 进程 · 智能分析</small></span></div>
@@ -249,6 +250,26 @@
     <form id="memberInvitationForm" class="member-invitation-form" method="post" action="/admin/member-invitations/create"><label>备注<input id="memberInvitationLabel" name="label" maxlength="100" placeholder="例如：A 组秋季入组"></label><label>可注册人数（quota）<input id="memberInvitationQuota" name="quota" type="number" min="1" max="100000" step="1" value="1" required></label><button id="memberCreateInvitation" type="submit" class="primary">生成邀请码</button></form>
     <div id="memberInvitationsPanel"></div>
   </section>
+</section>
+<section id="page-update-settings" class="platform-page management-panel" hidden>
+ <div class="section-heading"><div><h2>更新设置</h2><p>管理总控、registry 和 worker 的更新。新版本经 registry 通知总控，再通知计算节点。</p></div><button id="updateReload">刷新设置与状态</button></div>
+ <label>更新目标<select id="updateTarget"><option value="control">control · 本机总控</option></select></label>
+ <p id="updateHealth" role="status"></p><p id="updateRelease" class="form-note"></p>
+ <form id="updateSettingsForm" class="settings-form"><fieldset id="updateFields" disabled>
+  <div class="form-grid"><label>alpha-updater 命令绝对路径<input id="updateCommand" required placeholder="/opt/project-alpha/bin/alpha-updater"></label><label>GitHub 仓库<input id="updateRepo" required placeholder="arusuki/alpha"></label></div>
+  <label>更新器 HTTP 代理<input id="updateProxy" type="url" placeholder="http://127.0.0.1:7890" autocomplete="off"><small>在目标主机上使用。留空时读取目标服务的代理环境变量。</small></label>
+  <label class="checkbox-label"><input id="updatePrerelease" type="checkbox">包含预发布版本</label>
+  <label class="checkbox-label"><input id="updateAutomatic" type="checkbox">收到新的 release 通知后自动更新此节点</label>
+  <div id="updateWebhook" hidden><h3>GitHub webhook</h3>
+   <label>Payload URL<input id="updateWebhookURL" readonly></label>
+   <p class="form-note">在 GitHub 仓库 Settings → Webhooks 中添加此 URL，Content type 选择 application/json，订阅 Releases，填写与下方一致的 Secret。</p>
+   <label>Webhook Secret<input id="updateSecret" type="password" minlength="32" maxlength="256" autocomplete="new-password"><small id="updateSecretState"></small></label>
+   <label class="checkbox-label"><input id="updateClearSecret" type="checkbox">清除 Secret 并停用 webhook</label>
+  </div>
+  <button class="primary" type="submit">保存更新设置</button>
+ </fieldset></form>
+ <p class="form-note">手动更新使用已保存的设置，查询最新 release。更新时服务会短暂离线，保留数据并按原参数重启；失败信息可在此刷新查看，完整输出保存在目标数据目录的 update.log。</p>
+ <button id="updateNow" disabled>立即更新到最新版本</button><p id="updateStatus" role="status" aria-live="polite"></p><p id="updateError" class="error-text" role="alert"></p>
 </section>
 <section id="page-settings" class="platform-page" hidden>
   <div id="settings-accounts" class="settings-stack">

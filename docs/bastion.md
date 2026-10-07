@@ -87,23 +87,23 @@ sudo ./project-alpha share-node --uninstall
 | 方法 | 用户 API | 请求 / 返回 |
 | --- | --- | --- |
 | GET | `/api/members/me/resources` | 本人 `access` 和全部当前 node；包括尚未申请的 node |
-| POST | `/api/members/me/containers` | `{"node_id":"…"}`；探测在线后立即创建，成功返回 200 和已就绪资源，失败返回具体错误；支持新添加的 node |
+| POST | `/api/members/me/containers` | `{"node_id":"…","mode":"create","container_id":""}`；探测在线后执行所选分配，成功返回 200 和已就绪资源，失败返回具体错误；支持新添加的 node |
 | POST | `/api/members/me/retry` | `{}`；重试失败的跳板公钥写入和 node，返回 202 |
 | POST | `/api/status/<username>/login` | `{"password":"…"}`；返回 `session_token`，仅能用于此使用者的 status API |
 | POST | `/api/status/<username>/logout` | 撤销当前登录会话 |
 | POST | `/api/status/<username>/password` | `{"current_password":"…","password":"…"}`；修改密码并撤销全部状态页会话 |
-| GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数及仅属于本人的容器 |
-| POST | `/api/status/<username>/containers` | `{"node_id":"…"}`；与本人容器申请接口共用创建流程，URL 用户名必须与登录会话所属使用者一致 |
+| GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数、本人容器及领养候选列表（已领养项只读显示） |
+| POST | `/api/status/<username>/containers` | `{"node_id":"…","mode":"create","container_id":""}`；与本人容器申请接口共用领养或新建流程，URL 用户名必须与登录会话所属使用者一致 |
 
 `/api/status/*` 除登录外携带 `Authorization: Bearer <session_token>`；不接受资源令牌。修改密码要求当前密码正确。密码长度和存储见 [使用者登记](members.md)。新容器与创建失败后尚未初始化的容器使用当前密码完成初始化；已经初始化的容器不会重置。
 
 `control` 返回通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
 
-`access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
+`access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配方式（`mode`）、领养目标（`target_id`）、分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
 
 总控 `/status/<username>` 页面（如 `/status/alice`）用注册时设置的密码登录后查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：分配的 share node IP 和 SSH 端口用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。登录会话仅存当前标签页的 `sessionStorage`，12 小时后过期，退出时同时撤销服务端会话；浏览器不保存密码。离线节点保留中央分配记录，运行状态来自最近采集。
 
-每个 `(member_id,node_id)` 只有一个分配槽；worker 保存创建计划，断线或重启后核对同一容器继续。重复申请返回现有分配，外部容器或未标记的数据目录冲突时拒绝。状态为 `unallocated/pending/running/ready/failed/deleting/deleted`；失败须显式重试，同一成员正在处理时返回 409，后台最多并发 8 个 worker。
+每个 `(member_id,node_id)` 只有一个分配槽。注册时必须逐节点选择 `create` 或 `adopt`；补申请提交 `{node_id,mode,container_id}`，新建的 `container_id` 为空，领养为完整容器 ID。worker 保存选择和创建计划，断线或重启后核对同一容器继续；重试不允许更换原选择。重复同一申请返回现有分配，新建遇到已有归属或未标记的数据目录冲突时拒绝，领养则复用现有容器并添加成员公钥，保留密码和数据。已领养项仍显示在选择列表中，但置灰禁用。状态为 `unallocated/pending/running/ready/failed/deleting/deleted`；失败须显式重试，同一成员正在处理时返回 409，后台最多并发 8 个 worker。
 
 ## Tailscale 分享与核对
 
@@ -141,7 +141,7 @@ sudo ./project-alpha share-node --uninstall
 | POST | `/api/bastion/members/<id>/resolve-invite` | `{invite_id:"…"}` 关联结果未知的邀请，或 `{confirm_absent:true}` 确认无残留 |
 | GET | `/api/members/<id>/resources` | 管理员查询资源 |
 | POST | `/api/members/<id>/retry` | `{}` 重试资源分配 |
-| POST | `/api/members/<id>/containers` | `{node_id:"…"}` 立即申请指定 node，成功返回 200，失败返回错误 |
+| POST | `/api/members/<id>/containers` | `{node_id:"…",mode:"create",container_id:""}` 立即申请指定 node，成功返回 200，失败返回错误 |
 | POST | `/api/members/<id>/token` | `{}` 重置并返回一次新的 `resource_token` |
 | DELETE | `/api/members/<id>` | `{}` 撤销分享、公钥并清空容器归属后删除使用者；成功返回 200 |
 

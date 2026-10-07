@@ -45,13 +45,13 @@ func TestMemberStatusPageAndIsolation(t *testing.T) {
 	requireStatus(t, selfCall(f, "GET", path, "", nil), 401)
 	requireStatus(t, f.request(t, "GET", path, nil), 401)
 	requireStatus(t, selfCall(f, "GET", path, bobToken, nil), 403)
-	requireStatus(t, selfCall(f, "POST", path+"/containers", bobToken, map[string]string{"node_id": w.ID}), 403)
+	requireStatus(t, selfCall(f, "POST", path+"/containers", bobToken, map[string]string{"node_id": w.ID, "mode": "create"}), 403)
 	requireStatus(t, selfCall(f, "GET", "/api/status/bob", token, nil), 403)
 	requireStatus(t, selfCall(f, "GET", "/api/status/bob", bobToken, nil), 200)
 	requireStatus(t, selfCall(f, "GET", "/api/status/missing", token, nil), 403)
 	for _, name := range []string{"Alice", "al", "alice.", strings.Repeat("a", 33), "0123456789abcdef0123456789abcdef"} {
 		requireStatus(t, selfCall(f, "GET", "/api/status/"+name, token, nil), 404)
-		requireStatus(t, selfCall(f, "POST", "/api/status/"+name+"/containers", token, map[string]string{"node_id": w.ID}), 404)
+		requireStatus(t, selfCall(f, "POST", "/api/status/"+name+"/containers", token, map[string]string{"node_id": w.ID, "mode": "create"}), 404)
 	}
 	response := selfCall(f, "GET", path, token, nil)
 	requireStatus(t, response, 200)
@@ -168,9 +168,11 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 			t.Errorf("wrong worker operation: %s %s %+v", r.Method, r.URL.Path, u)
 		}
 		var input struct {
-			Password string `json:"password"`
-			Username string `json:"username"`
-			SSHKey   string `json:"ssh_public_key"`
+			Password    string `json:"password"`
+			Mode        string `json:"mode"`
+			ContainerID string `json:"container_id"`
+			Username    string `json:"username"`
+			SSHKey      string `json:"ssh_public_key"`
 		}
 		if err := httpapi.DecodeBody(nil, r, &input); err != nil || input.Password != "Member-password-123" {
 			t.Errorf("worker password not forwarded: %v", err)
@@ -183,7 +185,7 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	w, s := worker(t, strings.Repeat("3", 32), Inventory{}, module)
 	add(t, f, w, s, "New node")
 	path := "/api/status/alice/containers"
-	body := map[string]string{"node_id": w.ID}
+	body := map[string]string{"node_id": w.ID, "mode": "create"}
 	response := selfCall(f, "POST", path, token, body)
 	requireStatus(t, response, 409)
 	if !strings.Contains(response.Body.String(), "默认镜像不可用") || calls.Load() != 1 {
@@ -217,7 +219,7 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	offline, server := worker(t, strings.Repeat("4", 32), Inventory{}, module)
 	add(t, f, offline, server, "Offline new node")
 	server.Close()
-	requireStatus(t, selfCall(f, "POST", path, token, map[string]string{"node_id": offline.ID}), 502)
+	requireStatus(t, selfCall(f, "POST", path, token, map[string]string{"node_id": offline.ID, "mode": "create"}), 502)
 	var count int
 	if err := f.db.SQL.QueryRow("SELECT count(*) FROM member_node_resources WHERE member_id=? AND node_id=?", id, offline.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("offline application was queued: %d %v", count, err)
@@ -299,7 +301,7 @@ func TestStatusPasswordChangeAndSessionBoundary(t *testing.T) {
 		return 200, map[string]any{"id": strings.Repeat("e", 64), "name": "alpha-" + id, "port": 2222}, nil
 	}))
 	add(t, f, workerNode, workerServer, "After password change")
-	requireStatus(t, selfCall(f, "POST", path+"/containers", token, map[string]string{"node_id": workerNode.ID}), 200)
+	requireStatus(t, selfCall(f, "POST", path+"/containers", token, map[string]string{"node_id": workerNode.ID, "mode": "create"}), 200)
 	awaitIdle(t, f, id)
 	requireStatus(t, selfCall(f, "POST", path+"/logout", token, nil), 200)
 	requireStatus(t, selfCall(f, "GET", path, token, nil), 401)

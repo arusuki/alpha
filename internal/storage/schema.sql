@@ -7,6 +7,7 @@ CREATE TABLE jobs (
 CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 CREATE UNIQUE INDEX idx_jobs_active ON jobs((1)) WHERE status IN ('queued','running','cancelling');
 CREATE TABLE owners (container_id TEXT PRIMARY KEY, owner TEXT NOT NULL);
+CREATE UNIQUE INDEX owners_one_container ON owners(owner) WHERE owner<>'';
 CREATE TABLE snapshot_records (
  job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
  revision INTEGER NOT NULL,

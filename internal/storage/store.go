@@ -134,13 +134,19 @@ func (d *Store) setOwner(cid, owner, actor string) error {
 		return httpapi.NewError(400, "容器标识或所属用户无效")
 	}
 	return d.Transaction(func(tx *sql.Tx) error {
+		if err := platform.CheckContainerOwner(tx, cid, strings.TrimSpace(owner)); err != nil {
+			return err
+		}
 		var err error
 		if strings.TrimSpace(owner) != "" {
 			_, err = tx.Exec("INSERT INTO owners VALUES(?,?) ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner", cid, strings.TrimSpace(owner))
 		} else {
-			_, err = tx.Exec("DELETE FROM owners WHERE container_id=?", cid)
+			_, err = tx.Exec("INSERT INTO owners(container_id,owner) VALUES(?,'') ON CONFLICT(container_id) DO UPDATE SET owner=''", cid)
 		}
 		if err != nil {
+			if platform.IsConstraint(err) {
+				return httpapi.NewError(409, "归属修改失败：每用户每节点最多一个容器；已领养容器需先回收。"+err.Error())
+			}
 			return err
 		}
 		return platform.Audit(tx, actor, "container.owner", cid+" / "+owner)

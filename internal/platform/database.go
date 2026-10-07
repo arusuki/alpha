@@ -18,7 +18,7 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-const DatabaseVersion = 33
+const DatabaseVersion = 34
 
 //go:embed schema.sql
 var schema string
@@ -81,7 +81,17 @@ func OpenDatabase(directory string, initialize func(*sql.Tx) error) (*Database, 
 		}
 	case DatabaseVersion:
 	default:
-		return fail(fmt.Errorf("unsupported database version %d; expected %d; use a new data directory", version, DatabaseVersion))
+		if _, err = databaseUpgradePlan(version); err != nil {
+			return fail(err)
+		}
+		upgradeLock, lockErr := (&Database{SQL: db, Directory: directory}).LockService()
+		if lockErr != nil {
+			return fail(fmt.Errorf("database upgrade requires the service to be stopped: %w", lockErr))
+		}
+		defer upgradeLock.Close()
+		if err = upgradeDatabase(tx, version); err != nil {
+			return fail(err)
+		}
 	}
 	if err = tx.Commit(); err != nil {
 		return fail(err)

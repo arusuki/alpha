@@ -16,18 +16,23 @@ import (
 
 	"golang.org/x/net/websocket"
 
+	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/updates"
 )
 
 const LinkPath = "/api/registry/connect"
 const InfoPath = "/api/registry/info"
-const Protocol = 3
-const protocol = "alpha-registry-v3"
+const Protocol = 4
+
+// Stable transport: never couple this identifier to the business protocol.
+const protocol = "alpha-management-v1"
 
 var identityPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
 type Request struct {
+	Protocol   int             `json:"protocol,omitempty"`
 	ID         string          `json:"id"`
 	Action     string          `json:"action"`
 	Invitation string          `json:"invitation,omitempty"`
@@ -163,6 +168,8 @@ func serveControl(ctx context.Context, conn *websocket.Conn, dispatch Dispatch, 
 		var err error
 		if req.Action == "ping" {
 			body = map[string]bool{"ok": true}
+		} else if req.Action != "release.v1" && req.Protocol != Protocol {
+			err = httpapi.NewError(409, "registry 业务协议不一致，请先更新；健康和更新消息仍可用")
 		} else {
 			callCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			body, err = dispatch(callCtx, req)
@@ -207,6 +214,7 @@ func (p *peer) call(ctx context.Context, req Request) (json.RawMessage, error) {
 	}
 	p.conn.SetDeadline(deadline)
 	req.ID = platform.RandomHex(16)
+	req.Protocol = Protocol
 	if err := websocket.JSON.Send(p.conn, req); err != nil {
 		p.close()
 		return nil, unavailable()
@@ -227,12 +235,13 @@ func (p *peer) call(ctx context.Context, req Request) (json.RawMessage, error) {
 }
 
 type Hub struct {
-	DB     *platform.Database
-	Token  string
-	Pass   string
-	mu     sync.Mutex
-	peer   *peer
-	closed bool
+	Updates *updates.Manager
+	DB      *platform.Database
+	Token   string
+	Pass    string
+	mu      sync.Mutex
+	peer    *peer
+	closed  bool
 }
 
 func (h *Hub) Close() {
@@ -274,7 +283,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		httpapi.WriteJSON(w, 200, map[string]any{"id": registryID, "mode": "registry", "protocol": Protocol, "registration_path": "/registry/" + h.Pass + "/"})
+		httpapi.WriteJSON(w, 200, map[string]any{"id": registryID, "mode": "registry", "protocol": Protocol, "management_protocol": updates.Protocol, "version": buildinfo.Version, "registration_path": "/registry/" + h.Pass + "/"})
 		return
 	}
 	if r.Header.Get("Sec-WebSocket-Protocol") != protocol || r.Header.Get("X-Alpha-Registry") != registryID {
@@ -307,6 +316,20 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			for {
 				if _, err := p.call(context.Background(), Request{Action: "ping"}); err != nil {
 					return
+				}
+				if h.Updates != nil {
+					if notice := h.Updates.Pending(); notice != nil {
+						body, _ := json.Marshal(notice)
+						if _, err := p.call(context.Background(), Request{Action: "release.v1", Body: body}); err == nil {
+							if err = h.Updates.Forwarded(*notice); err != nil {
+								log.Printf("persist release delivery: %v", err)
+							} else if err = h.Updates.Automatic(); err != nil {
+								log.Printf("registry update: %v", err)
+							}
+						} else if e := h.Updates.DeliveryFailed(err.Error()); e != nil {
+							log.Printf("persist delivery error: %v", e)
+						}
+					}
 				}
 				select {
 				case <-p.done:

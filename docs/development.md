@@ -6,6 +6,8 @@
 
 `project-alpha --version` 显示二进制版本和构建信息。普通源码构建的版本为 `dev`；Go 可用的 VCS 信息会带上提交及工作区修改标记。发布工作流在构建时写入 tag（分支构建使用 `dev-<提交>`）和完整提交 ID，使输出与包内 `BUILD_INFO` 一致。
 
+构建 updater 或发布包前，在拥有完整 Git 历史与 tags 的检出中运行 `go generate ./internal/platform`，生成最近 3 次有数据库变更的 tag 升级窗口。无数据库变更的 tag 和未打 tag 的开发提交不占名额。新增迁移需登记版本步骤，见 [升级保留规则](updater.md#按-tag-保留最近-3-次数据库更新)。发布工作流自动生成并验证此窗口。
+
 自定义构建版本示例：
 
 ```bash
@@ -30,6 +32,7 @@ for test in tests/test_*.js; do node "$test" || exit; done
 ```bash
 python3 tests/test_members_browser.py
 python3 tests/test_registry_browser.py
+python3 tests/test_registration_choices_browser.py
 python3 tests/test_cluster_browser.py
 python3 tests/test_status_browser.py
 ```
@@ -51,6 +54,7 @@ Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_c
 ## 代码结构
 
 - `cmd/project-alpha`：程序入口，处理进程信号并启动应用。
+- `cmd/alpha-updater`、`internal/updater`：独立测试环境更新器；按角色校验并安装 GitHub release，调用目标更新器原地升级数据库。用法见 [测试环境更新器](updater.md)。
 - `cmd/rootless-docker`、`internal/rootless`：独立 rootless Docker 管理命令、socket 热挂载和交互测试容器；不接入 Web。
 - `internal/app`：命令分发、模块装配和 HTTP 服务生命周期。
 - `internal/cluster`：节点注册与身份核验、总控代理、权限授权、跨节点容器统计和 API-only worker 入口。

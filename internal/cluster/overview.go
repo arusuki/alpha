@@ -14,6 +14,8 @@ import (
 
 type NodeStatus struct {
 	Node
+	Compatible bool                 `json:"compatible"`
+	Version    string               `json:"version,omitempty"`
 	Online     bool                 `json:"online"`
 	Error      string               `json:"error,omitempty"`
 	Inventory  *Inventory           `json:"inventory,omitempty"`
@@ -60,6 +62,22 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 				status.Error = "节点查询超时"
 				return
 			}
+			info, e := h.probe(ctx, n)
+			if e != nil {
+				status.Error = e.Error()
+				return
+			}
+			if info.ID != n.ID {
+				status.Error = "节点身份不匹配"
+				return
+			}
+			status.Online = true
+			status.Version = info.Version
+			status.Compatible = info.Protocol == Protocol
+			if !status.Compatible {
+				status.Error = "业务协议不一致，请在更新设置中统一版本；健康和更新功能仍可用"
+				return
+			}
 			var inventory Inventory
 			if err := h.call(ctx, n, "GET", "/api/worker/inventory", nil, user, &inventory); err != nil {
 				status.Error = err.Error()
@@ -92,6 +110,10 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		}
 		online++
 		if status.Kind != "worker" {
+			continue
+		}
+		if status.Inventory == nil {
+			workerPartial = true
 			continue
 		}
 		perOwner := map[string][]Container{}

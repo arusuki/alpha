@@ -37,12 +37,12 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 	if _, err = db.SQL.Exec("INSERT INTO snapshot_records VALUES(?,1,'/srv',?)", id, metadata); err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range []struct{ id, name, owner string }{{"one", "managed-name", "managed-owner"}, {"three", "new-container", "alice"}} {
+	for _, c := range []struct{ id, name, owner string }{{"one", "managed-name", "managed-owner"}, {"three", "new-container", "charlie"}} {
 		if _, err = db.SQL.Exec("INSERT INTO managed_containers VALUES(?,'unix:///test.sock','daemon',?,?, '{}','fingerprint','create','',1,3)", c.id, c.name, c.owner); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err = db.SQL.Exec("INSERT INTO owners VALUES('one','alice')"); err != nil {
+	if _, err = db.SQL.Exec("INSERT INTO owners VALUES('one','alice') ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner"); err != nil {
 		t.Fatal(err)
 	}
 	inv, err := inventory(db)
@@ -79,7 +79,7 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 			t.Fatalf("retained inventory: %+v %v", inv, err)
 		}
 		for _, c := range inv.Containers {
-			if c.ID == "two" && c.Owner != "bob" || c.ID != "two" && c.Owner != "" {
+			if c.ID == "two" && c.Owner != "bob" || c.ID == "one" && c.Owner != "" || c.ID == "three" && c.Owner != "charlie" {
 				t.Fatalf("wrong retained ownership: %+v", c)
 			}
 		}
@@ -106,7 +106,7 @@ func TestUnassignPreservesOtherOwnerOverridesAndHistoricalContainers(t *testing.
 	if _, err = db.SQL.Exec("INSERT INTO managed_containers VALUES('reassigned','unix:///test.sock','daemon','reassigned','alice','{}','fingerprint','create','',1,3)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec("INSERT INTO owners VALUES('reassigned','bob')"); err != nil {
+	if _, err = db.SQL.Exec("INSERT INTO owners VALUES('reassigned','bob') ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner"); err != nil {
 		t.Fatal(err)
 	}
 	h := newContainerHandler(db)

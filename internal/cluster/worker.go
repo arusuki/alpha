@@ -10,11 +10,13 @@ import (
 	"regexp"
 	"strings"
 
+	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
+	"project-alpha/internal/updates"
 )
 
-const Protocol = 5
+const Protocol = 6
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -34,12 +36,15 @@ type Inventory struct {
 	Active     any         `json:"active"`
 }
 type Info struct {
-	Protocol         int    `json:"protocol"`
-	ID               string `json:"id"`
-	Mode             string `json:"mode"`
-	RegistrationPath string `json:"registration_path,omitempty"`
+	ManagementProtocol int    `json:"management_protocol"`
+	Version            string `json:"version"`
+	Protocol           int    `json:"protocol"`
+	ID                 string `json:"id"`
+	Mode               string `json:"mode"`
+	RegistrationPath   string `json:"registration_path,omitempty"`
 }
 type Worker struct {
+	Updates   *updates.Manager
 	ID, Token string
 	Module    platform.Module
 	Inventory func() (Inventory, error)
@@ -91,7 +96,7 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Path == "/api/worker/info" && r.Method == "GET" {
-		httpapi.WriteJSON(w, 200, Info{Protocol: Protocol, ID: h.ID, Mode: "worker"})
+		httpapi.WriteJSON(w, 200, Info{Protocol: Protocol, ID: h.ID, Mode: "worker", ManagementProtocol: updates.Protocol, Version: buildinfo.Version})
 		return
 	}
 	if r.Header.Get("X-Alpha-Node") != h.ID {
@@ -105,6 +110,19 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != "GET" && user.Role != "admin" {
 		writeError(w, httpapi.NewError(403, "此操作需要管理员权限"))
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, updates.Path+"/") && h.Updates != nil {
+		if user.Role != "admin" && r.URL.Path != updates.Path+"/health" {
+			writeError(w, httpapi.NewError(403, "更新设置需要管理员权限"))
+			return
+		}
+		status, value, err := h.Updates.Dispatch(w, r)
+		if err != nil {
+			writeError(w, err)
+		} else {
+			httpapi.WriteJSON(w, status, value)
+		}
 		return
 	}
 	if r.URL.Path == "/api/worker/inventory" && r.Method == "GET" {

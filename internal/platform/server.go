@@ -72,7 +72,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js",
 		"/snapshot-loader.js": "snapshot-loader.js", "/snapshot-worker.js": "snapshot-worker.js",
 		"/snapshot-cache.js": "snapshot-cache.js",
-		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js",
+		"/app.js":            "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js", "/updates.js": "updates.js",
 		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
 		"/style.css": "style.css", "/workspace.css": "workspace.css",
 		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js", "/bastion.js": "bastion.js",

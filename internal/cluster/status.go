@@ -18,6 +18,8 @@ import (
 )
 
 type memberNodeResource struct {
+	Mode        string `json:"mode"`
+	TargetID    string `json:"target_id"`
 	NodeID      string `json:"node_id"`
 	NodeName    string `json:"node_name"`
 	State       string `json:"state"`
@@ -42,13 +44,15 @@ type memberControlAccess struct {
 
 type memberNodeStatus struct {
 	memberNodeResource
-	Online          bool        `json:"online"`
-	ConnectionError string      `json:"connection_error,omitempty"`
-	Host            string      `json:"host"`
-	ContainerCount  int         `json:"container_count"`
-	ObservedAt      string      `json:"observed_at,omitempty"`
-	Scanning        bool        `json:"scanning"`
-	Containers      []Container `json:"containers"`
+	Online          bool                 `json:"online"`
+	ConnectionError string               `json:"connection_error,omitempty"`
+	Host            string               `json:"host"`
+	ContainerCount  int                  `json:"container_count"`
+	ObservedAt      string               `json:"observed_at,omitempty"`
+	Scanning        bool                 `json:"scanning"`
+	Containers      []Container          `json:"containers"`
+	Candidates      []containerCandidate `json:"candidates"`
+	CandidatesError string               `json:"candidates_error,omitempty"`
 }
 
 var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password)?$`)
@@ -148,6 +152,20 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 				n.ConnectionError = "节点查询超时"
 				return
 			}
+			info, e := h.probe(ctx, node)
+			if e != nil {
+				n.ConnectionError = e.Error()
+				return
+			}
+			if info.ID != node.ID {
+				n.ConnectionError = "节点身份不匹配"
+				return
+			}
+			n.Online = true
+			if info.Protocol != Protocol {
+				n.ConnectionError = "节点在线，业务协议不一致；请联系管理员更新"
+				return
+			}
 			var inventory Inventory
 			user := platform.User{ID: id, Username: "member:" + resources.Access.Username, Role: "viewer"}
 			if err := h.call(ctx, node, "GET", "/api/worker/inventory", nil, user, &inventory); err != nil {
@@ -155,6 +173,15 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 				return
 			}
 			n.Online = true
+			n.Candidates = []containerCandidate{}
+			if n.Mode == "" {
+				candidates, err := h.containerCandidates(ctx, node, resources.Access.Username)
+				if err != nil {
+					n.CandidatesError = err.Error()
+				} else {
+					n.Candidates = candidates
+				}
+			}
 			n.Host = inventory.Host
 			n.ContainerCount = len(inventory.Containers)
 			n.ObservedAt = inventory.ObservedAt

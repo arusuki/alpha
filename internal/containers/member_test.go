@@ -13,7 +13,7 @@ import (
 const memberKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f"
 
 func memberCall(h *Handler, method, id string) (int, string) {
-	raw, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123"})
+	raw, _ := json.Marshal(map[string]string{"mode": "create", "username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123"})
 	return call(h, method, "/api/containers/members/"+id, string(raw), admin)
 }
 

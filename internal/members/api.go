@@ -1,6 +1,7 @@
 package members
 
 import (
+	"context"
 	"database/sql"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ type attempt struct {
 	since time.Time
 }
 type Handler struct {
+	Options    func(context.Context, string) (any, error)
 	Reserve    func(*sql.Tx, Member) error
 	Registered func(Member)
 	store      *Store
@@ -72,6 +74,23 @@ func (h *Handler) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 	if r.Method == "GET" && r.URL.Path == "/api/members/registration-schema" {
 		v, err := h.store.Schema()
 		return 200, v, err
+	}
+	if r.Method == "POST" && r.URL.Path == "/api/members/registration-options" && h.Options != nil {
+		if err := h.checkAttempts(r); err != nil {
+			return 0, nil, err
+		}
+		var req struct {
+			InvitationCode string `json:"invitation_code"`
+			Username       string `json:"username"`
+		}
+		if err := httpapi.DecodeBody(w, r, &req); err != nil {
+			return 0, nil, err
+		}
+		if err := h.store.CheckInvitation(req.InvitationCode); err != nil {
+			return 0, nil, err
+		}
+		value, err := h.Options(r.Context(), req.Username)
+		return 200, value, err
 	}
 	if r.Method == "POST" && r.URL.Path == "/api/members/register" {
 		if err := h.checkAttempts(r); err != nil {

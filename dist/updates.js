@@ -1,0 +1,57 @@
+'use strict';
+(()=>{
+let epoch=0,revision=null,busy=false;
+const admin=()=>platform.user?.role==='admin';
+const target=()=>$('updateTarget').value;
+const endpoint=action=>`/api/updates/${target()}/${action}`;
+function fields(disabled){$('updateFields').disabled=disabled;$('updateNow').disabled=disabled;$('updateTarget').disabled=busy;$('updateReload').disabled=busy;}
+function renderHealth(h){
+ const states={idle:'等待更新',restarting:'正在停止服务并启动更新器',completed:'上次更新完成',failed:'上次更新失败'};
+ $('updateHealth').textContent=`${h.mode} · ${h.version} · ${h.healthy?'在线':'不可用'} · ${states[h.update_state]||h.update_state}`;
+ $('updateRelease').textContent=h.release?`最近通知：${h.release.tag} · ${h.release.repo} · ${new Date(h.release.published_at).toLocaleString()}`:'尚未收到 release 通知';
+ $('updateError').textContent=h.delivery_error||h.error||h.result?.error||'';
+ if(h.pending_deliveries)$('updateRelease').textContent+=` · ${h.pending_deliveries} 条通知等待下游确认`;
+}
+async function load(){
+ if(!admin()||busy||!target())return;
+ const seq=++epoch;revision=null;fields(true);$('updateError').textContent='';$('updateStatus').textContent='正在读取…';
+ try{
+  const data=await api(endpoint('settings'));
+  if(seq!==epoch)return;
+  revision=data.revision;const c=data.config;
+  $('updateCommand').value=c.command;$('updateProxy').value=c.http_proxy;$('updateRepo').value=c.repo;
+  $('updatePrerelease').checked=c.prerelease;$('updateAutomatic').checked=c.automatic;
+  $('updateSecret').value='';$('updateClearSecret').checked=false;$('updateSecretState').textContent=c.has_webhook_secret?'已保存 Secret；留空保留':'尚未启用 webhook';
+  const isRegistry=data.health.mode==='registry';$('updateWebhook').hidden=!isRegistry;
+  const option=$('updateTarget').selectedOptions[0];$('updateWebhookURL').value=isRegistry?(option.dataset.url||'')+data.webhook_path:'';
+  renderHealth(data.health);$('updateStatus').textContent='设置已载入';fields(false);
+ }catch(e){if(seq===epoch){$('updateError').textContent=e.message;$('updateStatus').textContent='';fields(true);}}
+}
+async function open(){
+ if(!admin()||busy)return;
+ const seq=++epoch;revision=null;fields(true);
+ try{
+  const data=await api('/api/updates/targets');if(seq!==epoch)return;
+  const selected=target();$('updateTarget').innerHTML='<option value="control">control · 本机总控</option>'+data.nodes.map(n=>`<option value="${esc(n.id)}" data-url="${esc(n.url)}">${esc(n.kind)} · ${esc(n.name)}</option>`).join('');
+  if([...$('updateTarget').options].some(o=>o.value===selected))$('updateTarget').value=selected;
+  await load();
+ }catch(e){if(seq===epoch)$('updateError').textContent=e.message;}
+}
+$('updateSettingsForm').addEventListener('submit',async e=>{
+ e.preventDefault();if(!admin()||busy||revision===null)return;
+ const seq=epoch;busy=true;fields(true);$('updateError').textContent='';
+ const config={command:$('updateCommand').value.trim(),http_proxy:$('updateProxy').value.trim(),repo:$('updateRepo').value.trim(),prerelease:$('updatePrerelease').checked,automatic:$('updateAutomatic').checked,webhook_secret:$('updateSecret').value,clear_webhook_secret:$('updateClearSecret').checked};
+ try{const data=await api(endpoint('settings'),{method:'PUT',body:JSON.stringify({revision,config})});if(seq!==epoch)return;revision=data.revision;$('updateSecret').value='';$('updateClearSecret').checked=false;$('updateSecretState').textContent=data.config.has_webhook_secret?'已保存 Secret；留空保留':'尚未启用 webhook';$('updateStatus').textContent='更新设置已保存';}
+ catch(e){if(seq===epoch)$('updateError').textContent=e.message;}
+ finally{if(seq===epoch){busy=false;fields(false);}}
+});
+$('updateNow').addEventListener('click',async()=>{
+ if(!admin()||busy||revision===null)return;
+ const seq=epoch;busy=true;fields(true);$('updateError').textContent='';
+ try{await api(endpoint('update'),{method:'POST',body:'{}'});if(seq!==epoch)return;$('updateStatus').textContent='更新已接受。服务会暂时断开，完成后按原参数重启。请稍后刷新状态。';}
+ catch(e){if(seq===epoch)$('updateError').textContent=e.message;}
+ finally{if(seq===epoch){busy=false;fields(false);}}
+});
+$('updateTarget').addEventListener('change',load);$('updateReload').addEventListener('click',load);
+window.UpdatesUI={open,reset(){epoch++;revision=null;busy=false;$('updateSecret').value='';$('updateProxy').value='';$('updateStatus').textContent='';$('updateError').textContent='';fields(true);}};
+})();

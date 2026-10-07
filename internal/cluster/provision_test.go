@@ -35,7 +35,8 @@ func registerResource(t *testing.T, f *fixture, name string) (string, string) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	w := selfCall(f, "POST", "/api/members/register", "", map[string]any{"username": name, "ssh_public_key": resourceTestKey, "password": "Member-password-123", "invitation_code": invite.Code, "schema_revision": 1, "profile": map[string]string{}})
+	choices := registrationChoices(t, f)
+	w := selfCall(f, "POST", "/api/members/register", "", map[string]any{"containers": choices, "username": name, "ssh_public_key": resourceTestKey, "password": "Member-password-123", "invitation_code": invite.Code, "schema_revision": 1, "profile": map[string]string{}})
 	requireStatus(t, w, 201)
 	var v struct {
 		ID    string `json:"id"`
@@ -123,7 +124,7 @@ func TestMemberSelfServiceRetryIsolationAndUnassign(t *testing.T) {
 	mu.Lock()
 	fail = false
 	mu.Unlock()
-	requireStatus(t, selfCall(f, "POST", "/api/members/me/containers", token, map[string]string{"node_id": nodeID}), 200)
+	requireStatus(t, selfCall(f, "POST", "/api/members/me/containers", token, map[string]string{"node_id": nodeID, "mode": "create"}), 200)
 	awaitResource(t, f, alice, nodeID, "ready")
 	awaitIdle(t, f, alice)
 	var requests sync.WaitGroup
@@ -131,7 +132,7 @@ func TestMemberSelfServiceRetryIsolationAndUnassign(t *testing.T) {
 		requests.Add(1)
 		go func() {
 			defer requests.Done()
-			response := selfCall(f, "POST", "/api/members/me/containers", token, map[string]string{"node_id": nodeID})
+			response := selfCall(f, "POST", "/api/members/me/containers", token, map[string]string{"node_id": nodeID, "mode": "create"})
 			if response.Code != 200 && response.Code != 409 {
 				t.Errorf("retry status %d: %s", response.Code, response.Body.String())
 			}
@@ -197,7 +198,7 @@ func TestRegistrationReservesResourcesAtomically(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	_, e = store.RegisterWith(members.Registration{Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: i.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
+	_, e = store.RegisterWith(members.Registration{Containers: registrationChoices(t, f), Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: i.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
 	if e == nil {
 		t.Fatal("expected failure")
 	}
@@ -245,7 +246,7 @@ func TestInterruptedQueueRestartsWithoutDuplicatingNodeSlots(t *testing.T) {
 	// are needed to verify that failures become explicit and the unique slot stays.
 	store := &members.Store{Database: f.db}
 	invite, _ := store.CreateInvitation("restart", 1, "admin")
-	m, e := store.RegisterWith(members.Registration{Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
+	m, e := store.RegisterWith(members.Registration{Containers: registrationChoices(t, f), Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -289,4 +290,17 @@ func TestMemberTokenRotationAndCrossSiteGuards(t *testing.T) {
 	w := httptest.NewRecorder()
 	f.server.ServeHTTP(w, r)
 	requireStatus(t, w, 403)
+}
+
+func registrationChoices(t *testing.T, f *fixture) []members.ContainerChoice {
+	t.Helper()
+	nodes, err := f.control.nodes("worker")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := []members.ContainerChoice{}
+	for _, n := range nodes {
+		out = append(out, members.ContainerChoice{NodeID: n.ID, Mode: "create"})
+	}
+	return out
 }

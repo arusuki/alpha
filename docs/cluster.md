@@ -15,7 +15,7 @@
 
 总控保存 Agent 配置、加密 API Key、会话与报告，调用模型并通过 `/api/worker/records` 使用指定节点的查询、扫描和清理能力；不创建扫描配置或扫描任务表，不启动 Docker、扫描调度或 Tetragon。worker 不创建 Agent 表或保存模型凭据，基础数据库包含空的账号/会话表，但不创建账号、接受登录或持久化总控账号副本。Agent 会话保存总控用户 ID 和节点 ID，同一节点同时运行一个分析会话，不同节点可并行。
 
-数据库格式 v31，worker 节点协议 v4，registry 长连接协议 v2，不提供旧版本迁移。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。升级旧格式或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
+数据库格式 v34，worker 节点协议 v4，registry 长连接协议 v2。数据库支持从 v0.3.1 的 v33 原地升级，见 [测试环境更新器](updater.md)。每个目录在初始化事务中写入角色及随机实例 ID；身份缺失或用同一目录启动错误角色会明确报错。三种服务均持有数据目录独占锁；总控取得锁后只在启动时恢复中断的 Agent 任务。数据库升级保留原目录和数据；其他旧格式不匹配或改变角色时使用新目录，不删除或覆盖原目录。独立 `scan` 和内部扫描子进程 `worker <directory> <job> <parent>` 命令与服务的 `--worker` 参数不同。
 
 ## 部署
 
@@ -93,3 +93,7 @@ Agent 后台任务直接检查总控中的管理员权限和节点注册；每�
 ## 验证
 
 运行 `go test -race ./...`，以及 `python3 tests/test_cluster_browser.py`、`python3 tests/test_registry_browser.py`。依赖和其他回归入口见 [开发与验证](development.md#验证)。
+
+## 更新管理
+
+总控侧栏的“更新设置”可分别配置和手动更新 control、registry、worker，支持 GitHub release webhook 经 registry → control → worker 投递。健康与更新采用独立的稳定管理协议，业务版本不同仍可显示在线和更新。配置步骤及首次部署要求见 [更新器与 webhook](updater.md#web-更新设置与-github-webhook)。

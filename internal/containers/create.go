@@ -86,6 +86,11 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 	if err != nil {
 		return nil, err
 	}
+	if h.CheckOwner != nil {
+		if err := h.db.Transaction(func(tx *sql.Tx) error { return h.CheckOwner(tx, "", req.Owner) }); err != nil {
+			return nil, err
+		}
+	}
 	records, err := h.records()
 	if err != nil {
 		return nil, err
@@ -112,8 +117,18 @@ func (h *Handler) create(ctx context.Context, cfg Config, req CreateRequest, act
 		if e != nil {
 			return nil, e
 		}
+		owner := inspectionOwner(c)
+		if h.ReadOwner != nil {
+			owner, e = h.ReadOwner(c.ID, owner)
+			if e != nil {
+				return nil, e
+			}
+		}
+		if owner == req.Owner {
+			return nil, fmt.Errorf("该使用者在此 node 已有容器 %s，请选择领养", strings.TrimPrefix(c.Name, "/"))
+		}
 		if strings.TrimPrefix(c.Name, "/") == req.Name {
-			return nil, fmt.Errorf("容器 %s 已存在，请通过命令行导入", req.Name)
+			return nil, fmt.Errorf("容器 %s 已存在，请选择领养或使用其他名称", req.Name)
 		}
 		for _, bindings := range c.HostConfig.PortBindings {
 			for _, b := range bindings {
