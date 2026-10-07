@@ -17,10 +17,16 @@
     <p class="hint">以小写字母开头，3–32 位字母、数字、下划线或短横线。</p>
     <label>密码<input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
     <label>确认密码<input name="password_confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
-    <p class="hint">12–256 字节，不能含换行或冒号。用于状态页登录，也是容器的初始 root 密码。</p>
+    <p class="hint">12–256 字节，不能含换行或冒号。用于状态页登录，也是新建容器的初始 root 密码；领养容器保留原密码。</p>
     <div id="fields"></div>
     <label>SSH 公钥<textarea name="ssh_public_key" required rows="3" maxlength="16384" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
     <p class="hint">粘贴你的 SSH 公钥，用于访问工作空间。</p>
+    <section class="node-picker" aria-labelledby="nodePickerTitle">
+      <div class="picker-heading"><div><h2 id="nodePickerTitle">选择你的容器</h2><p class="hint">每个节点选择一个，打造你的工作空间。</p></div><button type="button" id="reloadNodes">刷新列表</button></div>
+      <p class="picker-note">新建独立环境，或领养已有容器并保留原数据和密码。</p>
+      <p id="choiceSummary" class="choice-summary" role="status" aria-live="polite"></p>
+      <div id="nodeChoices"></div>
+    </section>
     <button type="submit" id="submit">开始注册</button>
   </form>
   <section id="progress" hidden aria-labelledby="progressTitle">

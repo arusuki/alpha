@@ -2,7 +2,7 @@
   'use strict';
   const $ = id => document.getElementById(id);
   const base = document.body.dataset.base;
-  let csrf = '', schema, stream;
+  let csrf = '', schema, stream, nodeChoices = null, optionsRequest = 0, optionsLoading = false;
   const message = text => { $('message').textContent = text; };
   async function api(action, body) {
     const response = await fetch(`${base}/api/${action}`, {
@@ -30,7 +30,64 @@
       label.append(input); $('fields').append(label);
     }
   }
-  const labels = { pending:'等待分配', running:'正在创建', ready:'已就绪', invited:'链接已生成', accepted:'已接受', creating:'正在生成链接', unknown:'需管理员核对', failed:'分配失败', unallocated:'尚未分配', deleting:'正在回收', deleted:'已回收' };
+  function choiceOption(node, value, title, detail, claimed = false) {
+    const label = document.createElement('label'); label.className = 'container-option';
+    const input = document.createElement('input');
+    input.type = 'radio'; input.name = 'container-' + node.node_id; input.dataset.node = node.node_id;
+    input.value = value; input.required = true; input.disabled = claimed;
+    const content = document.createElement('span'); content.className = 'option-content';
+    const heading = document.createElement('span'); heading.className = 'option-title'; heading.textContent = title;
+    const description = document.createElement('span'); description.className = 'option-detail'; description.textContent = detail;
+    content.append(heading, description); label.append(input, content);
+    if (claimed) { const badge = document.createElement('span'); badge.className = 'claimed-badge'; badge.textContent = '已领养'; label.append(badge); }
+    return label;
+  }
+  function updateChoiceSummary() {
+    const selected = $('nodeChoices').querySelectorAll('input:checked').length;
+    $('choiceSummary').textContent = nodeChoices?.length ? `已选择 ${selected} / ${nodeChoices.length} 个节点` : '';
+    for (const card of $('nodeChoices').querySelectorAll('.choice-node')) {
+      const input = card.querySelector('input:checked');
+      card.querySelector('.choice-state').textContent = input ? input.value === 'create' ? '将新建' : '将领养' : '待选择';
+      card.classList.toggle('has-choice', !!input);
+    }
+  }
+  $('nodeChoices').addEventListener('change', updateChoiceSummary);
+  async function loadNodes() {
+    const request = ++optionsRequest;
+    optionsLoading = true; $('submit').disabled = true; $('reloadNodes').disabled = true;
+    const previous = new Map(Array.from($('nodeChoices').querySelectorAll('input:checked')).map(el => [el.dataset.node, el.value]));
+    try {
+      const value = await api('options', {username:$('registration').elements.username.value});
+      if (request !== optionsRequest) return;
+      nodeChoices = value.nodes;
+      $('nodeChoices').replaceChildren();
+      for (const [index, node] of nodeChoices.entries()) {
+        const card = document.createElement('fieldset'); card.className = 'choice-node';
+        const legend = document.createElement('legend'); legend.textContent = node.node_name;
+        const heading = document.createElement('div'); heading.className = 'choice-node-heading';
+        const number = document.createElement('span'); number.className = 'choice-index'; number.textContent = `NODE / ${String(index + 1).padStart(2, '0')}`;
+        const status = document.createElement('span'); status.className = 'choice-state';
+        heading.append(number, status); card.append(legend, heading);
+        card.append(choiceOption(node, 'create', '新建一个', '使用默认环境，创建专属容器'));
+        const caption = document.createElement('p'); caption.className = 'candidate-heading';
+        caption.textContent = `领养已有容器 · ${node.containers.filter(c => !c.claimed).length} 个可选`; card.append(caption);
+        const list = document.createElement('div'); list.className = 'candidate-list';
+        for (const c of node.containers) list.append(choiceOption(node, c.id, c.name, `${c.id.slice(0,12)}${(c.claimed_by||c.owner)?' · '+(c.claimed_by||c.owner):''}`, c.claimed));
+        if (!node.containers.length) { const empty = document.createElement('p'); empty.className = 'choice-empty'; empty.textContent = node.error ? '暂时无法读取已有容器' : '暂无已有容器，可以选择新建'; list.append(empty); }
+        card.append(list);
+        const old = previous.get(node.node_id);
+        for (const input of card.querySelectorAll('input')) input.checked = input.value === old && !input.disabled;
+        if (node.error) {const hint=document.createElement('p'); hint.className='choice-error'; hint.textContent='暂不能查询已有容器：'+node.error+'。可选择新建并在节点恢复后重试。'; card.append(hint);}
+        $('nodeChoices').append(card);
+      }
+      if (!nodeChoices.length) $('nodeChoices').textContent='暂无计算节点；管理员添加节点后，可在状态页申请。';
+      updateChoiceSummary();
+    } catch (error) { if(request===optionsRequest){nodeChoices=null; message(error.message);} }
+    finally {if(request===optionsRequest){optionsLoading=false; $('submit').disabled=nodeChoices===null; $('reloadNodes').disabled=false;}}
+  }
+  $('reloadNodes').onclick = loadNodes;
+  $('registration').elements.username.addEventListener('change',loadNodes);
+  const labels = { pending:'等待分配', running:'正在分配', ready:'已就绪', invited:'链接已生成', accepted:'已接受', creating:'正在生成链接', unknown:'需管理员核对', failed:'分配失败', unallocated:'尚未分配', deleting:'正在回收', deleted:'已回收' };
   function render(value) {
     const access = value.access || {};
     const rows = [ {name:'注册信息', state:'ready'},
@@ -88,15 +145,18 @@
         $('registration').hidden = false;
         if (error.status === 409) message(`${error.message}。若注册字段已更新，请刷新页面。`);
       } else { $('registration').hidden = true; $('resume').hidden = false; }
-    } finally { $('submit').disabled = false; }
+    } finally { $('submit').disabled = optionsLoading || nodeChoices === null; }
   }
   $('registration').addEventListener('submit', event => {
     event.preventDefault();
     const form = $('registration');
     if (form.elements.password.value !== form.elements.password_confirm.value) { message('两次输入的密码不一致。'); return; }
+    if (optionsLoading || nodeChoices === null) { message('请先载入节点与容器列表。'); return; }
+    const containers = Array.from($('nodeChoices').querySelectorAll('input:checked')).map(input => ({node_id:input.dataset.node,mode:input.value==='create'?'create':'adopt',container_id:input.value==='create'?'':input.value}));
+    if (containers.length !== nodeChoices.length) {message('请为每个节点选择领养或新建。');return;}
     const profile = Object.create(null);
     for (const input of $('fields').querySelectorAll('[data-key]')) profile[input.dataset.key] = input.value;
-    register({password:$('registration').elements.password.value, username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile});
+    register({password:$('registration').elements.password.value, username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile, containers});
   });
   $('resume').onclick = () => register({});
   $('retry').onclick = async () => {
@@ -115,7 +175,7 @@
       showFields();
       if (value.registered) watch();
       else if (value.submitted) await register({});
-      else { $('registration').hidden = false; message('邀请码已验证，请填写注册信息。'); }
+      else { $('registration').hidden = false; message('邀请码已验证，请填写注册信息并选择各节点的容器。'); await loadNodes(); }
     } catch (error) { message(`${error.message}，请刷新页面重试。`); }
   }
   load();

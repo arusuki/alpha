@@ -7,3 +7,27 @@
 .workspace-intro{padding:16px 20px;border-left:3px solid var(--accent);background:var(--surface);margin-bottom:24px;font-size:14px}.workspace-intro p+p{margin-top:5px;overflow-wrap:anywhere}.workspace-intro a{display:inline-block;margin-top:8px;color:var(--accent);font-size:13px}.ssh-commands p{overflow-wrap:anywhere}
 
 .password-form{display:grid;gap:14px;max-width:480px;margin-top:18px}.password-form label{display:grid;gap:6px}.password-form button{justify-self:start}summary{cursor:pointer;font-weight:600}
+
+
+.nodes{align-items:start}.node{border-radius:12px}
+.allocation{--choice-line:#dcded3;--choice-surface:#fffefa;--choice-accent:#a94a2d;--choice-tint:#fbf0e8;--choice-disabled:#f0f0eb;--choice-muted:#72766b}
+.container-picker{min-width:0;border:0;padding:0;margin:14px 0 0}.container-picker legend{font-size:12px;color:var(--muted);padding:0;margin-bottom:10px}.choice-hint{font-size:11px;color:var(--muted);margin:-5px 0 10px}
+.allocation .apply{width:100%;justify-content:space-between;margin-top:18px;padding:10px 14px;border-radius:8px;border-color:var(--accent);color:var(--accent);font-weight:600}.allocation .apply:hover:not(:disabled){background:var(--accent);color:#fff}.allocation .apply:disabled{border-color:var(--line);color:var(--muted)}
+
+/* Container choices: native radio controls retain keyboard and form behavior. */
+.container-option{display:flex;align-items:center;gap:12px;position:relative;margin:0;padding:14px;border:1px solid var(--choice-line);border-radius:10px;background:var(--choice-surface);cursor:pointer;min-width:0;font-weight:400;transition:border-color .15s,background .15s}
+.container-option:hover:not(:has(input:disabled)){border-color:var(--choice-accent);background:var(--choice-tint)}
+.container-option:has(input:checked){border-color:var(--choice-accent);background:var(--choice-tint);box-shadow:inset 0 0 0 1px var(--choice-accent)}
+.container-option:has(input:focus-visible){outline:2px solid var(--choice-accent);outline-offset:3px}
+.container-option:has(input:disabled){background:var(--choice-disabled);cursor:not-allowed;color:var(--choice-muted)}
+.container-option input[type=radio]{appearance:auto;display:block;flex:0 0 16px;width:16px;height:16px;min-width:16px;margin:0;padding:0;accent-color:var(--choice-accent);cursor:inherit;box-shadow:none}
+.container-option input[type=radio]:focus{outline:none}
+.option-content{display:grid;gap:4px;min-width:0;flex:1}
+.option-title{font-size:14px;font-weight:650;line-height:1.5;overflow-wrap:anywhere}
+.option-detail{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--choice-muted);overflow-wrap:anywhere}
+.container-option:has(input[value=create]) .option-detail{font-family:inherit}
+.claimed-badge{flex:none;align-self:flex-start;border:1px solid var(--choice-line);border-radius:5px;padding:2px 6px;font-size:10px;line-height:1.6;white-space:nowrap;color:var(--choice-muted)}
+.candidate-heading{font-size:12px;font-weight:600;color:var(--choice-muted);margin:18px 0 9px}
+.candidate-list{display:grid;gap:8px;max-height:280px;overflow-y:auto;padding:4px;margin:-4px;scrollbar-width:thin;scrollbar-color:var(--choice-line) transparent}
+.choice-empty{font-size:12px;line-height:1.7;color:var(--choice-muted);border:1px dashed var(--choice-line);border-radius:8px;padding:14px;margin:0}
+@media(prefers-reduced-motion:reduce){.container-option{transition:none}}

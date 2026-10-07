@@ -26,6 +26,10 @@ for index, (name, online, state) in enumerate([
                       port=0, error='默认镜像不可用' if state == 'failed' else ''))
 nodes[0].update(container_id='c' * 64, name='alpha-existing', port=2222)
 nodes[4]['containers'] = [dict(id='d' * 64, name='manual-alice', state='running', managed=True)]
+nodes[1]['candidates'] = [
+    dict(id='f' * 64, name='pytorch-workspace', owner='legacy', claimed=False),
+    dict(id='9' * 64, name='another-workspace', claimed_by='bob', claimed=True),
+]
 writes = []
 fail = True
 hold = threading.Event()
@@ -90,10 +94,10 @@ class Handler(BaseHTTPRequestHandler):
         hold.wait(15)
         node = next(n for n in nodes if n['node_id'] == body['node_id'])
         if fail:
-            node.update(state='failed', error='默认镜像不可用')
+            node.update(state='failed', error='默认镜像不可用', mode=body['mode'], target_id=body['container_id'])
             self.send(409, dict(error='默认镜像不可用'))
             return
-        node.update(state='ready', error='', container_id='e' * 64, name='alpha-new', port=2223)
+        node.update(state='ready', error='', mode=body['mode'], target_id=body['container_id'], container_id='e' * 64, name='alpha-new', port=2223)
         self.send(200, dict(member_id=member, nodes=copy.deepcopy(nodes)))
 
 
@@ -138,7 +142,7 @@ try:
         assert 'node.test' not in page.locator('#statusNodes').inner_text()
         assert page.locator('#sshCommands img').count() == 0
         assert page.locator('#statusNodes img').count() == 0
-        assert page.locator('[data-node="' + nodes[4]['node_id'] + '"] [data-apply]').count() == 0
+        assert page.locator('[data-node="' + nodes[4]['node_id'] + '"] [data-apply]').count() == 1
         expect(page.locator('[data-apply="' + nodes[2]['node_id'] + '"]')).to_be_disabled()
         assert page.locator('[data-node="' + nodes[5]['node_id'] + '"] [data-apply]').count() == 0
         assert token not in page.url
@@ -146,6 +150,22 @@ try:
         page.reload()
         expect(page.locator('#statusContent')).to_be_visible()
         target = page.locator('[data-apply="' + nodes[1]['node_id'] + '"]')
+        expect(page.locator('[data-choice][value="' + '9' * 64 + '"]')).to_be_disabled()
+        expect(page.locator('[data-choice="' + nodes[2]['node_id'] + '"]')).to_be_disabled()
+        target.click()
+        expect(page.locator('#statusError')).to_contain_text('请先选择')
+        assert not writes
+        choice = page.locator('[data-choice="' + nodes[1]['node_id'] + '"][value="' + 'f' * 64 + '"]')
+        choice.check()
+        page.locator('#refreshStatus').click()
+        expect(page.locator('#refreshStatus')).to_be_enabled()
+        expect(choice).to_be_checked()
+        expect(page.locator('[data-choice][value="' + '9' * 64 + '"]')).to_be_disabled()
+        page.locator('#statusNodes').screenshot(path='/tmp/alpha-status-choices-desktop.png')
+        page.set_viewport_size(dict(width=390, height=844))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.locator('[data-node="' + nodes[1]['node_id'] + '"]').screenshot(path='/tmp/alpha-status-choices-mobile.png')
+        page.set_viewport_size(dict(width=1440, height=1080))
         target.click()
         expect(page.locator('#statusError')).to_contain_text('默认镜像不可用')
         expect(target).to_be_enabled()
@@ -155,10 +175,11 @@ try:
         target.click()
         assert started.wait(5)
         expect(target).to_be_disabled()
-        expect(page.locator('#statusMessage')).to_contain_text('正在为 可申请节点 创建容器')
+        expect(page.locator('#statusMessage')).to_contain_text('正在为 可申请节点 分配容器')
         assert len(writes) == 2
+        assert all(w == dict(node_id=nodes[1]['node_id'], mode='adopt', container_id='f' * 64) for w in writes)
         hold.set()
-        expect(page.locator('#statusMessage')).to_contain_text('创建成功 · alpha-new')
+        expect(page.locator('#statusMessage')).to_contain_text('分配成功 · alpha-new')
         expect(page.locator('#allocatedNodes')).to_have_text('3')
         expect(page.locator('#sshConfig')).to_contain_text('HostName 10.0.0.12')
         expect(page.locator('#sshConfig')).to_contain_text('Port 2223')
@@ -171,6 +192,7 @@ try:
         # Leaving while a creation response is outstanding cannot restore private data.
         hold.clear()
         started.clear()
+        page.locator('[data-choice="' + nodes[3]['node_id'] + '"][value=create]').check()
         page.locator('[data-apply="' + nodes[3]['node_id'] + '"]').click()
         assert started.wait(5)
         page.locator('#logout').click()

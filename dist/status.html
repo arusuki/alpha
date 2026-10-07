@@ -30,7 +30,7 @@
       <div class="directory-heading"><div><h2>我的容器</h2><p id="checkedAt" class="muted"></p></div><div class="actions"><button id="refreshStatus">刷新状态</button><button id="logout">退出登录</button></div></div>
       <p id="statusMessage" class="message" role="status" aria-live="polite"></p>
       <div id="statusNodes" class="nodes"></div>
-      <p class="footnote">未分配容器的在线节点可点击「＋」申请。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
+      <p class="footnote">每个节点选择新建或领养，再点击「申请容器」。领养保留原数据和密码。节点离线时保留已有分配记录，容器运行状态以最近一次采集为准。</p>
       <details class="guide">
         <summary>修改密码</summary>
         <p class="muted">修改后所有状态页会话退出，新建容器使用新密码；已有容器的密码不变。</p>
@@ -47,7 +47,7 @@
         <p class="eyebrow">GET STARTED / 使用教程</p><h2 id="accessGuideTitle">通过总控管理你的工作空间</h2>
         <p>保持 Tailscale VPN 已连接，收藏此状态页。之后在总控查看本人容器状态、申请容器和获取 SSH 连接配置。</p>
         <ol>
-          <li>本页「我的容器」显示各节点的本人容器。尚无容器时，点击在线节点的「＋ 申请」。</li>
+          <li>本页「我的容器」显示各节点的本人容器。需要容器时，在在线节点选择领养或新建，再点击「申请容器」。</li>
           <li>将 SSH config 示例保存到本机 <code>~/.ssh/config</code>，把 <code>IdentityFile</code> 改为注册公钥对应的私钥路径。</li>
           <li>运行下方对应的 <code>ssh</code> 命令，经分配 share node 的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>，初始密码为创建容器时的账号密码。</li>
         </ol>

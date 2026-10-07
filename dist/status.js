@@ -6,9 +6,10 @@
   const endpoint='/api/status/'+encodeURIComponent(username);
   const storageKey='alpha.member-session.'+username;
   const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null};
-  const labels={unallocated:'尚无容器',pending:'等待创建',running:'正在创建',ready:'已分配容器',failed:'创建失败',deleting:'正在回收',deleted:'尚无容器'};
+  const labels={unallocated:'尚无容器',pending:'等待分配',running:'正在分配',ready:'已分配容器',failed:'分配失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
   function controls(){
+    document.querySelectorAll('[data-choice]').forEach(input=>{input.disabled=state.busy||input.dataset.unavailable==='true';});
     $('loginSubmit').disabled=state.busy;
     $('refreshStatus').disabled=state.busy;$('passwordSubmit').disabled=state.busy;
     document.querySelectorAll('[data-apply]').forEach(button=>{button.disabled=state.busy||button.dataset.available!=='true';});
@@ -51,6 +52,16 @@
     $('sshCommands').innerHTML=connections.map(({node,alias})=>`<p>${esc(node.node_name)} · <code>ssh ${esc(alias)}</code>${node.online?'':' <span class="muted">（节点离线，恢复后连接）</span>'}</p>`).join('');
     $('sshGuideNote').textContent=connections.length?'跳板地址为分配到的 share node，计算节点内网 IP 由管理员维护，容器端口来自你的分配记录。管理员另外分配的容器如未显示端口，请联系管理员获取连接信息。':'尚无容器时，在上方在线节点申请，成功后这里会自动补齐节点 IP、容器端口和连接命令。已有管理员分配的容器但未显示端口时，请联系管理员获取连接信息。';
   }
+  function containerChoices(node){
+    const candidates=node.candidates||[];
+    const option=(value,title,detail,claimed=false)=>`<label class="container-option"><input type="radio" name="container-${esc(node.node_id)}" data-choice="${esc(node.node_id)}" value="${esc(value)}" data-unavailable="${claimed||!node.online}" ${state.busy||claimed||!node.online?'disabled':''}><span class="option-content"><span class="option-title">${esc(title)}</span><span class="option-detail">${esc(detail)}</span></span>${claimed?'<span class="claimed-badge">已领养</span>':''}</label>`;
+    return `<fieldset class="container-picker"><legend>选择容器</legend>
+      ${option('create','新建一个','使用默认环境，创建专属容器')}
+      <p class="candidate-heading">领养已有容器 · ${candidates.filter(c=>!c.claimed).length} 个可选</p>
+      <p class="choice-hint">保留原数据和密码</p>
+      <div class="candidate-list">${candidates.map(c=>option(c.id,c.name,`${c.id.slice(0,12)}${(c.claimed_by||c.owner)?' · '+(c.claimed_by||c.owner):''}`,c.claimed)).join('')||`<p class="choice-empty">${node.candidates_error?'暂时无法读取已有容器':'暂无已有容器，可以选择新建'}</p>`}</div>
+    </fieldset>`;
+  }
   function render(){
     const data=state.data;
     $('memberIdentity').textContent=data.username+' · '+data.member_id;
@@ -60,27 +71,35 @@
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
     $('checkedAt').textContent='更新于 '+new Date(data.checked_at*1000).toLocaleTimeString();
     renderGuide(data);
-    const focused=document.activeElement?.dataset?.apply;
+    const active=document.activeElement;
+    const focused={apply:active?.dataset?.apply,choice:active?.dataset?.choice,value:active?.value};
+    const choices=new Map(Array.from(document.querySelectorAll('[data-choice]:checked')).map(el=>[el.dataset.choice,el.value]));
     $('statusNodes').innerHTML=data.nodes.map((n,index)=>{
       const own=containers(n),hasContainer=own.length>0||n.state==='ready';
-      const canApply=!hasContainer&&['unallocated','failed','deleted'].includes(n.state);
+      const canApply=n.state!=='ready'&&['unallocated','failed','deleted'].includes(n.state);
       const applying=n.node_id===state.applying;
-      const allocation=applying?'正在创建':hasContainer?'已分配容器':labels[n.state]||n.state;
+      const allocation=applying?'正在分配':hasContainer&&!n.mode&&n.state==='unallocated'?'已有容器，待领养':hasContainer?'已分配容器':labels[n.state]||n.state;
       return `<article class="node" data-node="${esc(n.node_id)}">
         <div class="node-top"><span class="node-index">NODE / ${String(index+1).padStart(2,'0')}</span><span class="connection ${n.online?'':'offline'}">${n.online?'在线':'离线 / 不可用'}</span></div>
         <div><h3>${esc(n.node_name)}</h3><p class="address">内网 IP · ${esc(n.internal_ip)}</p></div>
         <dl class="details"><div><dt>主机</dt><dd>${esc(n.host||'未知')}</dd></div><div><dt>节点容器总数</dt><dd>${n.online?esc(n.container_count):'未知'}</dd></div><div><dt>扫描任务</dt><dd>${n.online?(n.scanning?'进行中':'空闲'):'未知'}</dd></div><div><dt>最近采集</dt><dd>${esc(n.observed_at||'尚无采集记录')}</dd></div></dl>
         ${n.connection_error?`<p class="node-note">${esc(n.connection_error)}</p>`:''}
-        <div class="allocation"><div class="allocation-heading"><strong>${esc(allocation)}</strong>${canApply?`<button class="apply" data-apply="${esc(n.node_id)}" data-available="${n.online}" aria-label="${esc((n.state==='failed'?'重试':'申请')+' '+n.node_name+' 的容器')}" ${state.busy||!n.online?'disabled':''}><span aria-hidden="true">＋</span>${applying?'创建中…':n.state==='failed'?'重试':'申请'}</button>`:''}</div>
+        <div class="allocation"><div class="allocation-heading"><strong>${esc(allocation)}</strong></div>
+          ${canApply&&!n.mode?containerChoices(n):''}
+          ${canApply&&n.mode?`<p class="node-note">原选择：${n.mode==='adopt'?'领养 · '+esc(n.target_id):'新建一个'}；重试将继续原分配。</p>`:''}
+          ${n.candidates_error?`<p class="node-note">已有容器列表暂不可用：${esc(n.candidates_error)}</p>`:''}
           ${own.length?`<ul class="container-list">${own.map(c=>`<li><code>${esc(c.name||c.id)}</code><small>${esc(c.state||'已登记 · 运行状态待采集')}</small></li>`).join('')}</ul>`:''}
           ${n.port?`<p class="node-note">SSH · root @ ${esc(n.internal_ip)} · 端口 ${esc(n.port)}</p>`:''}
           ${!hasContainer&&!n.online?'<p class="node-note">节点恢复在线后可申请。</p>':''}
           ${['pending','running'].includes(n.state)?'<p class="node-note">申请处理中，状态会自动更新。</p>':''}
           ${n.error?`<p class="error">${esc(n.error)}</p>`:''}
+          ${canApply?`<button class="apply" data-apply="${esc(n.node_id)}" data-available="${n.online}" aria-label="${esc((n.state==='failed'?'重试':'申请')+' '+n.node_name+' 的容器')}" ${state.busy||!n.online?'disabled':''}>${applying?'正在分配…':!n.online?'节点离线':n.state==='failed'?'重试分配':'申请容器'}<span aria-hidden="true">${applying?'…':'→'}</span></button>`:''}
         </div></article>`;
     }).join('')||'<p class="empty">暂时没有节点，管理员添加后会在这里显示。</p>';
-    if(focused)Array.from(document.querySelectorAll('[data-apply]')).find(el=>el.dataset.apply===focused)?.focus();
+    for(const el of document.querySelectorAll('[data-choice]'))el.checked=el.value===choices.get(el.dataset.choice)&&el.dataset.unavailable!=='true';
     controls();
+    if(focused.apply)Array.from(document.querySelectorAll('[data-apply]')).find(el=>el.dataset.apply===focused.apply)?.focus({preventScroll:true});
+    if(focused.choice)Array.from(document.querySelectorAll('[data-choice]')).find(el=>el.dataset.choice===focused.choice&&el.value===focused.value)?.focus({preventScroll:true});
   }
   function schedule(){clearTimeout(state.timer);if(state.token&&!document.hidden)state.timer=setTimeout(()=>refresh(),10000);}
   function failed(error,checkIdentity=true){
@@ -101,15 +120,19 @@
     if(state.busy)return;
     const node=state.data?.nodes.find(n=>n.node_id===nodeID);
     if(!node||!node.online)return;
+    const selected=Array.from(document.querySelectorAll('[data-choice]:checked')).find(el=>el.dataset.choice===nodeID)?.value;
+    if(!node.mode&&!selected){$('statusError').textContent='请先选择领养已有容器或新建一个';return;}
+    const mode=node.mode||(selected==='create'?'create':'adopt');
+    const container_id=node.mode?node.target_id:(mode==='adopt'?selected:'');
     const epoch=state.epoch;state.busy=true;state.applying=nodeID;clearTimeout(state.timer);
-    $('statusError').textContent='';$('statusMessage').textContent='正在为 '+node.node_name+' 创建容器…';render();
+    $('statusError').textContent='';$('statusMessage').textContent='正在为 '+node.node_name+' 分配容器…';render();
     try{
-      const result=await request(endpoint+'/containers',{method:'POST',body:JSON.stringify({node_id:nodeID})});
+      const result=await request(endpoint+'/containers',{method:'POST',body:JSON.stringify({node_id:nodeID,mode,container_id})});
       if(epoch!==state.epoch)return;
       const allocation=result.nodes.find(n=>n.node_id===nodeID);
       if(!allocation||allocation.state!=='ready')throw Error('容器尚未就绪，请刷新查看申请结果');
       Object.assign(node,allocation);
-      $('statusMessage').textContent=node.node_name+' 创建成功 · '+allocation.name;
+      $('statusMessage').textContent=node.node_name+' 分配成功 · '+allocation.name;
     }catch(error){
       if(epoch!==state.epoch)return;
       $('statusMessage').textContent='';failed(error,false);
