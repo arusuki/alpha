@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"project-alpha/internal/containers"
+	"project-alpha/internal/gpu"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/storage"
@@ -12,10 +13,13 @@ import (
 
 // Modules composes node operations behind the worker authentication boundary.
 type Modules struct {
-	Storage, Process, Containers platform.Module
+	Storage, Process, Containers, GPU platform.Module
 }
 
 func (m Modules) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if gpu.IsRoute(r.URL.Path) && m.GPU != nil {
+		return m.GPU.Dispatch(w, r, user)
+	}
 	if containers.IsRoute(r.URL.Path) && m.Containers != nil {
 		return m.Containers.Dispatch(w, r, user)
 	}
@@ -27,6 +31,9 @@ func (m Modules) Dispatch(w http.ResponseWriter, r *http.Request, user platform.
 
 // Initialize creates node tables and binds the directory to worker mode atomically.
 func Initialize(tx *sql.Tx) error {
+	if err := platform.InstallGPUHistory(tx); err != nil {
+		return err
+	}
 	if err := storage.Initialize(tx); err != nil {
 		return err
 	}

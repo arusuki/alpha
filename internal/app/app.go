@@ -18,6 +18,7 @@ import (
 	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/containers"
+	"project-alpha/internal/gpu"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/registry"
@@ -227,7 +228,9 @@ func Run(ctx context.Context, args []string) error {
 			watcher = process.NewWatcher(ctx, source)
 			defer watcher.Close()
 		}
-		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher)}
+		gpuMonitor := gpu.NewMonitor(ctx, db)
+		defer gpuMonitor.Close()
+		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher), GPU: gpuMonitor}
 		handler = node
 	} else if *registryMode {
 		lock, err := db.LockService()

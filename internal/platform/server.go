@@ -69,6 +69,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	assets := map[string]string{
+		"/gpu.js": "gpu.js", "/gpu.css": "gpu.css",
 		"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js",
 		"/snapshot-loader.js": "snapshot-loader.js", "/snapshot-worker.js": "snapshot-worker.js",
 		"/snapshot-cache.js": "snapshot-cache.js", "/clipboard.js": "clipboard.js",

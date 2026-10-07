@@ -74,7 +74,7 @@ func writeError(w http.ResponseWriter, err error) {
 }
 
 func operational(path string) bool {
-	for _, prefix := range []string{"/api/state", "/api/settings", "/api/jobs", "/api/owners", "/api/containers", "/api/process"} {
+	for _, prefix := range []string{"/api/state", "/api/settings", "/api/jobs", "/api/owners", "/api/containers", "/api/process", "/api/gpu"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}

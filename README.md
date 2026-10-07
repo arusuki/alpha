@@ -109,6 +109,7 @@ The detailed guides are currently available in Chinese.
 | Topic | Guide |
 | --- | --- |
 | Node connections, service roles, and permissions | [Cluster management](docs/cluster.md) |
+| GPU processes, utilization, and rolling 72-hour usage | [GPU management](docs/gpu.md) |
 | Creating, importing, and managing containers | [Container management](docs/containers.md) |
 | Invitations, registration forms, and user registration | [User registration](docs/members.md) |
 | Share node installation, service SSH identity, and troubleshooting | [Share node configuration](docs/share-node.md) |

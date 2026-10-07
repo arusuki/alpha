@@ -65,6 +65,7 @@ Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_c
 - `internal/bastion`、`internal/tailscale`：共享访问资源池、Tailscale 凭据及邀请、alpha-worker 远程公钥管理、alpha-jump 成员转发及 share node HTTP 代理。
 - `internal/members`：独立的机器使用者、注册 schema、邀请码页面管理和公开注册 API。
 - `internal/containers`：命令行扫描导入、创建配置、启停与删除，以及管理记录和审计。
+- `internal/gpu`：NVIDIA GPU 采集、容器用户归属、72 小时滚动历史与时间聚合。
 - `internal/process`：订阅 Tetragon 进程事件，常驻维护并按容器导出活动进程森林。
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
 - `dist`：网页资源及 Go 嵌入声明；`tests`：前端回归和共享测试数据。Go 测试与所属包放在一起。

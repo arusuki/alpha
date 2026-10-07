@@ -8,7 +8,7 @@ function configure(){
   document.body.classList.toggle('control-room',central);
   document.querySelectorAll('[data-control-only]').forEach(e=>e.hidden=!central);
   document.querySelectorAll('.platform-nav [data-page]').forEach(e=>{
-    const nodePage=['dashboard','overview','containers','processes'].includes(e.dataset.page);
+    const nodePage=['dashboard','overview','containers','processes','gpus'].includes(e.dataset.page);
     e.hidden=(e.hasAttribute('data-control-only')?!central:nodePage?central:!!platform.nodeID)||(e.hasAttribute('data-admin')&&!admin());
   });
   document.querySelectorAll('[data-page="agent-settings"],[data-page="members"],[data-page="bastion"]').forEach(e=>e.hidden=!!platform.nodeID||!admin());

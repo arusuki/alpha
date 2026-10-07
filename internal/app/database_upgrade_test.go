@@ -28,7 +28,7 @@ func TestWorkerUpgradePreservesRecordsAndRejectsConflicts(t *testing.T) {
 						return err
 					}
 				}
-				if _, err = tx.Exec(`DROP INDEX member_slot_container; DROP INDEX managed_container_owner; DROP INDEX owners_one_container;
+				if _, err = tx.Exec(`DROP TABLE gpu_intervals; DROP INDEX member_slot_container; DROP INDEX managed_container_owner; DROP INDEX owners_one_container;
  ALTER TABLE member_container_slots DROP COLUMN container_id; ALTER TABLE member_container_slots DROP COLUMN mode; PRAGMA user_version=33;`); err != nil {
 					return err
 				}
