@@ -69,11 +69,11 @@ ssh -L 8765:127.0.0.1:8765 user@your-server
 
 [Linux CI and Release](../.github/workflows/release.yml) 在推送到 `master`、向 `master` 提交 PR 或手动运行时，执行 Go race 测试、`go vet` 和前端 JavaScript 测试，再构建 Linux amd64 / arm64 安装包。普通构建的安装包可在 Actions 页面的 Artifacts 下载，保留 14 天。
 
-发布时，在包含此工作流的提交上创建并推送新的版本标签，例如发布 0.4.3 时：
+发布时，在包含此工作流的提交上创建并推送新的版本标签，例如发布 0.4.4 时：
 
 ```bash
-git tag v0.4.3
-git push origin v0.4.3
+git tag v0.4.4
+git push origin v0.4.4
 ```
 
 `v*` 标签推送通过全部检查和双架构构建后，自动创建 GitHub Release 并上传：
@@ -82,7 +82,7 @@ git push origin v0.4.3
 - `project-alpha_<标签>_linux_arm64.tar.gz`
 - `SHA256SUMS`
 
-带连字符的标签（例如 `v0.4.3-rc.1`）标记为预发布。失败后可在 Actions 重跑；已有 Release 的同名附件会被替换。分支推送、PR 和手动运行只生成 Artifacts，不发布 Release。使用仓库内置的 `GITHUB_TOKEN`，无需额外配置 Secret。
+带连字符的标签（例如 `v0.4.4-rc.1`）标记为预发布。失败后可在 Actions 重跑；已有 Release 的同名附件会被替换。分支推送、PR 和手动运行只生成 Artifacts，不发布 Release。使用仓库内置的 `GITHUB_TOKEN`，无需额外配置 Secret。
 
 压缩包包含 `bin/project-alpha`、`bin/rootless-docker`、`bin/alpha-updater`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
 
@@ -90,13 +90,13 @@ git push origin v0.4.3
 
 工作流使用 Ubuntu 24.04 runner，编译器、头文件、链接库和打包后程序检查均在 `ubuntu:20.04` 容器内执行。CI 会检查容器 glibc 版本和二进制的 GLIBC 符号要求，拒绝超过 2.31 的构建；发布构建不复用宿主机的 Go/CGO 缓存。
 
-下载对应架构的压缩包和校验文件后，例如使用 0.4.3 版本时：
+下载对应架构的压缩包和校验文件后，例如使用 0.4.4 版本时：
 
 ```bash
 # 仅校验已下载的架构；同时下载两种架构时也可去掉 --ignore-missing。
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf project-alpha_v0.4.3_linux_amd64.tar.gz
-cd project-alpha_v0.4.3_linux_amd64
+tar -xzf project-alpha_v0.4.4_linux_amd64.tar.gz
+cd project-alpha_v0.4.4_linux_amd64
 ./bin/project-alpha --control --data-dir ./control-data
 ```
 
@@ -128,4 +128,4 @@ for test in tests/test_*.js; do node "$test" || exit; done
 
 前端测试需要 Node.js 20+，无需安装 npm 依赖。浏览器回归和 Docker 集成测试的运行方式见 [开发与验证](development.md#验证)。
 
-当前版本为 **0.4.3**，仍在持续开发。1.0 发布前，数据库、配置、API 和快照格式可能变化。[alpha-updater](updater.md) 按角色更新本机程序并原地升级数据库，当前支持从 v0.3.1 开始升级；其他旧格式不匹配时使用新数据目录，保留已有数据。[数据保存与备份说明](operations.md#配置与数据)。
+当前版本为 **0.4.4**，仍在持续开发。1.0 发布前，数据库、配置、API 和快照格式可能变化。[alpha-updater](updater.md) 按角色更新本机程序并原地升级数据库，当前支持从 v0.3.1 开始升级；其他旧格式不匹配时使用新数据目录，保留已有数据。[数据保存与备份说明](operations.md#配置与数据)。
