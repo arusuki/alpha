@@ -87,15 +87,15 @@ func TestAdoptionRejectsSecondContainerForOwner(t *testing.T) {
 }
 
 func TestAdoptUnmanagedDockerContainerDirectly(t *testing.T) {
-	h, f, cfg := fixture(t)
+	h, f, _ := fixture(t)
 	id := strings.Repeat("3", 32)
-	candidates, err := h.candidates(context.Background(), cfg)
+	candidates, err := h.candidates()
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(candidates)
-	if !strings.Contains(string(raw), f.c.ID) {
-		t.Fatal("unmanaged Docker container not listed")
+	if strings.Contains(string(raw), f.c.ID) {
+		t.Fatal("unmanaged Docker container offered for adoption")
 	}
 	body, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123", "mode": "adopt", "container_id": f.c.ID, "expected_owner": "alice"})
 	if status, out := call(h, "PUT", "/api/containers/members/"+id, string(body), admin); status != 200 {
@@ -110,9 +110,26 @@ func TestAdoptUnmanagedDockerContainerDirectly(t *testing.T) {
 			t.Fatalf("adoption changed lifecycle: %v", args)
 		}
 	}
+	// Once managed, the container remains listed with its claim even if Docker
+	// cannot be queried; unrelated live containers are never enumerated.
+	f.failAction = "ps"
+	f.calls = nil
+	status, listed := call(h, "GET", "/api/containers/candidates", "", admin)
+	var result struct {
+		Containers []candidate `json:"containers"`
+	}
+	if err := json.Unmarshal([]byte(listed), &result); err != nil {
+		t.Fatal(err)
+	}
+	if status != 200 || len(result.Containers) != 1 || result.Containers[0].ID != f.c.ID || result.Containers[0].MemberID != id || result.Containers[0].ClaimedBy != "bob" {
+		t.Fatalf("managed claim missing: %d %s", status, listed)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("candidate list queried Docker: %v", f.calls)
+	}
 }
 func TestUnmanagedAdoptionRejectsTemplateAndMarksReservation(t *testing.T) {
-	h, f, cfg := fixture(t)
+	h, f, _ := fixture(t)
 	f.c.HostConfig.Privileged = true
 	id := strings.Repeat("4", 32)
 	body, _ := json.Marshal(map[string]string{"username": "bob", "ssh_public_key": memberKey, "password": "Member-password-123", "mode": "adopt", "container_id": f.c.ID, "expected_owner": "alice"})
@@ -123,13 +140,17 @@ func TestUnmanagedAdoptionRejectsTemplateAndMarksReservation(t *testing.T) {
 	if len(records) != 0 {
 		t.Fatal("registered invalid container")
 	}
-	value, err := h.candidates(context.Background(), cfg)
+	value, err := h.candidates()
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(value)
-	if !strings.Contains(string(raw), id) {
-		t.Fatal("pending claim missing from candidate list")
+	if strings.Contains(string(raw), f.c.ID) {
+		t.Fatal("unmanaged reservation offered for adoption")
+	}
+	var reserved string
+	if err := h.db.SQL.QueryRow("SELECT container_id FROM member_container_slots WHERE member_id=? AND deleted=0", id).Scan(&reserved); err != nil || reserved != f.c.ID {
+		t.Fatalf("pending claim lost: %s %v", reserved, err)
 	}
 }
 

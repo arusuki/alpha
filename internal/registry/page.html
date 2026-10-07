@@ -9,18 +9,31 @@
 <body data-base="{{.Base}}">
 <main>
   <div class="eyebrow">PROJECT ALPHA / REGISTRY</div>
-  <h1>开启你的工作空间</h1>
-  <p class="intro">邀请码已验证。完成集群使用者注册后，我们将为你准备网络访问和计算资源。</p>
+  <h1 id="pageTitle">首次注册，开启工作空间</h1>
+  <p class="intro" id="pageIntro">这里是一次性的注册入口：登记资料、领取网络访问权限，然后进入总控。<strong>成功进入总控后，就可以关闭本页；之后统一在总控管理。</strong></p>
+  <ol class="journey" aria-label="首次使用流程">
+    <li id="journeyRegister" aria-current="step"><b>01</b><div><strong>登记资料</strong><span>设置密码、公钥与容器</span></div></li>
+    <li id="journeyNetwork"><b>02</b><div><strong>连接 Tailscale</strong><span>接受分享，连接本机</span></div></li>
+    <li id="journeyControl"><b>03</b><div><strong>收藏总控</strong><span>日常使用的唯一入口</span></div></li>
+  </ol>
   <p id="message" role="status" aria-live="polite">正在载入注册信息…</p>
   <form id="registration" hidden>
+    <div class="form-heading"><span class="eyebrow">STEP 01 / 只需注册一次</span><h2>准备你的登录资料</h2><p class="hint">准备一个使用者标识、登录密码，以及这台电脑的 SSH 公钥。Tailscale 账号在下一步使用，与这里的账号分别登录。</p></div>
     <label>使用者标识<input name="username" required minlength="3" maxlength="32" pattern="[a-z][a-z0-9_-]{2,31}" autocomplete="username" placeholder="例如 alice"></label>
     <p class="hint">以小写字母开头，3–32 位字母、数字、下划线或短横线。</p>
     <label>密码<input name="password" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
     <label>确认密码<input name="password_confirm" type="password" required minlength="12" maxlength="256" autocomplete="new-password"></label>
-    <p class="hint">12–256 字节，不能含换行或冒号。用于状态页登录，也是新建容器的初始 root 密码；领养容器保留原密码。</p>
+    <p class="hint">12–256 字节，不能含换行或冒号。用于总控个人状态页登录，也是新建容器的初始 root 密码；领养容器保留原密码。</p>
     <div id="fields"></div>
     <label>SSH 公钥<textarea name="ssh_public_key" required rows="3" maxlength="16384" placeholder="ssh-ed25519 AAAA…" spellcheck="false"></textarea></label>
-    <p class="hint">粘贴你的 SSH 公钥，用于访问工作空间。</p>
+    <p class="hint">粘贴这台电脑的 <code>.pub</code> 公钥全文，用于 SSH 跳板认证。私钥留在本机，不要粘贴到这里。</p>
+    <details class="help"><summary>在哪里找到 SSH 公钥？</summary>
+      <p>在自己的电脑打开终端（Windows 使用 PowerShell），读取已有公钥：</p>
+      <p class="command-label">macOS / Linux</p><pre><code>cat ~/.ssh/id_ed25519.pub</code></pre>
+      <p class="command-label">Windows PowerShell</p><pre><code>Get-Content $HOME/.ssh/id_ed25519.pub</code></pre>
+      <p>复制以 <code>ssh-ed25519</code> 或 <code>ssh-rsa</code> 开头的完整一行。若使用其他文件名，请读取对应的 <code>.pub</code> 文件。</p>
+      <p>还没有密钥时，可运行 <code>ssh-keygen -t ed25519</code>，按提示选择保存位置，再读取生成的 <code>.pub</code> 文件；已有密钥时不要覆盖。</p>
+    </details>
     <section class="node-picker" aria-labelledby="nodePickerTitle">
       <div class="picker-heading"><div><h2 id="nodePickerTitle">选择你的容器</h2><p class="hint">每个节点选择一个，打造你的工作空间。</p></div><button type="button" id="reloadNodes">刷新列表</button></div>
       <p class="picker-note">新建独立环境，或领养已有容器并保留原数据和密码。</p>
@@ -36,25 +49,45 @@
     <ol id="steps" aria-live="polite"></ol>
     <button type="button" id="retry" hidden>重试未完成的分配</button>
   </section>
-  <section id="share" hidden>
-    <h2>Tailscale 分享链接已就绪</h2>
-    <p>打开链接并接受邀请，即可加入分配给你的网络节点。</p>
-    <a id="shareLink" target="_blank" rel="noopener noreferrer">打开 Tailscale 分享链接 ↗</a>
-    <button type="button" id="copy">复制链接</button>
+  <section id="share" hidden aria-labelledby="networkGuideTitle">
+    <p class="eyebrow">STEP 02 / 在自己的电脑上操作</p>
+    <h2 id="networkGuideTitle">连接 Tailscale，才能进入总控</h2>
+    <p>资源就绪后，还需要你完成下面的网络连接。<strong>进度达到 100% 代表资源已分配，不代表本机 VPN 已连接。</strong></p>
+    <div class="setup-step"><span class="step-number">1</span><div>
+      <h3>接受分配给你的节点分享</h3>
+      <p>打开下方链接，使用自己的 Tailscale 账号登录，并接受机器分享邀请。记住使用的账号，下一步客户端要登录同一个账号。</p>
+      <div class="guide-actions"><a id="shareLink" target="_blank" rel="noopener noreferrer">打开 Tailscale 分享链接 ↗</a><button type="button" id="copy">复制分享链接</button></div>
+      <p id="shareState" class="hint"></p>
+      <details class="help"><summary>接受成功后，页面是什么样的？</summary>
+        <p>打开 <a href="https://console.tailscale.com/admin/machines" target="_blank" rel="noopener noreferrer">Tailscale 的 Machines 页面 ↗</a>，查看收到的分享节点。</p>
+        <figure class="guide-figure"><a href="{{.Base}}/guide/tailscale-shared-machine.jpg" target="_blank" rel="noopener noreferrer" aria-label="查看 Tailscale 示例原图"><img src="{{.Base}}/guide/tailscale-shared-machine.jpg" width="1135" height="170" loading="lazy" alt="Tailscale Machines 实际示例：40902 节点带有 Shared in 标签，地址为 100.77.243.34，右侧显示 Connected。"></a><figcaption>实际界面示例 · 点击放大。图中的名称和 IP 仅供参考，以分配给你的节点为准。</figcaption></figure>
+        <dl class="screenshot-notes"><div><dt>Shared in</dt><dd>这是别人分享给你的远程节点。</dd></div><div><dt>100.x 地址</dt><dd>节点的 Tailscale 地址，无需手动填进本机客户端。</dd></div><div><dt>Connected</dt><dd>这行远程节点在线；还要检查你自己的电脑是否已连接。</dd></div></dl>
+      </details>
+    </div></div>
+    <div class="setup-step"><span class="step-number">2</span><div>
+      <h3>在本机安装、登录并连接</h3>
+      <p>在用于打开总控和 SSH 的电脑上，<a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">下载并安装 Tailscale ↗</a>。打开客户端，登录刚才接受邀请的账号，并确认显示已连接（Connected）。</p>
+      <p class="hint">macOS 从菜单栏、Windows 从系统托盘打开客户端。Linux 可在安装后运行 <code>sudo tailscale up</code>，按提示登录，再用 <code>tailscale status</code> 检查状态。</p>
+      <div class="checkpoint"><strong>继续前检查</strong><p>邀请已接受 → 本机使用同一账号 → 本机 Tailscale 已连接。之后访问总控或使用 SSH 时，也要保持连接。</p></div>
+      <p class="hint">网页上看到分享节点，还不能代替本机客户端连接。换一台电脑使用时，也要在那台电脑安装并登录。</p>
+    </div></div>
   </section>
-  <section id="controlGuide" hidden aria-labelledby="controlGuideTitle">
-    <h2 id="controlGuideTitle">下一步：通过 VPN 进入总控</h2>
-    <ol>
-      <li>打开上方分享链接，用你的 Tailscale 账号接受邀请；安装并登录 Tailscale 客户端，保持 VPN 已连接。</li>
-      <li>在总控状态页输入注册时设置的密码。</li>
-      <li>收藏总控状态页。之后查看容器、申请计算节点和阅读 SSH 教程，都通过总控进行操作。</li>
-    </ol>
-    <p class="hint">总控无需管理员账号。可在状态页修改密码；修改后新建容器使用新密码，已有容器密码不变。</p>
-    <a id="controlStatusLink" target="_blank" rel="noopener noreferrer">打开我的总控状态页 ↗</a>
-    <p id="controlAddress" class="hint"></p>
+  <section id="controlGuide" class="handoff" hidden aria-labelledby="controlGuideTitle">
+    <p class="eyebrow">STEP 03 / 以后从这里进入</p>
+    <h2 id="controlGuideTitle">进入总控，完成最后一步</h2>
+    <p>确认本机 Tailscale 已连接后，打开你的总控个人状态页，输入<strong>刚才注册时设置的密码</strong>。无需管理员账号，也不是 Tailscale 密码。</p>
+    <div class="guide-actions"><a id="controlStatusLink" target="_blank" rel="noopener noreferrer">进入我的总控状态页 ↗</a><button type="button" id="copyControl">复制总控地址</button></div>
+    <p id="controlAddress" class="hint address-text"></p>
+    <div class="checkpoint"><strong>登录成功后，请收藏总控并关闭本注册页</strong><p>以后查看容器、申请新节点的容器、获取 SSH 配置、修改登录密码，都在总控完成。无需再次注册，也无需保留注册链接。</p></div>
+    <details class="help"><summary>总控打不开，或登录失败？</summary><ul>
+      <li>网页超时：检查本机 Tailscale 是否已连接，且账号与接受分享的账号一致。</li>
+      <li>找不到分享节点：回到上方邀请链接确认是否接受成功；邀请失效时联系管理员。</li>
+      <li>能打开但密码错误：输入 Project Alpha 注册密码，不是 Tailscale 密码。</li>
+      <li>以上都正常仍打不开：把本页显示的分配错误或总控地址发给管理员核查，无需重新注册。</li>
+    </ul></details>
   </section>
   <button type="button" id="resume" hidden>继续查询注册结果</button>
-  <footer>本页可刷新恢复进度，请保留当前浏览器中的注册会话。</footer>
+  <footer id="registrationFooter">进入总控前，本页可刷新恢复进度，请暂时保留当前浏览器的注册会话。登录总控后，日常操作统一在总控完成。</footer>
 </main>
 </body>
 </html>

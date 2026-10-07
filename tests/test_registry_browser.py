@@ -200,6 +200,19 @@ with tempfile.TemporaryDirectory(prefix='alpha-registry-') as temporary:
             expect(page.locator('#controlGuide')).to_be_visible()
             expect(page.locator('#controlStatusLink')).to_have_attribute('href', 'http://100.64.0.2:9765/status/alice')
             expect(page.locator('#controlGuide')).to_contain_text('注册时设置的密码')
+            # The embedded tutorial image must be allowed by the real registry CSP
+            # and served through the authenticated registration asset route.
+            page.get_by_text('接受成功后，页面是什么样的？', exact=True).click()
+            tutorial = page.locator('.guide-figure img')
+            tutorial.scroll_into_view_if_needed()
+            expect(tutorial).to_have_js_property('naturalWidth', 1135)
+            image_response = context.request.get(page.url.rstrip('/') + '/guide/tailscale-shared-machine.jpg')
+            assert image_response.status == 200
+            assert image_response.headers['content-type'] == 'image/jpeg'
+            context.grant_permissions(['clipboard-read', 'clipboard-write'], origin=registry_url)
+            page.locator('#copyControl').click()
+            expect(page.locator('#message')).to_contain_text('总控地址已复制')
+            assert page.evaluate('navigator.clipboard.readText()') == 'http://100.64.0.2:9765/status/alice'
             assert page.locator('#memberResourceToken').count() == 0
             assert sql('registry', 'SELECT registration FROM registry_sessions')[0][0] == ''
             expect(page.locator('#retry')).to_be_hidden()

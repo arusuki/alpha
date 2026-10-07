@@ -40,12 +40,12 @@
     const control=data.control,access=data.access;
     $('controlStatusAddress').textContent=control.status_url?'我的总控入口 · '+control.status_url:'尚未分配 share node，请联系管理员。';
     $('sshAccessState').textContent=access.key_state==='ready'?'注册公钥已添加到跳板。':'跳板公钥尚未就绪，请联系管理员。'+(access.error||'');
-    const config=access.share_host?['Host alpha-jump','  HostName '+access.share_host,'  User alpha-jump','  Port '+access.share_ssh_port,'  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes']:[];
+    const config=access.share_host?['Host alpha-jump','  HostName '+access.share_host,'  User alpha-jump','  Port '+access.share_ssh_port,'  # 自定义私钥路径时，取消下面两行注释并修改路径','  # IdentityFile ~/.ssh/id_ed25519','  # IdentitiesOnly yes']:[];
     const connections=[];
     for(const node of data.nodes){
       if(!access.share_host||!node.container_id||!node.port||node.state!=='ready')continue;
       const alias='alpha-'+username+'-'+node.node_id.slice(0,8);
-      config.push('','Host '+alias,'  HostName '+node.internal_ip,'  User root','  Port '+node.port,'  IdentityFile ~/.ssh/id_ed25519','  IdentitiesOnly yes','  ProxyJump alpha-jump');
+      config.push('','Host '+alias,'  HostName '+node.internal_ip,'  User root','  Port '+node.port,'  # 自定义私钥路径时，取消下面两行注释并修改路径','  # IdentityFile ~/.ssh/id_ed25519','  # IdentitiesOnly yes','  ProxyJump alpha-jump');
       connections.push({node,alias});
     }
     $('sshConfig').textContent=config.join('\n')+'\n';
@@ -164,7 +164,7 @@
   $('refreshStatus').addEventListener('click',()=>refresh());
   $('copySSHConfig').addEventListener('click',async()=>{
     const epoch=state.epoch;
-    try{await navigator.clipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请保存到 ~/.ssh/config 并修改私钥路径。';}
+    try{await navigator.clipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请追加保存到本机 ~/.ssh/config；仅使用自定义私钥路径时需要修改注释项。';}
     catch{if(epoch===state.epoch)$('sshCopyStatus').textContent='请手动复制上方 SSH 配置。';}
   });
   $('logout').addEventListener('click',()=>{

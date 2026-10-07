@@ -155,7 +155,8 @@
 #page-allocations .allocation-counts{color:var(--muted);font-size:.73rem;font-variant-numeric:tabular-nums}
 #page-allocations [data-delete-member]{flex-shrink:0}
 #page-allocations .allocation-chevron{font-size:1.5rem;line-height:1;width:18px;text-align:center;transition:transform .15s}
-.allocation-user[open] .allocation-chevron{transform:rotate(90deg)}
+.allocation-user[open]>summary>.allocation-chevron{transform:rotate(90deg)}
+.allocation-unregistered-content{display:grid;gap:12px;border-top:1px solid var(--line);padding:12px}
 .allocation-content{border-top:1px solid var(--line);padding:0 22px 20px}
 #page-allocations .allocation-node{border:0;margin-top:20px;padding:0}
 .allocation-node h3{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}

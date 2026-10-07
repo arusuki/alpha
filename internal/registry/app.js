@@ -72,8 +72,8 @@
         const caption = document.createElement('p'); caption.className = 'candidate-heading';
         caption.textContent = `领养已有容器 · ${node.containers.filter(c => !c.claimed).length} 个可选`; card.append(caption);
         const list = document.createElement('div'); list.className = 'candidate-list';
-        for (const c of node.containers) list.append(choiceOption(node, c.id, c.name, `${c.id.slice(0,12)}${(c.claimed_by||c.owner)?' · '+(c.claimed_by||c.owner):''}`, c.claimed));
-        if (!node.containers.length) { const empty = document.createElement('p'); empty.className = 'choice-empty'; empty.textContent = node.error ? '暂时无法读取已有容器' : '暂无已有容器，可以选择新建'; list.append(empty); }
+        for (const c of [...node.containers].sort((a, b) => Number(a.claimed) - Number(b.claimed))) list.append(choiceOption(node, c.id, c.name, `${c.id.slice(0,12)}${(c.claimed_by||c.owner)?' · '+(c.claimed_by||c.owner):''}`, c.claimed));
+        if (!node.containers.length) { const empty = document.createElement('p'); empty.className = 'choice-empty'; empty.textContent = node.error ? '暂时无法读取已有容器' : '暂无已接管容器，可以选择新建'; list.append(empty); }
         card.append(list);
         const old = previous.get(node.node_id);
         for (const input of card.querySelectorAll('input')) input.checked = input.value === old && !input.disabled;
@@ -116,12 +116,17 @@
     let link;
     try { link = new URL(access.invite_url); } catch (_) { /* No link yet. */ }
     $('share').hidden = !(link && link.protocol === 'https:' && link.host === 'login.tailscale.com' && !link.username && !link.password && ['invited','accepted'].includes(access.invite_state));
-    if (!$('share').hidden) { $('shareLink').href = link.href; $('shareLink').textContent = link.href; }
+    if (!$('share').hidden) { $('shareLink').href = link.href; $('shareState').textContent = access.invite_state === 'accepted' ? '分享邀请已接受。请继续确认本机客户端已连接。' : '分享链接已生成，请打开并接受邀请；已接受时可直接继续下一步。'; }
     let statusURL;
     try { statusURL = new URL(value.control.status_url); } catch (_) { /* Not available. */ }
     const guideReady = access.key_state === 'ready' && ['invited','accepted'].includes(access.invite_state)
       && statusURL && ['http:','https:'].includes(statusURL.protocol) && !statusURL.username && !statusURL.password;
     $('controlGuide').hidden = !guideReady;
+    $('pageTitle').textContent = '注册已提交，继续连接总控';
+    $('pageIntro').textContent = '资料已登记，无需再次注册。完成 Tailscale 连接并登录总控后，就可以关闭本页；之后统一在总控管理。';
+    $('journeyRegister').removeAttribute('aria-current');
+    $('journeyNetwork').setAttribute('aria-current', 'step');
+    $('registrationFooter').textContent = guideReady ? '请先确认能登录总控，再关闭本页。尚未完成的资源分配可在总控查看。' : '资源分配仍在处理中，可刷新恢复进度；已提交的信息无需重复填写。';
     if (guideReady) {
       $('controlStatusLink').href = statusURL.href;
       $('controlAddress').textContent = statusURL.href;
@@ -167,6 +172,10 @@
   $('copy').onclick = async () => {
     try { await navigator.clipboard.writeText($('shareLink').href); message('分享链接已复制。'); }
     catch (_) { message('请长按或右键上方分享链接复制。'); }
+  };
+  $('copyControl').onclick = async () => {
+    try { await navigator.clipboard.writeText($('controlStatusLink').href); message('总控地址已复制。登录成功后请收藏此地址，以后无需再打开注册页。'); }
+    catch (_) { message('请手动复制下方显示的总控地址。'); }
   };
   addEventListener('pagehide', () => stream?.close());
   async function load() {

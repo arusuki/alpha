@@ -9,8 +9,8 @@ node_a, node_b = 'a' * 32, 'b' * 32
 free, taken = 'c' * 64, 'd' * 64
 submitted = []
 nodes = [dict(node_id=node_a, node_name='计算节点 A', containers=[
-    dict(id=free, name='已有训练环境', owner='legacy', claimed=False),
-    dict(id=taken, name='另一位用户的容器', owner='bob', claimed=True)]),
+    dict(id=taken, name='另一位用户的容器', owner='bob', claimed=True),
+    dict(id=free, name='已有训练环境', owner='legacy', claimed=False)]),
     dict(node_id=node_b, node_name='<img src=x onerror=alert(1)>', containers=[])]
 
 with sync_playwright() as p:
@@ -54,6 +54,8 @@ with sync_playwright() as p:
     expect(claimed.locator('input')).to_be_disabled()
     expect(claimed).to_contain_text('已领养')
     expect(claimed).to_contain_text('bob')
+    expect(page.locator('.candidate-list').first.locator('input').first).to_have_value(free)
+    expect(page.locator('.candidate-list').first.locator('input').last).to_have_value(taken)
     assert page.locator('#nodeChoices img').count() == 0
     page.locator('#submit').click()
     assert not submitted, 'submitted without per-node choices'
@@ -68,7 +70,7 @@ with sync_playwright() as p:
         dict(node_id=node_b, mode='create', container_id='')]
     # Another user took the selected container: refresh keeps it visible but
     # disables it and clears the now-invalid selection.
-    nodes[0]['containers'][0]['claimed'] = True
+    nodes[0]['containers'][1]['claimed'] = True
     page.locator('#reloadNodes').click()
     expect(page.locator(f'input[value="{free}"]')).to_be_disabled()
     expect(page.locator(f'input[data-node="{node_a}"]:checked')).to_have_count(0)

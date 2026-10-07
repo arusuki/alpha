@@ -54,7 +54,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if user.Role != "admin" {
 			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
 		}
-		value, err := h.candidates(ctx, cfg)
+		value, err := h.candidates()
 		return 200, value, err
 	}
 	if path == "/api/containers/permissions" {

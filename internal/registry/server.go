@@ -25,7 +25,7 @@ import (
 	"project-alpha/internal/updates"
 )
 
-//go:embed page.html app.js style.css
+//go:embed page.html app.js style.css guide/*.jpg
 var assets embed.FS
 var page = template.Must(template.ParseFS(assets, "page.html"))
 var passPattern = regexp.MustCompile(`^[A-Za-z0-9]{8}$`)
@@ -172,13 +172,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	base := "/registry/" + match[1] + "/" + match[2]
 	action := match[3]
-	if !((action == "" || action == "/" || action == "/app.js" || action == "/style.css" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
+	if !((action == "" || action == "/" || action == "/app.js" || action == "/style.css" || action == "/guide/tailscale-shared-machine.jpg" || action == "/api/session" || action == "/api/events") && r.Method == "GET" || (action == "/api/register" || action == "/api/retry" || action == "/api/options") && r.Method == "POST") {
 		panic(http.ErrAbortHandler)
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	if r.Header.Get("Sec-Fetch-Site") == "cross-site" && action != "" && action != "/" {
 		panic(http.ErrAbortHandler)
 	}
@@ -233,7 +233,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		panic(http.ErrAbortHandler)
 	}
 	switch action {
-	case "/app.js", "/style.css":
+	case "/app.js", "/style.css", "/guide/tailscale-shared-machine.jpg":
 		body, err := assets.ReadFile(strings.TrimPrefix(action, "/"))
 		if err != nil {
 			writeError(w, err)
@@ -242,6 +242,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		typ := "text/javascript; charset=utf-8"
 		if action == "/style.css" {
 			typ = "text/css; charset=utf-8"
+		} else if action == "/guide/tailscale-shared-machine.jpg" {
+			typ = "image/jpeg"
 		}
 		w.Header().Set("Content-Type", typ)
 		w.Write(body)

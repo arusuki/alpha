@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>我的工作空间 · Project Alpha</title>
+  <title>总控 · 我的工作空间 · Project Alpha</title>
   <link rel="stylesheet" href="/status.css">
   <script src="/status.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><span class="brand"><b>α</b> Project Alpha</span><span>使用者资源</span></header>
+  <header class="topbar"><span class="brand"><b>α</b> Project Alpha</span><span>总控 / 个人工作空间</span></header>
   <main>
-    <div class="heading"><p class="eyebrow">MY NODES / 我的节点</p><h1>你的计算空间</h1><p id="memberIdentity" class="muted"></p></div>
+    <div class="heading"><p class="eyebrow">CONTROL / 日常管理入口</p><h1>你的计算空间</h1><p class="entry-note">注册已经完成。收藏这个总控页面，以后从这里管理工作空间，无需返回注册页。</p><p id="memberIdentity" class="muted"></p></div>
     <section id="loginPanel" class="login-panel" aria-labelledby="loginTitle">
-      <h2 id="loginTitle">查看我的资源</h2>
-      <p class="muted">输入注册时设置的密码。登录会话仅保留在当前标签页，12 小时后需重新登录。</p>
+      <h2 id="loginTitle">登录我的总控</h2>
+      <p class="muted">保持本机 Tailscale 已连接，输入 Project Alpha 注册时设置的密码（不是 Tailscale 密码）。无需管理员账号。登录会话仅保留在当前标签页，12 小时后需重新登录。</p>
       <form id="loginForm">
         <label for="loginPassword">密码</label>
         <div class="login-row"><input id="loginPassword" type="password" autocomplete="current-password" required maxlength="256" placeholder="注册时设置的密码"><button id="loginSubmit" class="primary">登录</button></div>
@@ -21,7 +21,7 @@
     </section>
     <p id="statusError" class="error" role="alert"></p>
     <section id="statusContent" hidden aria-label="我的节点资源">
-      <div class="workspace-intro"><p>保持 Tailscale VPN 已连接，之后通过此总控状态页查看和申请容器。</p><p id="controlStatusAddress" class="muted"></p><a href="#accessGuideTitle">查看 SSH 连接教程 ↓</a></div>
+      <div class="workspace-intro"><strong>日常管理，就在这里</strong><p>查看容器、申请容器、获取 SSH 配置和修改密码，都在此总控页面完成。保持 Tailscale 已连接；注册页现在可以关闭。</p><p id="controlStatusAddress" class="muted"></p><p class="muted">收藏此地址：macOS 按 ⌘D，Windows / Linux 按 Ctrl+D。</p><nav class="quick-links" aria-label="使用指引"><a href="#statusNodes">查看我的容器 ↓</a><a href="#accessGuideTitle">配置 SSH 连接 ↓</a><a href="#connectionHelp">连接问题排查 ↓</a></nav></div>
       <div class="summary" aria-label="资源汇总">
         <div><span>全部节点</span><strong id="totalNodes">0</strong></div>
         <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
@@ -44,20 +44,28 @@
         </form>
       </details>
       <section class="guide" aria-labelledby="accessGuideTitle">
-        <p class="eyebrow">GET STARTED / 使用教程</p><h2 id="accessGuideTitle">通过总控管理你的工作空间</h2>
-        <p>保持 Tailscale VPN 已连接，收藏此状态页。之后在总控查看本人容器状态、申请容器和获取 SSH 连接配置。</p>
-        <ol>
-          <li>本页「我的容器」显示各节点的本人容器。需要容器时，在在线节点选择领养或新建，再点击「申请容器」。</li>
-          <li>将 SSH config 示例保存到本机 <code>~/.ssh/config</code>，把 <code>IdentityFile</code> 改为注册公钥对应的私钥路径。</li>
-          <li>运行下方对应的 <code>ssh</code> 命令，经分配 share node 的 <code>alpha-jump</code> 跳板账号连接容器；容器内的登录用户为 <code>root</code>，初始密码为创建容器时的账号密码。</li>
+        <p class="eyebrow">GET STARTED / 首次连接教程</p><h2 id="accessGuideTitle">从本机连接到你的容器</h2>
+        <p>总控负责管理资源；实际运行代码时，在自己的电脑通过 SSH 连接容器。完成以下配置后，日常只需保持 Tailscale 连接并运行 SSH 命令。</p>
+        <div class="connection-path" aria-label="SSH 连接路径"><span>你的电脑<small>Tailscale 已连接</small></span><b aria-hidden="true">→</b><span>分享节点<small>alpha-jump 跳板</small></span><b aria-hidden="true">→</b><span>你的容器<small>root 用户</small></span></div>
+        <ol class="usage-steps">
+          <li><strong>确认容器已经分配</strong><p>查看上方「我的容器」。尚无容器时，在在线节点选择「新建一个」或领养已有容器，再点击「申请容器」。申请成功后，下方会自动生成连接配置和命令。</p></li>
+          <li><strong>将配置保存到自己的电脑</strong><p>复制下方 SSH config，追加到 <code>~/.ssh/config</code>，不要覆盖已有的其他主机配置。Windows 对应用户目录下的 <code>.ssh/config</code>（例如 <code>C:\Users\你的用户名\.ssh\config</code>）；没有文件时新建一个，文件名为 <code>config</code>，不带 <code>.txt</code> 后缀。</p><p>默认私钥或 SSH agent 中已有对应密钥时，可直接使用示例。若注册公钥对应的私钥位于其他路径，取消 <code># IdentityFile</code> 的注释并修改路径；按需同时启用 <code>IdentitiesOnly yes</code>。填私钥文件路径，不是 <code>.pub</code> 路径。</p></li>
+          <li><strong>运行下方对应节点的 SSH 命令</strong><p>在本机终端或 PowerShell 执行命令。SSH 会自动经过跳板到达容器，无需单独登录跳板 shell。首次连接时，向管理员核对主机指纹后再确认。</p><p>若容器提示输入 <code>root</code> 密码：新建容器使用创建时的 Project Alpha 密码；领养容器保留原密码。本页修改登录密码不会同步修改已有容器的密码。</p></li>
         </ol>
         <p id="sshAccessState" class="muted"></p>
         <div class="guide-heading"><h3>SSH config 示例</h3><button id="copySSHConfig" type="button">复制配置</button></div>
         <pre class="ssh-config"><code id="sshConfig"></code></pre>
         <p id="sshCopyStatus" class="message" role="status" aria-live="polite"></p>
-        <div id="sshCommands" class="ssh-commands"></div>
+        <h3 class="commands-title">配置保存后，运行对应命令</h3><div id="sshCommands" class="ssh-commands"></div>
         <p id="sshGuideNote" class="muted"></p>
-        <p class="muted">跳板账号用于转发连接，无需单独登录跳板 shell。跳板地址和 SSH 端口来自分配的 share node。</p>
+        <p class="muted">配置中的地址和端口来自你的实际分配记录，直接复制本页生成的值即可。不要使用教程截图里的示例地址。</p>
+        <details class="connection-help" id="connectionHelp"><summary>连接失败时，按这个顺序检查</summary>
+          <dl><div><dt>总控或 SSH 连接超时</dt><dd>检查本机 Tailscale 客户端是否已连接，登录账号是否与接受分享邀请的账号一致。Machines 页面中远程节点的 Connected 仅说明那台节点在线。</dd></div>
+          <div><dt>Permission denied (publickey)</dt><dd>确认当前电脑使用的是注册公钥对应的私钥；自定义文件名时填写 IdentityFile。如果失败的是容器认证，请向管理员确认容器内公钥或使用该容器的密码。</dd></div>
+          <div><dt>提示输入密码</dt><dd>私钥 passphrase 是你本机密钥的口令；容器 root 密码则遵循上方新建 / 领养的规则。两者都不是 Tailscale 密码。</dd></div>
+          <div><dt>没有连接命令，或节点离线</dt><dd>先完成容器分配并等待节点恢复。已有容器但缺少端口时，请联系管理员补充连接信息，无需返回注册页。</dd></div></dl>
+          <a href="https://tailscale.com/download" target="_blank" rel="noopener noreferrer">在新电脑安装 Tailscale ↗</a>
+        </details>
       </section>
     </section>
     <noscript><p class="error">请启用 JavaScript 以查看节点和申请容器。</p></noscript>
