@@ -2,6 +2,7 @@
 (()=>{
 const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0,reconnecting:new Set(),reconnectErrors:new Map()};
 const admin=()=>platform.user?.role==='admin';
+const nodeAvailable=n=>n.online&&(n.kind==='registry'||!!n.inventory);
 function configure(){
   const central=!platform.nodeID;
   document.body.classList.toggle('control-room',central);
@@ -27,33 +28,38 @@ function render(){
   const data=state.data;if(!data)return;
   $('clusterOnline').textContent=`${data.online} / ${data.nodes.length}`;
   $('clusterContainers').textContent=data.container_count;
-  $('clusterOwners').textContent=data.members.filter(m=>m.count&&m.username).length;
+  const owners=data.members.filter(m=>m.count&&m.username).length;
+  const unassigned=data.members.find(m=>!m.username)?.count||0;
+  const unavailable=data.nodes.filter(n=>!nodeAvailable(n)).length;
+  $('clusterOwners').textContent=owners;
+  $('clusterUnassigned').textContent=unassigned;
   $('clusterNodeCount').textContent=String(data.nodes.length).padStart(2,'0');
-  $('clusterHealth').textContent=!data.nodes.length?'等待第一个节点接入':data.online!==data.nodes.length?`${data.nodes.length-data.online} 个节点暂时不可用`:'所有节点连接正常';
-  $('clusterHealth').parentElement.dataset.state=!data.nodes.length?'empty':data.online!==data.nodes.length?'partial':'online';
+  $('clusterHealth').textContent=!data.nodes.length?'等待第一个节点接入':unavailable?`${unavailable} 个节点暂时不可用`:'所有节点连接正常';
+  $('clusterHealth').parentElement.dataset.state=!data.nodes.length?'empty':unavailable?'partial':'online';
   $('clusterChecked').textContent=`检查于 ${dateTime(data.checked_at)}`;
   $('clusterPartial').hidden=!data.partial;
-  $('clusterPartial').textContent='部分计算节点不可用，容器统计仅包含可访问的 worker。';
+  $('clusterPartial').textContent='部分计算节点离线、协议不一致或详情读取失败，容器统计仅包含已成功读取的节点。';
   renderNodes();
   $('allocationContainerCount').textContent=data.container_count;
-  $('allocationOwnerCount').textContent=data.members.filter(m=>m.count&&m.username).length;
-  $('allocationNodeCount').textContent=data.nodes.filter(n=>n.kind!=='registry'&&n.online).length;
+  $('allocationOwnerCount').textContent=owners;
+  $('allocationUnassignedCount').textContent=unassigned;
+  $('allocationNodeCount').textContent=data.nodes.filter(n=>n.kind==='worker'&&nodeAvailable(n)).length;
   $('allocationStatus').dataset.state=data.partial?'partial':'ready';
-  $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'计算节点统计完整。')+` ${data.container_count} 个容器记录 · ${dateTime(data.checked_at)}`;
+  $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'计算节点统计完整。')+` ${data.container_count-unassigned} 个有使用者的容器 · ${unassigned} 个没有使用者的容器 · ${dateTime(data.checked_at)}`;
   renderAllocations();
 }
 function renderNodes(){
   const data=state.data;if(!data)return;
-  for(const n of data.nodes)if(n.online)state.reconnectErrors.delete(n.id);
+  for(const n of data.nodes)if(nodeAvailable(n))state.reconnectErrors.delete(n.id);
   const query=$('clusterSearch').value.trim().toLowerCase();
-  const nodes=data.nodes.filter(n=>(state.filter==='all'||n.online===(state.filter==='online'))&&(!query||[n.name,n.url,n.internal_ip,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
+  const nodes=data.nodes.filter(n=>(state.filter==='all'||nodeAvailable(n)===(state.filter==='online'))&&(!query||[n.name,n.url,n.internal_ip,n.kind,n.inventory?.host].join(' ').toLowerCase().includes(query)));
   document.querySelectorAll('[data-node-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.nodeFilter===state.filter)));
   const html=nodes.map(n=>{
     if(n.kind==='registry')return renderRegistryNode(n,data.nodes.indexOf(n)+1);
     const inventory=n.inventory;
     const owners=inventory?new Set(inventory.containers.map(c=>c.owner).filter(Boolean)).size:0;
     const scanned=inventory?.observed_at?new Date(inventory.observed_at).toLocaleString('zh-CN'):'';
-    return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${n.online?'在线':'不可用'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${inventory?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${n.online?owners:'—'}</strong><span>使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${inventory?`<dl class="node-details"><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>${n.online?'节点在线，详情暂不可用':'暂时无法连接此节点'}</strong><p>${esc(state.reconnectErrors.get(n.id)||n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?'<button data-page="update-settings">更新设置</button>':''}${reconnectButton(n)}${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
+    return `<article class="node-card ${nodeAvailable(n)?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${!n.online?'离线':!inventory?'详情不可用':'在线'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${inventory?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${inventory?owners:'—'}</strong><span>有容器的使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${inventory?`<dl class="node-details"><div><dt>没有使用者的容器</dt><dd>${inventory.containers.filter(c=>!c.owner).length}</dd></div><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>${n.online?'节点在线，详情暂不可用':'暂时无法连接此节点'}</strong><p>${esc(state.reconnectErrors.get(n.id)||n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?'<button data-page="update-settings">更新设置</button>':''}${reconnectButton(n)}${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
   }).join('')||(!data.nodes.length?`<div class="cluster-empty"><span class="empty-node-symbol" aria-hidden="true">＋</span><h3>${admin()?'连接你的第一个节点':'等待节点接入'}</h3><p>${admin()?'添加主机后，在这里统一查看状态并进入管理。':'管理员添加节点后，这里会显示你的主机。'}</p>${admin()?'<button class="primary" data-add-node>添加节点 ↗</button>':''}</div>`:'<div class="cluster-empty"><h3>没有匹配的节点</h3><p>试试其他名称、主机地址或连接状态。</p><button data-clear-nodes>清除筛选</button></div>');
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
@@ -67,10 +73,10 @@ function renderRegistryNode(n,index){
   const connection=n.connection;
   const error=state.reconnectErrors.get(n.id)||n.error;
   const status=n.online?'已连接':({connecting:'连接中',reconnecting:'重连中',disconnected:'未连接'}[connection?.state]||'未连接');
-  return `<article class="node-card ${n.online?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${error?`<div class="node-unavailable"><p>${esc(error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button class="node-open" data-share-registry="${n.id}" aria-label="生成 ${esc(n.name)} 的共享注册链接">共享链接 ↗</button>${reconnectButton(n)}<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
+  return `<article class="node-card ${nodeAvailable(n)?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(index).padStart(2,'0')} / REGISTRY</span><span class="node-status"><i></i>${status}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><div class="node-metrics"><div><strong>注册入口</strong><span>由总控主动连接</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-user"/></svg></div><dl class="node-details"><div><dt>连接令牌</dt><dd>•••••• · 已保存</dd></div><div><dt>最近连接</dt><dd>${connection?.connected_at?esc(dateTime(connection.connected_at)):'等待连接'}</dd></div></dl>${error?`<div class="node-unavailable"><p>${esc(error)}</p></div>`:''}<p class="node-observed">${connection?.last_seen?'最近通信 · '+esc(dateTime(connection.last_seen)):'正在等待连接确认'}</p>${admin()?`<div class="node-actions"><button class="node-open" data-share-registry="${n.id}" aria-label="生成 ${esc(n.name)} 的共享注册链接">共享链接 ↗</button>${reconnectButton(n)}<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button></div>`:''}</article>`;
 }
 function reconnectButton(n){
-  if(!admin()||(n.online&&!state.reconnecting.has(n.id)))return '';
+  if(!admin()||(nodeAvailable(n)&&!state.reconnecting.has(n.id)))return '';
   const pending=state.reconnecting.has(n.id);
   return `<button data-reconnect-node="${n.id}" aria-label="重连节点 ${esc(n.name)}" ${pending?'disabled aria-busy="true"':''}>${pending?'正在重连…':'重连'}</button>`;
 }
@@ -135,15 +141,15 @@ function renderAllocations(){
   const query=$('allocationSearch').value.trim().toLowerCase();
   const expanded=new Map([...$('allocationRows').querySelectorAll('details[data-owner]')].map(el=>[el.dataset.owner,el.open]));
   const rows=data.members.filter(m=>!query||[m.username,...m.nodes.flatMap(n=>[n.name,...n.containers.flatMap(c=>[c.name,c.id])])].join(' ').toLowerCase().includes(query));
-  $('allocationResultCount').textContent=query?`${rows.length} / ${data.members.length}`:data.members.length;
-  const unregistered=rows.filter(m=>admin()&&m.username&&!m.registered);
-  const regular=rows.filter(m=>!unregistered.includes(m));
-  const groupOpen=$('allocationRows').querySelector('[data-unregistered]')?.open;
-  const renderUser=m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||(expanded.get(m.username)??unregistered.includes(m))?'open':''}>
-    <summary><span class="allocation-avatar" aria-hidden="true">${esc(Array.from(m.username||'?')[0].toUpperCase())}</span><span class="allocation-identity"><strong>${esc(m.username||'未归属')}</strong><small>${!m.username?'尚未关联使用者':admin()&&!m.registered?'未登记使用者':'使用者'}</small></span><span class="allocation-counts">${m.count} 个容器 · ${m.nodes.length} 个节点</span>${admin()&&m.registered&&m.id?`<button class="danger" data-delete-member="${esc(m.id)}">删除使用者</button>`:''}<span class="allocation-chevron" aria-hidden="true">›</span></summary>
-    <div class="allocation-content">${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>${esc(n.name)} <span aria-hidden="true">↗</span></a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th scope="col">容器 / ID</th><th scope="col">记录来源</th><th scope="col">扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td><span class="resource-tag">${c.managed?'已接管':'扫描发现'}</span></td><td><span class="resource-tag" ${c.state==='running'?'data-tone="success"':''}>${esc(c.state||'尚无扫描状态')}</span><small class="sub">${esc(c.observed_at?dateTime(c.observed_at):'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||'<p class="empty">在线节点尚无该使用者的容器记录。</p>'}</div></details>`;
-  const group=unregistered.length?`<details class="allocation-user allocation-unregistered" data-unregistered ${groupOpen?'open':''}><summary><span class="allocation-avatar" aria-hidden="true">?</span><span class="allocation-identity"><strong>未登记使用者</strong><small>点击展开查看容器及原归属</small></span><span class="allocation-counts">${unregistered.length} 名使用者 · ${unregistered.reduce((sum,m)=>sum+m.count,0)} 个容器</span><span class="allocation-chevron" aria-hidden="true">›</span></summary><div class="allocation-unregistered-content">${unregistered.map(renderUser).join('')}</div></details>`:'';
-  $('allocationRows').innerHTML=regular.map(renderUser).join('')+group||`<div class="cluster-empty"><h3>${query?'没有匹配的使用者或容器':'暂无使用者容器记录'}</h3><p>${query?'试试其他使用者、节点名称或容器 ID。':'节点接入并分配容器后，可在这里查看归属。'}</p></div>`;
+  const memberCount=data.members.filter(m=>m.username).length;
+  const matchedMembers=rows.filter(m=>m.username).length;
+  $('allocationResultCount').textContent=query?`${matchedMembers} / ${memberCount} 名使用者`:`${memberCount} 名使用者`;
+  const regular=rows.filter(m=>m.username);
+  const unassigned=rows.filter(m=>!m.username);
+  const renderUser=m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||(expanded.get(m.username)??false)?'open':''}>
+    <summary><span class="allocation-avatar" aria-hidden="true">${esc(Array.from(m.username||'?')[0].toUpperCase())}</span><span class="allocation-identity"><strong>${esc(m.username||'没有使用者的容器')}</strong><small>${!m.username?'未归属，不计入使用者人数':'已登记使用者'}</small></span><span class="allocation-counts">${m.count} 个容器 · ${m.nodes.length} 个节点</span>${admin()&&m.registered&&m.id?`<button class="danger" data-delete-member="${esc(m.id)}">删除使用者</button>`:''}<span class="allocation-chevron" aria-hidden="true">›</span></summary>
+    <div class="allocation-content">${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>${esc(n.name)} <span aria-hidden="true">↗</span></a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th scope="col">容器 / ID</th><th scope="col">记录来源</th><th scope="col">扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td><span class="resource-tag">${c.managed?'已接管':'扫描发现'}</span></td><td><span class="resource-tag" ${c.state==='running'?'data-tone="success"':''}>${esc(c.state||'尚无扫描状态')}</span><small class="sub">${esc(c.observed_at?new Date(c.observed_at).toLocaleString('zh-CN'):'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||`<p class="empty">${data.partial?'已读取的节点中暂无该使用者的容器记录，其他节点尚未确认。':'暂无该使用者的容器记录。'}</p>`}</div></details>`;
+  $('allocationRows').innerHTML=[...regular,...unassigned].map(renderUser).join('')||`<div class="cluster-empty"><h3>${query?'没有匹配的使用者或容器':'暂无使用者容器记录'}</h3><p>${query?'试试其他使用者、节点名称或容器 ID。':'节点接入并分配容器后，可在这里查看归属。'}</p></div>`;
 }
 async function refresh(){
   if(!platform.user||platform.nodeID)return;

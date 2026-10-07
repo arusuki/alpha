@@ -40,7 +40,7 @@
 .figure-node{stroke:#727766;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round}
 .figure-node rect{fill:var(--bg);stroke:#b9bdad}
 .figure-signal{fill:#718770;stroke:var(--bg);stroke-width:1.5}
-.cluster-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding:20px 0;margin:0 0 26px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cluster-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));padding:20px 0;margin:0 0 26px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .cluster-stats article{padding:0 30px;display:grid;gap:10px;border-right:1px solid var(--line)}
 .cluster-stats article:last-child{border:0}
 .cluster-stats article>span{font-size:.75rem;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -156,7 +156,6 @@
 #page-allocations [data-delete-member]{flex-shrink:0}
 #page-allocations .allocation-chevron{font-size:1.5rem;line-height:1;width:18px;text-align:center;transition:transform .15s}
 .allocation-user[open]>summary>.allocation-chevron{transform:rotate(90deg)}
-.allocation-unregistered-content{display:grid;gap:12px;border-top:1px solid var(--line);padding:12px}
 .allocation-content{border-top:1px solid var(--line);padding:0 22px 20px}
 #page-allocations .allocation-node{border:0;margin-top:20px;padding:0}
 .allocation-node h3{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:12px}
@@ -265,3 +264,6 @@
 .bastion-key-create>summary{cursor:pointer;color:var(--blue);font-size:.78rem;font-weight:550}
 .bastion-key-create>form{margin-top:16px}
 @media(max-width:540px){#page-bastion .bastion-key-choice{padding:12px;gap:8px;flex-wrap:wrap}.bastion-key-choice>.resource-tag{margin-left:28px}.bastion-key-label{flex-basis:calc(100% - 28px)}}
+
+#page-allocations .resource-overview{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media(max-width:540px){.cluster-stats,#page-allocations .resource-overview{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:22px}.cluster-stats article:nth-child(2),#page-allocations .resource-overview article:nth-child(2){border-right:0}#page-allocations .resource-overview article{padding-left:12px}}

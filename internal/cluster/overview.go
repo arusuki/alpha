@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
 )
@@ -88,15 +87,20 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		})
 	}
 	wg.Wait()
+	// Import names and Docker labels are ownership hints, not member identities.
+	// Resolve against the central directory for every role, without loading profiles.
+	list, err := platform.Rows(h.DB.SQL, "SELECT id,username FROM members")
+	if err != nil {
+		return 0, nil, err
+	}
+	registered := map[string]string{}
 	summary := map[string]*MemberSummary{}
-	// Only admins can see the central member directory, including unused users.
-	if user.Role == "admin" {
-		list, err := (&members.Store{Database: h.DB}).Members()
-		if err != nil {
-			return 0, nil, err
-		}
-		for _, m := range list {
-			summary[m.Username] = &MemberSummary{ID: m.ID, Username: m.Username, Registered: true, Nodes: []MemberNode{}}
+	for _, m := range list {
+		id, username := m["id"].(string), m["username"].(string)
+		registered[username] = id
+		// Only admins can see unused members and their management IDs.
+		if user.Role == "admin" {
+			summary[username] = &MemberSummary{ID: id, Username: username, Registered: true, Nodes: []MemberNode{}}
 		}
 	}
 	online, total := 0, 0
@@ -117,14 +121,18 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 			continue
 		}
 		perOwner := map[string][]Container{}
-		for _, c := range status.Inventory.Containers {
-			perOwner[c.Owner] = append(perOwner[c.Owner], c)
+		for i := range status.Inventory.Containers {
+			c := &status.Inventory.Containers[i]
+			if registered[c.Owner] == "" {
+				c.Owner = ""
+			}
+			perOwner[c.Owner] = append(perOwner[c.Owner], *c)
 			total++
 		}
 		for owner, containers := range perOwner {
 			s := summary[owner]
 			if s == nil {
-				s = &MemberSummary{Username: owner, Nodes: []MemberNode{}}
+				s = &MemberSummary{Username: owner, Registered: registered[owner] != "", Nodes: []MemberNode{}}
 				summary[owner] = s
 			}
 			s.Count += len(containers)
