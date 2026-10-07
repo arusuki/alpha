@@ -29,13 +29,13 @@ func TestServiceFailureRestartsAndRecoveryMarkerStopsRestart(t *testing.T) {
 			bin := t.TempDir()
 			exe := filepath.Join(bin, "project-alpha")
 			marker := filepath.Join(bin, "restarted")
-			// The intentionally unsupported version fails before making a network call.
+			// A missing prepared release fails without making a network call.
 			writeFile(t, exe, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'project-alpha dev'; else printf '%s\\n' \"$@\" > '"+marker+"'; fi\n"))
 			if pending {
 				os.WriteFile(filepath.Join(bin, ".alpha-update-pending"), []byte("recovery required"), 0600)
 			}
 			plan := filepath.Join(db.Directory, "update-service.json")
-			if err := WriteJSON(plan, ServicePlan{Directory: db.Directory, Executable: exe, Role: "registry", Repo: "arusuki/alpha", Arguments: []string{"serve", "--registry", "--data-dir", db.Directory}}); err != nil {
+			if err := WriteJSON(plan, ServicePlan{Format: 2, Directory: db.Directory, Executable: exe, Role: "registry", Repo: "arusuki/alpha", Arguments: []string{"serve", "--registry", "--data-dir", db.Directory}}); err != nil {
 				t.Fatal(err)
 			}
 			child := exec.Command(os.Args[0], "-test.run=^TestServiceUpdateProcess$")

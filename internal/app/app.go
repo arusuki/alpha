@@ -256,6 +256,7 @@ func Run(ctx context.Context, args []string) error {
 
 		handler = frontend
 	}
+	defer updateManager.Close()
 	ctx, cancelService := context.WithCancel(ctx)
 	defer cancelService()
 	updateDone := make(chan struct{})

@@ -29,6 +29,40 @@ func TestUpdaterHandoffReleasedLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.SQL.Close()
+	if os.Getenv("ALPHA_TEST_PREPARING") == "1" {
+		if lock, err := db.LockService(); err == nil {
+			lock.Close()
+			t.Fatal("service released its lock before download")
+		}
+		if err := os.WriteFile(filepath.Join(directory, "prepare-started"), nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		ready := false
+		for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+			if _, err := os.Stat(filepath.Join(directory, "prepare-release")); err == nil {
+				ready = true
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !ready {
+			t.Fatal("preparation was never released")
+		}
+		path := filepath.Join(directory, "update-service.json")
+		p, err := updater.ReadServicePlan(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stage, err := os.MkdirTemp(filepath.Dir(p.Executable), ".alpha-stage-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Prepared = &updater.PreparedUpdate{Stage: stage, Tag: "v0.3.3", Installed: "v0.3.2"}
+		if err := updater.WriteJSON(path, p); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
 	lock, err := db.LockService()
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +95,7 @@ func TestWebUpdateClosesServiceBeforeExec(t *testing.T) {
 	helper := filepath.Join(root, "alpha-updater")
 	// Test executable checks the real process's released lock after exec.
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 1; exit 0; fi\nexec " + quote(os.Args[0]) + " -test.run=^TestUpdaterHandoffReleasedLock$\n"
+	script := "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 2; exit 0; fi\nif [ \"$1\" = _prepare ]; then export ALPHA_TEST_PREPARING=1; fi\nexec " + quote(os.Args[0]) + " -test.run=^TestUpdaterHandoffReleasedLock$\n"
 	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +159,26 @@ func TestWebUpdateClosesServiceBeforeExec(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != 202 {
 		t.Fatalf("update: %s", body)
+	}
+	ready := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		if _, err := os.Stat(filepath.Join(directory, "prepare-started")); err == nil {
+			ready = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !ready {
+		t.Fatal("background preparation did not start")
+	}
+	response = request("GET", updates.Path+"/health", "", info.ID)
+	body, _ = io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || !strings.Contains(string(body), `"update_state":"downloading"`) {
+		t.Fatalf("service unavailable during download: %s", body)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "prepare-release"), nil, 0600); err != nil {
+		t.Fatal(err)
 	}
 	select {
 	case err := <-done:

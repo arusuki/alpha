@@ -96,6 +96,7 @@ func (h *Control) Close() {
 		handlers = append(handlers, handler)
 	}
 	h.agentMu.Unlock()
+	h.Updates.Close()
 	h.closeRegistryLinks()
 	for _, handler := range handlers {
 		handler.Manager.Close()

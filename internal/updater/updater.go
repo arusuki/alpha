@@ -24,6 +24,9 @@ import (
 type options struct {
 	role, directory, binDir, repo, proxy, tag string
 	check, prerelease, databaseOnly           bool
+	published                                 bool
+	prepare                                   func(*PreparedUpdate) error
+	prepared                                  *PreparedUpdate
 }
 type binary struct{ source, destination string }
 
@@ -40,8 +43,11 @@ func binaries(role string) []binary {
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 1 && args[0] == "--service-protocol" {
-		fmt.Fprintln(out, "1")
+		fmt.Fprintln(out, "2")
 		return nil
+	}
+	if len(args) == 2 && args[0] == "_prepare" {
+		return prepareService(ctx, args[1], out)
 	}
 	if len(args) == 2 && args[0] == "_service" {
 		return service(ctx, args[1], out)
@@ -129,6 +135,13 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	return runConfigured(ctx, o, out)
+}
+
+func runConfigured(ctx context.Context, o options, out io.Writer) error {
+	if o.prepared != nil {
+		return run(ctx, o, github{}, out)
+	}
 	token := os.Getenv("GH_TOKEN")
 	if token == "" {
 		token = os.Getenv("GITHUB_TOKEN")
@@ -163,12 +176,12 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	var schema int
 	if o.role != "share-node" {
 		var err error
-		db, err = platform.OpenExistingDatabase(o.directory, o.check)
+		db, err = platform.OpenExistingDatabase(o.directory, o.check || o.prepare != nil)
 		if err != nil {
 			return fmt.Errorf("open existing database: %w", err)
 		}
 		defer db.SQL.Close()
-		if !o.check {
+		if !o.check && o.prepare == nil {
 			lock, err = db.LockService()
 			if err != nil {
 				return fmt.Errorf("stop the service before updating: %w", err)
@@ -228,11 +241,24 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		return err
 	}
 	var r release
-	if o.tag != "" {
+	if o.prepared != nil {
+		if err := o.prepared.validate(o.binDir); err != nil {
+			return err
+		}
+		defer os.RemoveAll(o.prepared.Stage)
+		if installed != o.prepared.Installed || schema != o.prepared.Schema {
+			return fmt.Errorf("installed version or database changed after preparation; prepare the update again")
+		}
+		r.Tag = o.prepared.Tag
+	} else if o.tag != "" {
 		if _, err = supportedVersion(o.tag); err != nil {
 			return err
 		}
-		r, err = g.byTag(ctx, o.tag, o.prerelease)
+		if o.published && g.token == "" {
+			r = g.publicRelease(o.tag, runtime.GOARCH)
+		} else {
+			r, err = g.byTag(ctx, o.tag, o.prerelease)
+		}
 	} else {
 		r, err = g.latest(ctx, o.prerelease)
 	}
@@ -257,17 +283,30 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	if o.check {
 		return nil
 	}
-	stage, err := os.MkdirTemp(o.binDir, ".alpha-stage-")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(stage)
-	names := make([]string, len(files))
-	for i, f := range files {
-		names[i] = f.source
-	}
-	if err = g.download(ctx, r, stage, runtime.GOARCH, names); err != nil {
-		return err
+	stage := ""
+	keepStage := false
+	if o.prepared != nil {
+		stage = o.prepared.Stage
+		if err := o.prepared.verify(binaries(o.role)); err != nil {
+			return err
+		}
+	} else {
+		stage, err = os.MkdirTemp(o.binDir, ".alpha-stage-")
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if !keepStage {
+				os.RemoveAll(stage)
+			}
+		}()
+		names := make([]string, len(files))
+		for i, f := range files {
+			names[i] = f.source
+		}
+		if err = g.download(ctx, r, stage, runtime.GOARCH, names); err != nil {
+			return err
+		}
 	}
 	for _, name := range []string{"project-alpha", "alpha-updater"} {
 		v, e := executableVersion(ctx, filepath.Join(stage, name), name)
@@ -282,6 +321,22 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		if b, e := exec.CommandContext(ctx, filepath.Join(stage, "rootless-docker"), "--help").CombinedOutput(); e != nil {
 			return fmt.Errorf("rootless-docker cannot run: %w: %s", e, b)
 		}
+	}
+	if o.prepare != nil {
+		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}}
+		for _, f := range files {
+			hash, err := fileHash(filepath.Join(stage, f.source))
+			if err != nil {
+				return err
+			}
+			p.Hashes[f.source] = hash
+		}
+		if err := o.prepare(p); err != nil {
+			return err
+		}
+		keepStage = true
+		fmt.Fprintf(out, "已下载并校验 %s，准备停服安装。\n", r.Tag)
+		return nil
 	}
 	backup := ""
 	if db != nil {

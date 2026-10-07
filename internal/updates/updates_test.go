@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"project-alpha/internal/buildinfo"
+	"project-alpha/internal/updater"
 )
 
 func manager(t *testing.T, role string) *Manager {
@@ -21,6 +22,7 @@ func manager(t *testing.T, role string) *Manager {
 	if e != nil {
 		t.Fatal(e)
 	}
+	t.Cleanup(m.Close)
 	return m
 }
 func configure(t *testing.T, m *Manager, edit func(*Config)) {
@@ -146,7 +148,7 @@ func TestUpdateHandoffAndDuplicatePrevention(t *testing.T) {
 	m := manager(t, "worker")
 	m.executable = filepath.Join(m.directory, "project-alpha")
 	command := filepath.Join(m.directory, "alpha-updater")
-	if e := os.WriteFile(command, []byte("#!/bin/sh\n[ \"$1\" = --service-protocol ] && echo 1\n"), 0700); e != nil {
+	if e := os.WriteFile(command, []byte(prepareHelperScript()), 0700); e != nil {
 		t.Fatal(e)
 	}
 	configure(t, m, func(c *Config) { c.Command = command; c.Proxy = "http://127.0.0.1:7890"; c.Automatic = true })
@@ -156,12 +158,24 @@ func TestUpdateHandoffAndDuplicatePrevention(t *testing.T) {
 	if e := m.Automatic(); e != nil {
 		t.Fatal(e)
 	}
+	waitFile(t, filepath.Join(m.directory, "prepare-started"))
+	if m.Health()["update_state"] != "downloading" || m.Handoff() != nil {
+		t.Fatal("service handed off before preparation")
+	}
 	select {
 	case <-m.Requested:
+		t.Fatal("stopped during download")
 	default:
+	}
+	if err := os.WriteFile(filepath.Join(m.directory, "prepare-release"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-m.Requested:
+	case <-time.After(5 * time.Second):
 		t.Fatal("missing shutdown request")
 	}
-	if m.Handoff() == nil || m.plan.Proxy != "http://127.0.0.1:7890" || m.plan.Tag != "v0.3.3" {
+	if m.Handoff() == nil || m.plan.Proxy != "http://127.0.0.1:7890" || m.plan.Tag != "v0.3.3" || !m.plan.Published {
 		t.Fatal("lost update parameters")
 	}
 	if e := m.Trigger(""); e == nil {
@@ -185,5 +199,139 @@ func TestInvalidFormatPreservesFile(t *testing.T) {
 	got, _ := os.ReadFile(m.filename())
 	if string(got) != string(raw) {
 		t.Fatal("overwrote invalid settings")
+	}
+}
+
+func prepareHelperScript() string {
+	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
+	return "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 2; exit 0; fi\nALPHA_TEST_PREPARE_PLAN=\"$2\" exec " + quote(os.Args[0]) + " -test.run=^TestUpdatePrepareProcess$\n"
+}
+func waitFile(t *testing.T, path string) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", path)
+}
+func TestUpdatePrepareProcess(t *testing.T) {
+	path := os.Getenv("ALPHA_TEST_PREPARE_PLAN")
+	if path == "" {
+		return
+	}
+	p, err := updater.ReadServicePlan(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p.Directory, "prepare-started"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	waitFile(t, filepath.Join(p.Directory, "prepare-release"))
+	if _, err := os.Stat(filepath.Join(p.Directory, "prepare-fail")); err == nil {
+		os.Exit(1)
+	}
+	if _, err := os.Stat(filepath.Join(p.Directory, "prepare-noop")); err == nil {
+		return
+	}
+	stage, err := os.MkdirTemp(filepath.Dir(p.Executable), ".alpha-stage-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Prepared = &updater.PreparedUpdate{Stage: stage, Tag: p.Tag, Installed: "v0.3.2"}
+	if p.Prepared.Tag == "" {
+		p.Prepared.Tag = "v0.3.3"
+	}
+	if err := updater.WriteJSON(path, p); err != nil {
+		t.Fatal(err)
+	}
+}
+func TestPreparationFailureAndNoopKeepServiceRunning(t *testing.T) {
+	old := buildinfo.Version
+	buildinfo.Version = "v0.3.2"
+	defer func() { buildinfo.Version = old }()
+	for _, outcome := range []string{"fail", "noop"} {
+		t.Run(outcome, func(t *testing.T) {
+			m := manager(t, "worker")
+			m.executable = filepath.Join(m.directory, "project-alpha")
+			command := filepath.Join(m.directory, "alpha-updater")
+			if err := os.WriteFile(command, []byte(prepareHelperScript()), 0700); err != nil {
+				t.Fatal(err)
+			}
+			configure(t, m, func(c *Config) { c.Command = command; c.Automatic = true })
+			for _, name := range []string{"prepare-" + outcome, "prepare-release"} {
+				if err := os.WriteFile(filepath.Join(m.directory, name), nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := m.Receive(release("new", "v0.3.3")); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Automatic(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case <-m.prepareDone:
+			case <-time.After(5 * time.Second):
+				t.Fatal("preparation did not finish")
+			}
+			select {
+			case <-m.Requested:
+				t.Fatal("service stopped")
+			default:
+			}
+			want := "completed"
+			if outcome == "fail" {
+				want = "failed"
+			}
+			if m.Handoff() != nil || m.Health()["update_state"] != want {
+				t.Fatal(m.Health())
+			}
+			if err := m.Automatic(); err != nil || m.plan != nil {
+				t.Fatal("repeated automatic attempt", err)
+			}
+			restarted, err := New(m.directory, "worker", m.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restarted.Close()
+			if restarted.Health()["update_state"] != want {
+				t.Fatal("result not persisted")
+			}
+			if err := m.Trigger(""); err != nil {
+				t.Fatal("manual retry rejected", err)
+			}
+			<-m.prepareDone
+		})
+	}
+}
+
+func TestPreparationCanceledOnClose(t *testing.T) {
+	old := buildinfo.Version
+	buildinfo.Version = "v0.3.2"
+	defer func() { buildinfo.Version = old }()
+	m := manager(t, "worker")
+	m.executable = filepath.Join(m.directory, "project-alpha")
+	command := filepath.Join(m.directory, "alpha-updater")
+	if err := os.WriteFile(command, []byte(prepareHelperScript()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	configure(t, m, func(c *Config) { c.Command = command })
+	if err := m.Trigger(""); err != nil {
+		t.Fatal(err)
+	}
+	waitFile(t, filepath.Join(m.directory, "prepare-started"))
+	m.Close()
+	select {
+	case <-m.Requested:
+		t.Fatal("canceled preparation requested shutdown")
+	default:
+	}
+	if m.Handoff() != nil || m.Health()["update_state"] != "failed" {
+		t.Fatal(m.Health())
+	}
+	if err := m.Trigger(""); err == nil {
+		t.Fatal("closed manager accepted update")
 	}
 }

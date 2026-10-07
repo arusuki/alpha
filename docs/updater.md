@@ -45,7 +45,7 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 
 ## Release 选择与校验
 
-默认查询 `arusuki/alpha` 的最新正式 GitHub release。`--prerelease` 同时查询预发布，选择发布时间最新的非草稿 release；`--repo owner/repo` 可指定测试仓库。GitHub API 的行为见 [官方 release 文档](https://docs.github.com/en/rest/releases/releases)。私有仓库或需要更高 API 配额时设置 `GH_TOKEN` 或 `GITHUB_TOKEN`；令牌只发送给 GitHub API，不传给下载重定向的其他主机。
+默认查询 `arusuki/alpha` 的最新正式 GitHub release。`--prerelease` 同时查询预发布，选择发布时间最新的非草稿 release；`--repo owner/repo` 可指定测试仓库。 Webhook 自动更新已从认证通知获得目标 tag 和频道，未配置 GitHub token 时直接下载 `https://github.com/<owner>/<repo>/releases/download/<tag>/project-alpha_<tag>_linux_<arch>.tar.gz` 和同目录的 `SHA256SUMS`，不查询 GitHub API。手动“更新到最新版本”和 CLI 查询仍需通过 API 确定 release；公开附件使用 `browser_download_url`。配置 token 时保留通过 release/asset API 访问私有仓库的能力。GitHub API 的行为见 [官方 release 文档](https://docs.github.com/en/rest/releases/releases)。私有仓库或需要更高 API 配额时设置 `GH_TOKEN` 或 `GITHUB_TOKEN`；令牌只发送给 GitHub API，不传给下载重定向的其他主机。
 
 更新器拒绝降级、v0.3.1 之前的版本、1.0 及以上版本和无正式版本标记的本机程序。相同版本不重复更新。源码构建的更新器自身可以是 `dev`，被更新的主程序必须带 release 版本。目标包必须包含与 tag 同版本的 `project-alpha` 和 `alpha-updater`，以及根 release 附件 `SHA256SUMS`。缺少附件或角色所需程序、架构不匹配、校验失败时退出，不安装文件。
 
@@ -110,7 +110,11 @@ registry 按原始请求体校验 `X-Hub-Signature-256` 的 HMAC-SHA256 签名�
 
 worker 可在接受通知后按配置自动更新；control 等该通知完成 worker 投递后才自动更新，registry 等通知队列确认完毕才自动更新。所有目标使用同一个发布仓库；各自的自动更新和预发布开关独立设置。自动更新失败不会反复重启同一版本，请查看错误并手动重试。GitHub 不会自动重投失败的 webhook 请求；若 registry 当时不可达或队列已满，请在 GitHub Recent deliveries 中重投。
 
-Web 更新通过本地服务交接实现：先校验 updater 支持服务协议 v1，接受请求后停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为 updater。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停服务，不自行管理服务。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
+Web 更新通过本地服务交接实现，要求主程序和 updater 同时更新到支持本地后台下载协议 v2 的版本；协议不匹配时明确报错，服务继续运行。接受请求后以原服务账号启动 updater 的后台准备进程，页面显示“正在后台下载并校验”，HTTP 和业务工作继续运行。准备阶段只读数据库身份和版本，不获取服务锁、不备份或迁移数据库、不替换运行中的程序；下载、SHA-256 校验、解压、版本及可执行性检查完成后保存本地安装计划。下载失败或已经是最新版本时不重启；失败结果可在页面查看并手动重试，同一 tag 不自动反复尝试。服务正常退出时取消并等待准备进程结束。
+
+只有准备成功才停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为 updater。安装阶段完全离线，重新获取安装锁和服务锁，校验本机版本、数据库版本和暂存程序哈希，然后备份数据库、替换程序并原地升级；备份包含下载期间提交的新数据。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停服务，不自行管理服务。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
+
+GitHub 的 403 不一定是限流。错误现在保留 GitHub 返回的 message、可用的 `X-RateLimit-*` / `Retry-After` 信息和是否携带认证的状态，不输出 token。只有响应提供限流证据时才标为限流，不会立即循环重试。未认证 REST API 请求按出口 IP 共享每小时 60 次额度，多台节点共用代理或 NAT 时会共用额度；如果仍需 API 查询，可在实际运行服务的环境中配置 `GH_TOKEN` 或 `GITHUB_TOKEN`，仅在交互 shell 中设置不会修改已运行的服务环境。详见 [GitHub 限流说明](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。公开仓库的 webhook 自动更新下载路径不使用这项 REST API 额度。
 
 设置及通知保存在数据目录的 `update-settings.json`，交接参数为 `update-service.json`，最近结果为 `update-result.json`，完整输出追加到 `update.log`，均由原服务账号持有，新建文件权限为 0600。设置格式错误会明确报错并保留原文件。本功能没有新增数据库表，已有数据库继续使用 updater 的原地升级流程。
 

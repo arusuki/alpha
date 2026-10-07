@@ -6,7 +6,7 @@ const target=()=>$('updateTarget').value;
 const endpoint=action=>`/api/updates/${target()}/${action}`;
 function fields(disabled){$('updateFields').disabled=disabled;$('updateNow').disabled=disabled;$('updateTarget').disabled=busy;$('updateReload').disabled=busy;}
 function renderHealth(h){
- const states={idle:'等待更新',restarting:'正在停止服务并启动更新器',completed:'上次更新完成',failed:'上次更新失败'};
+ const states={idle:'等待更新',downloading:'正在后台下载并校验，服务正常运行',restarting:'正在停止服务并启动更新器',completed:'上次更新完成',failed:'上次更新失败'};
  $('updateHealth').textContent=`${h.mode} · ${h.version} · ${h.healthy?'在线':'不可用'} · ${states[h.update_state]||h.update_state}`;
  $('updateRelease').textContent=h.release?`最近通知：${h.release.tag} · ${h.release.repo} · ${new Date(h.release.published_at).toLocaleString()}`:'尚未收到 release 通知';
  $('updateError').textContent=h.delivery_error||h.error||h.result?.error||'';
@@ -48,7 +48,7 @@ $('updateSettingsForm').addEventListener('submit',async e=>{
 $('updateNow').addEventListener('click',async()=>{
  if(!admin()||busy||revision===null)return;
  const seq=epoch;busy=true;fields(true);$('updateError').textContent='';
- try{await api(endpoint('update'),{method:'POST',body:'{}'});if(seq!==epoch)return;$('updateStatus').textContent='更新已接受。服务会暂时断开，完成后按原参数重启。请稍后刷新状态。';}
+ try{await api(endpoint('update'),{method:'POST',body:'{}'});if(seq!==epoch)return;$('updateStatus').textContent='更新已接受，正在后台下载和校验。准备成功后服务会短暂断开并重启；下载失败不影响服务。请刷新查看状态。';}
  catch(e){if(seq===epoch)$('updateError').textContent=e.message;}
  finally{if(seq===epoch){busy=false;fields(false);}}
 });

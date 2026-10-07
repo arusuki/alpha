@@ -3,9 +3,11 @@
 package updates
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"os/exec"
@@ -13,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"project-alpha/internal/buildinfo"
@@ -59,6 +62,9 @@ type Manager struct {
 	state                           state
 	Requested                       chan struct{}
 	plan                            *updater.ServicePlan
+	ready, closed                   bool
+	prepareCancel                   context.CancelFunc
+	prepareDone                     chan struct{}
 }
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -155,12 +161,17 @@ func (m *Manager) Save(revision int, c Config) error {
 func (m *Manager) health() map[string]any {
 	status := "idle"
 	if m.plan != nil {
-		status = "restarting"
+		status = "downloading"
+		if m.ready {
+			status = "restarting"
+		}
 	}
 	var result updater.ServiceResult
-	if raw, err := os.ReadFile(filepath.Join(m.directory, "update-result.json")); err == nil {
-		if json.Unmarshal(raw, &result) == nil && m.plan == nil {
-			status = result.State
+	if m.plan == nil {
+		if raw, err := os.ReadFile(filepath.Join(m.directory, "update-result.json")); err == nil {
+			if json.Unmarshal(raw, &result) == nil {
+				status = result.State
+			}
 		}
 	}
 	return map[string]any{"management_protocol": Protocol, "id": m.id, "mode": m.role, "version": buildinfo.Version, "healthy": true, "update_state": status, "release": m.state.Release, "error": m.state.Error, "result": result, "pending_deliveries": len(m.state.Outbox), "delivery_error": m.state.DeliveryError}
@@ -259,6 +270,9 @@ func (m *Manager) Receive(r Release) error {
 }
 func (m *Manager) Trigger(tag string) error { m.mu.Lock(); defer m.mu.Unlock(); return m.trigger(tag) }
 func (m *Manager) trigger(tag string) error {
+	if m.closed {
+		return httpapi.NewError(503, "服务正在关闭")
+	}
 	if m.plan != nil {
 		return httpapi.NewError(409, "更新已经排队")
 	}
@@ -281,13 +295,16 @@ func (m *Manager) trigger(tag string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	output, e := exec.CommandContext(ctx, c.Command, "--service-protocol").Output()
-	if e != nil || strings.TrimSpace(string(output)) != "1" {
-		return httpapi.NewError(409, "更新器不支持服务更新协议 v1，请先安装新版 alpha-updater")
+	if e != nil || strings.TrimSpace(string(output)) != "2" {
+		return httpapi.NewError(409, "更新器不支持后台下载协议 v2，请先安装新版 alpha-updater")
 	}
 	if _, e = os.Stat(filepath.Join(filepath.Dir(m.executable), ".alpha-update-pending")); !os.IsNotExist(e) {
 		return httpapi.NewError(409, "上次更新需要人工恢复，请检查 .alpha-update-pending")
 	}
-	p := updater.ServicePlan{Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
+	p := updater.ServicePlan{Format: 2, Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
+	if r := m.state.Release; r != nil && r.Tag == tag && r.Repo == c.Repo && (!r.Prerelease || c.Prerelease) {
+		p.Published = true
+	}
 	if err := updater.WriteJSON(filepath.Join(m.directory, "update-service.json"), p); err != nil {
 		return err
 	}
@@ -297,7 +314,10 @@ func (m *Manager) trigger(tag string) error {
 		return err
 	}
 	m.plan = &p
-	m.Requested <- struct{}{}
+	prepareCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	m.prepareCancel = cancel
+	m.prepareDone = make(chan struct{})
+	go m.prepare(prepareCtx, cancel, m.prepareDone, p)
 	return nil
 }
 func (m *Manager) Automatic() error {
@@ -330,7 +350,7 @@ func (m *Manager) Automatic() error {
 func (m *Manager) Handoff() *updater.Handoff {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.plan == nil {
+	if m.plan == nil || !m.ready {
 		return nil
 	}
 	return &updater.Handoff{Command: m.plan.Command, PlanPath: filepath.Join(m.directory, "update-service.json")}
@@ -345,4 +365,69 @@ func (m *Manager) DeliveryFailed(message string) error {
 	s := m.state
 	s.DeliveryError = message
 	return m.commit(s)
+}
+
+// Close cancels and joins background preparation before the service releases its
+// resources. A completed handoff keeps the staged files for the offline updater.
+func (m *Manager) Close() {
+	m.mu.Lock()
+	m.closed = true
+	if m.prepareCancel != nil {
+		m.prepareCancel()
+	}
+	done := m.prepareDone
+	m.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done chan struct{}, p updater.ServicePlan) {
+	defer close(done)
+	defer cancel()
+	path := filepath.Join(m.directory, "update-service.json")
+	cmd := exec.CommandContext(ctx, p.Command, "_prepare", path)
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = 5 * time.Second
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		err = fmt.Errorf("准备更新失败: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	var prepared *updater.ServicePlan
+	if err == nil {
+		prepared, err = updater.ReadServicePlan(path)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if ctx.Err() != nil || m.closed {
+		if prepared != nil && prepared.Prepared != nil {
+			os.RemoveAll(prepared.Prepared.Stage)
+		}
+		if err == nil {
+			err = fmt.Errorf("更新准备已取消")
+		}
+	}
+	if err == nil && prepared.Prepared != nil {
+		m.plan = prepared
+		m.ready = true
+		m.Requested <- struct{}{}
+		return
+	}
+	m.plan = nil
+	result := updater.ServiceResult{State: "completed", Finished: time.Now().UTC()}
+	s := m.state
+	if err != nil {
+		result.State = "failed"
+		result.Error = err.Error()
+		s.Error = err.Error()
+	}
+	if e := updater.WriteJSON(filepath.Join(m.directory, "update-result.json"), result); e != nil {
+		s.Error = fmt.Sprintf("%s; 保存更新结果失败: %v", s.Error, e)
+		log.Print(s.Error)
+	}
+	if e := m.commit(s); e != nil {
+		m.state.Error = s.Error
+		log.Printf("保存更新状态失败: %v", e)
+	}
 }

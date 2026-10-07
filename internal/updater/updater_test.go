@@ -117,7 +117,7 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/arusuki/alpha/releases/latest":
-			json.NewEncoder(w).Encode(release{Tag: "v0.3.2", Assets: []asset{{packageName + ".tar.gz", server.URL + "/assets/archive"}, {"SHA256SUMS", server.URL + "/assets/sums"}}})
+			json.NewEncoder(w).Encode(release{Tag: "v0.3.2", Assets: []asset{{Name: packageName + ".tar.gz", URL: server.URL + "/assets/archive"}, {Name: "SHA256SUMS", URL: server.URL + "/assets/sums"}}})
 		case "/assets/archive":
 			w.Write(archive)
 		case "/assets/sums":
