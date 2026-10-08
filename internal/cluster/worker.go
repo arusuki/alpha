@@ -12,6 +12,7 @@ import (
 
 	"project-alpha/internal/buildinfo"
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/updates"
 )
@@ -44,6 +45,7 @@ type Info struct {
 	RegistrationPath   string `json:"registration_path,omitempty"`
 }
 type Worker struct {
+	Mihomo    *mihomo.Manager
 	Updates   *updates.Manager
 	ID, Token string
 	Module    platform.Module
@@ -110,6 +112,23 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != "GET" && user.Role != "admin" {
 		writeError(w, httpapi.NewError(403, "此操作需要管理员权限"))
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, mihomo.Path+"/") {
+		if user.Role != "admin" {
+			writeError(w, httpapi.NewError(403, "代理管理需要管理员权限"))
+			return
+		}
+		if h.Mihomo == nil {
+			writeError(w, httpapi.NewError(503, "代理管理未就绪"))
+			return
+		}
+		status, value, err := h.Mihomo.Dispatch(w, r)
+		if err != nil {
+			writeError(w, err)
+		} else {
+			httpapi.WriteJSON(w, status, value)
+		}
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, updates.Path+"/") && h.Updates != nil {

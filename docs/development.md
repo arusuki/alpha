@@ -67,6 +67,7 @@ Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_c
 - `internal/members`：独立的机器使用者、注册 schema、邀请码页面管理和公开注册 API。
 - `internal/containers`：命令行扫描导入、创建配置、启停与删除，以及管理记录和审计。
 - `internal/gpu`：NVIDIA GPU 采集、容器用户归属、72 小时滚动历史与时间聚合。
+- `internal/mihomo`：订阅解析、过滤与模板生成、继承配置及持久下发、三个角色共用的核心进程托管和策略组选择；见 [代理管理](mihomo.md)。
 - `internal/process`：订阅 Tetragon 进程事件，常驻维护并按容器导出活动进程森林。
 - `internal/httpapi`、`internal/fsutil`：共用的 HTTP/JSON 处理与路径规范化。
 - `dist`：网页资源及 Go 嵌入声明；`tests`：前端回归和共享测试数据。Go 测试与所属包放在一起。

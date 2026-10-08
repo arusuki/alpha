@@ -105,6 +105,7 @@ cd project-alpha_v0.5.4_linux_amd64
 | 想了解什么 | 从这里开始 |
 | --- | --- |
 | 节点接入、运行角色与权限 | [集群管理](cluster.md) |
+| 代理订阅、过滤模板、节点服务与出口选择 | [Mihomo 代理管理](mihomo.md) |
 | 创建、导入和管理容器 | [容器管理](containers.md) |
 | 邀请码、登记表与使用者注册 | [使用者登记](members.md) |
 | share node 初始化、总控 SSH 身份与排错 | [share node 配置指南](share-node.md) |

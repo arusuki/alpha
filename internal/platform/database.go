@@ -18,7 +18,7 @@ import (
 )
 
 // DatabaseVersion identifies the combined schema and persisted event formats.
-const DatabaseVersion = 37
+const DatabaseVersion = 38
 
 //go:embed schema.sql
 var schema string
@@ -69,6 +69,9 @@ func OpenDatabase(directory string, initialize func(*sql.Tx) error) (*Database, 
 	switch version {
 	case 0:
 		if _, err = tx.Exec(schema); err != nil {
+			return fail(err)
+		}
+		if err = installMihomo(tx); err != nil {
 			return fail(err)
 		}
 		if initialize != nil {

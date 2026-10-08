@@ -370,6 +370,26 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 
 #updateFields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:20px}
 #updateFields .form-grid{margin-bottom:0}
+#page-mihomo>section{min-width:0}
+#page-mihomo fieldset{border:0;padding:0;margin:0;min-width:0}
+#page-mihomo fieldset:disabled{opacity:.65}
+#page-mihomo .section-heading{flex-wrap:wrap}
+#page-mihomo label{margin-bottom:14px;min-width:0}
+#page-mihomo input,#page-mihomo select,#page-mihomo textarea{max-width:100%;box-sizing:border-box}
+#page-mihomo textarea{width:100%;resize:vertical;font-size:.8rem;line-height:1.6;white-space:pre;overflow:auto}
+#page-mihomo pre{max-width:100%;overflow:auto;font-size:.78rem;padding:16px;background:#f3f2ec;border-radius:8px}
+#page-mihomo details p{font-size:.8rem;line-height:1.8;margin:12px 0;overflow-wrap:anywhere}
+.mihomo-nodes{min-width:660px;margin-top:18px}
+.mihomo-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+.mihomo-edit-list{display:grid;gap:14px;margin-bottom:26px}
+.mihomo-edit-row{padding:18px;border:1px solid var(--line);border-radius:10px;background:#faf9f3;min-width:0}
+.mihomo-edit-row .form-grid{margin-bottom:0}
+.mihomo-groups{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.mihomo-group{padding:16px;border:1px solid var(--line);border-radius:10px;min-width:0}
+.mihomo-group .pill{margin-left:8px}
+.mihomo-group p{font-size:.8rem;margin:12px 0;overflow-wrap:anywhere}
+#mihomoNodeError,#mihomoError{overflow-wrap:anywhere}
+@media(max-width:700px){.mihomo-groups{grid-template-columns:1fr}#page-mihomo .form-grid{grid-template-columns:1fr;gap:0}}
 #updateWebhook{display:grid;gap:16px;border-top:1px solid var(--line);padding-top:20px}
 #updateWebhook[hidden]{display:none}
 #updateHealth{margin-top:14px}

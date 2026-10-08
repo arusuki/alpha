@@ -15,6 +15,7 @@ Open a node from the control panel to explore disk usage, manage containers, and
 ## Features
 
 - **Manage multiple hosts** — Check node connectivity and open each host's workspace from one place.
+- **Manage Mihomo proxies** — Configure subscriptions, named filters and templates centrally, with inherited or per-node settings, service controls and proxy group selection for control, registry and workers.
 - **Understand disk usage** — Explore storage by directory, container, or user, distinguish exclusive and shared space, and keep scan results for later comparison.
 - **Prepare workspaces** — Create, start, stop, and manage containers, or import existing ones.
 - **Manage users** — Collect registration details through invitations and provision containers, Tailscale shares, and `alpha-jump` public keys. Users can view their own resources and request containers on new nodes.
@@ -109,6 +110,7 @@ The detailed guides are currently available in Chinese.
 | Topic | Guide |
 | --- | --- |
 | Node connections, service roles, and permissions | [Cluster management](docs/cluster.md) |
+| Subscriptions, templates, proxy services and per-node selections | [Mihomo proxy management](docs/mihomo.md) |
 | GPU processes, utilization, and rolling 72-hour usage | [GPU management](docs/gpu.md) |
 | Creating, importing, and managing containers | [Container management](docs/containers.md) |
 | Invitations, registration forms, and user registration | [User registration](docs/members.md) |

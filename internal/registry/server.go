@@ -22,6 +22,7 @@ import (
 	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
+	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/updates"
 )
@@ -44,6 +45,7 @@ type attempt struct {
 	Since time.Time
 }
 type Server struct {
+	Mihomo   *mihomo.Manager
 	DB       *platform.Database
 	Hub      *Hub
 	Pass     string
@@ -135,6 +137,28 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host, err := url.Parse("//" + r.Host)
 	if err != nil || host.User != nil || host.Path != "" || !s.hosts[strings.ToLower(host.Hostname())] {
 		panic(http.ErrAbortHandler)
+	}
+	if strings.HasPrefix(r.URL.Path, mihomo.Path+"/") && r.URL.RawQuery == "" && r.URL.RawPath == "" {
+		var bound string
+		err := s.DB.SQL.QueryRow("SELECT control_id FROM registry_control WHERE id=1").Scan(&bound)
+		id, _ := s.DB.CheckMode("registry")
+		var user platform.User
+		if err != nil || bound == "" || r.Header.Get("X-Alpha-Control") != bound || r.Header.Get("X-Alpha-Node") != id || s.Hub.Token == "" || !hmac.Equal([]byte(r.Header.Get("Authorization")), []byte("Bearer "+s.Hub.Token)) || json.Unmarshal([]byte(r.Header.Get("X-Alpha-User")), &user) != nil || user.Role != "admin" {
+			writeError(w, httpapi.NewError(401, "代理管理仅允许已绑定的 control 管理员"))
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		if s.Mihomo == nil {
+			writeError(w, httpapi.NewError(503, "代理管理未就绪"))
+			return
+		}
+		status, value, err := s.Mihomo.Dispatch(w, r)
+		if err != nil {
+			writeError(w, err)
+		} else {
+			httpapi.WriteJSON(w, status, value)
+		}
+		return
 	}
 	if s.Hub.Updates != nil && r.URL.RawQuery == "" && r.URL.RawPath == "" {
 		if r.URL.Path == updates.WebhookPath {

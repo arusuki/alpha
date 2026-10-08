@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/auth.css">
   <script src="/clipboard.js" defer></script>
   <script src="/auth.js" defer></script>
-  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/updates.js" defer></script><script src="/agent.js" defer></script>
+  <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/updates.js" defer></script><script src="/mihomo.js" defer></script><script src="/agent.js" defer></script>
   <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/members.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script><script src="/scan-schedule.js" defer></script>
   <link rel="stylesheet" href="/cluster.css">
   <link rel="stylesheet" href="/gpu.css"><script src="/gpu.js" defer></script>
@@ -72,6 +72,7 @@
       <button data-page="gpus"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor"/><circle cx="9" cy="12" r="3" fill="none" stroke="currentColor"/><path d="M15 10h3m-3 4h3M6 18v3m4-3v3" fill="none" stroke="currentColor"/></svg>GPU 管理</button>
       <button data-page="processes"><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>进程管理</button>
       <button data-page="agent-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-agent"/></svg>Agent 设置</button>
+      <button data-page="mihomo" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>代理管理</button>
       <button data-page="update-settings" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>更新设置</button>
       <button class="account-nav" data-page="settings"><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>设置</button>
     </nav>
@@ -253,6 +254,49 @@
     <form id="memberInvitationForm" class="member-invitation-form" method="post" action="/admin/member-invitations/create"><label>备注<input id="memberInvitationLabel" name="label" maxlength="100" placeholder="例如：A 组秋季入组"></label><label>可注册人数（quota）<input id="memberInvitationQuota" name="quota" type="number" min="1" max="100000" step="1" value="1" required></label><button id="memberCreateInvitation" type="submit" class="primary">生成邀请码</button></form>
     <div id="memberInvitationsPanel"></div>
   </section>
+</section>
+<section id="page-mihomo" class="platform-page settings-stack" hidden>
+ <section class="management-panel">
+  <div class="section-heading"><div><h2>集群代理服务</h2><p>总控、registry 与 worker 的订阅、配置和节点选择，统一在这里管理。</p></div><button id="mihomoRefreshAll">刷新全部订阅</button></div>
+  <p id="mihomoSummary" role="status">正在读取节点状态…</p>
+  <div class="table-scroll"><table class="mihomo-nodes"><thead><tr><th>节点</th><th>配置来源</th><th>代理服务</th><th>配置下发</th><th>操作</th></tr></thead><tbody id="mihomoNodes"></tbody></table></div>
+ </section>
+ <section class="management-panel">
+  <div class="section-heading"><h2>节点服务与策略选择</h2><button id="mihomoReload">重新载入配置</button></div>
+  <label>管理节点<select id="mihomoTarget"><option value="control">control · 本机总控</option></select></label>
+  <p id="mihomoServiceStatus" role="status"></p><p id="mihomoNodeError" class="error-text" role="alert"></p>
+  <div class="mihomo-actions"><button data-mihomo-service="start" disabled>启动代理</button><button data-mihomo-service="stop" disabled>停止代理</button><button data-mihomo-service="restart" disabled>重启代理</button><button id="mihomoRefresh" disabled>刷新此节点订阅</button></div>
+  <p class="form-note">启停状态和策略选择按节点保存，重启平台服务后恢复。服务操作使用已应用的配置。</p>
+  <div id="mihomoGroups" class="mihomo-groups"></div>
+ </section>
+ <section class="management-panel">
+  <div class="section-heading"><div><h2 id="mihomoConfigTitle">总控默认配置</h2><p id="mihomoConfigHint">各节点默认继承这里的配置。</p></div></div>
+  <form id="mihomoForm" class="settings-form" autocomplete="off">
+   <fieldset id="mihomoEditor" disabled>
+    <label id="mihomoInheritLabel" class="checkbox-label" hidden><input id="mihomoInherit" type="checkbox">继承总控配置（取消勾选后可单独设置）</label>
+    <fieldset id="mihomoConfigFields">
+     <div class="form-grid three"><label>mihomo 核心路径<input id="mihomoBinary" required placeholder="mihomo 或绝对路径"><small>每台目标机器使用自己的核心可执行文件。</small></label><label>代理端口<input id="mihomoPort" type="number" min="1024" max="65535" required></label><label>订阅刷新间隔（分钟）<input id="mihomoInterval" type="number" min="0" max="10080" required><small>至少 5 分钟；0 为仅手动刷新。</small></label></div>
+     <div class="section-heading"><div><h3>订阅来源</h3><p>支持 Clash/Mihomo YAML 和常见 URI/base64 订阅。多个订阅合并后供模板使用。</p></div><button id="mihomoAddSubscription" type="button">添加订阅</button></div>
+     <div id="mihomoSubscriptions" class="mihomo-edit-list"></div>
+     <div class="section-heading"><div><h3>命名过滤规则</h3><p>包含与排除使用正则表达式；协议类型和订阅来源同时参与筛选。留空表示不限。</p></div><button id="mihomoAddFilter" type="button">添加规则</button></div>
+     <div id="mihomoFilters" class="mihomo-edit-list"></div>
+     <label>全局过滤规则<input id="mihomoGlobalFilter" placeholder="all（保留全部），或填写规则名称"><small>先筛选全部节点；模板中的 names 可继续按规则筛选。</small></label>
+     <div class="section-heading"><h3>配置模板</h3><button id="mihomoDefaultTemplate" type="button">恢复默认模板</button></div>
+     <label>YAML 模板<textarea id="mihomoTemplate" class="mono" rows="18" spellcheck="false" required aria-describedby="mihomoTemplateHelp"></textarea></label>
+     <details id="mihomoTemplateHelp"><summary>模板语法与过滤示例</summary><p>支持 Go template 的 if、range、变量与管道。变量：.Proxies、.Names、.MixedPort、.Node.ID、.Node.Name、.Node.Role。函数：names、yaml、quote、indent。all 表示全部已过滤节点。</p><pre>proxies:
+{{ yaml .Proxies | indent 2 }}
+proxy-groups:
+  - name: 美国出口
+    type: select
+    proxies:
+{{ names "美国" | yaml | indent 6 }}</pre><p>例如规则“美国”的包含表达式为 美国|US，排除表达式为 0\.0?1。模板生成的 select 组可在上方面板切换；url-test、fallback 等组显示核心的实际选择。</p></details>
+    </fieldset>
+    <div class="form-actions"><button id="mihomoSave" class="primary" type="submit">保存并下发配置</button><button id="mihomoPreview" type="button">预览生成配置</button><span id="mihomoMessage" role="status" aria-live="polite"></span></div>
+   </fieldset>
+  </form>
+  <p id="mihomoError" class="error-text" role="alert"></p>
+  <details id="mihomoPreviewPanel" hidden><summary id="mihomoPreviewSummary">生成结果</summary><p class="form-note">预览展示模板生成结果；下发时还会在目标节点调用 mihomo 校验。</p><textarea id="mihomoPreviewYAML" class="mono" rows="16" readonly aria-label="生成的 YAML"></textarea></details>
+ </section>
 </section>
 <section id="page-update-settings" class="platform-page management-panel" hidden>
  <div class="section-heading"><div><h2>更新设置</h2><p>管理总控、registry 和 worker 的更新。新版本经 registry 通知总控，再通知计算节点。</p></div><button id="updateReload">刷新设置与状态</button></div>

@@ -94,7 +94,7 @@ func TestMultipleKeyRegistrationAndUpgradePreservesExistingData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec("DROP TABLE member_key_sync; DROP TABLE member_key_revocations; PRAGMA user_version=34"); err != nil {
+	if _, err = db.SQL.Exec("DROP TABLE member_key_sync; DROP TABLE member_key_revocations; DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime; PRAGMA user_version=34"); err != nil {
 		t.Fatal(err)
 	}
 	db.SQL.Close()

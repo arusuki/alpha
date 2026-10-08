@@ -44,6 +44,14 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		{"registry", registry.Initialize, 36, "", []string{"registry_control", "registry_sessions"}, false},
 		{"worker", app.Initialize, 36, "CREATE TRIGGER reject_schedule_upgrade BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'schedule upgrade rejected'); END", []string{"managed_containers", "owners", "member_container_slots", "settings"}, true},
 		{"registry", registry.Initialize, 35, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 35, "", []string{"members", "member_invitations"}, false},
+		{"registry", registry.Initialize, 34, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 37, "", []string{"members", "member_invitations"}, false},
+		{"worker", app.Initialize, 37, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"registry", registry.Initialize, 37, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"members", "mihomo_runtime"}, true},
+		{"worker", app.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"managed_containers", "mihomo_runtime"}, true},
+		{"registry", registry.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"registry_sessions", "mihomo_runtime"}, true},
 		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals; CREATE TABLE gpu_intervals_expiry(value TEXT); INSERT INTO gpu_intervals_expiry VALUES('preserve')", []string{"managed_containers", "owners", "member_container_slots", "gpu_intervals_expiry"}, true},
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
@@ -91,12 +99,25 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.role == "worker" {
+				if tc.role == "worker" && tc.version <= 36 {
 					_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN schedule_last_run;
 UPDATE settings SET value=json_remove(json_set(value,'$.interval_minutes',30),'$.schedule_mode','$.schedule_times','$.schedule_weekdays','$.schedule_timezone','$.retain_records');
 INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
 INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.role == "worker" && tc.version >= 37 {
+					_, err = db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.interval_minutes',30,'$.schedule_mode','interval'),schedule_last_run=100;
+INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
+INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.version >= 34 && tc.version < platform.DatabaseVersion {
+					if _, err = db.SQL.Exec("DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime"); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -168,6 +189,13 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 				if !tc.conflict {
+					if len(read("SELECT * FROM mihomo_profiles")) != 0 || len(read("SELECT * FROM mihomo_sync")) != 0 {
+						t.Fatal("migration unexpectedly configured a proxy")
+					}
+					rows := read("SELECT id,bundle,enabled,selections FROM mihomo_runtime")
+					if len(rows) != 1 || rows[0]["bundle"] != "" || rows[0]["enabled"] != int64(0) || rows[0]["selections"] != "{}" {
+						t.Fatalf("invalid initial proxy runtime: %v", rows)
+					}
 					if tc.role == "control" {
 						read("SELECT * FROM member_key_sync")
 						read("SELECT * FROM member_key_revocations")

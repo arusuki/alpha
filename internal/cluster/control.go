@@ -20,12 +20,15 @@ import (
 	"project-alpha/internal/bastion"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
+	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
 	"project-alpha/internal/updates"
 )
 
 type Control struct {
+	Mihomo          *mihomo.Control
+	mihomoLocal     *mihomo.Manager
 	Updates         *updates.Manager
 	identity        string
 	nodeMu          sync.Mutex
@@ -82,6 +85,25 @@ func NewControl(db *platform.Database) (*Control, error) {
 		h.Close()
 		return nil, err
 	}
+	h.mihomoLocal, err = mihomo.New(db)
+	if err != nil {
+		h.Close()
+		return nil, err
+	}
+	h.Mihomo = mihomo.NewControl(db, h.mihomoLocal, func() ([]mihomo.Target, error) {
+		nodes, err := h.nodes("")
+		targets := []mihomo.Target{{ID: "control", Name: "本机总控", Role: "control"}}
+		for _, n := range nodes {
+			targets = append(targets, mihomo.Target{ID: n.ID, Name: n.Name, Role: n.Kind})
+		}
+		return targets, err
+	}, func(ctx context.Context, target mihomo.Target, method, path string, body, out any) error {
+		n, err := h.node(target.ID)
+		if err != nil {
+			return err
+		}
+		return h.call(ctx, n, method, path, body, platform.User{ID: h.identity, Username: "mihomo-control", Role: "admin"}, out)
+	})
 	return h, nil
 }
 func (h *Control) Close() {
@@ -96,6 +118,12 @@ func (h *Control) Close() {
 		handlers = append(handlers, handler)
 	}
 	h.agentMu.Unlock()
+	if h.Mihomo != nil {
+		h.Mihomo.Close()
+	}
+	if h.mihomoLocal != nil {
+		h.mihomoLocal.Close()
+	}
 	h.Updates.Close()
 	h.closeRegistryLinks()
 	for _, handler := range handlers {
@@ -140,6 +168,12 @@ func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 }
 
 func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if strings.HasPrefix(r.URL.Path, "/api/mihomo/") {
+		if h.Mihomo == nil {
+			return 0, nil, httpapi.NewError(503, "代理管理未就绪")
+		}
+		return h.Mihomo.Dispatch(w, r, user)
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/updates/") {
 		return h.updateDispatch(w, r, user)
 	}
@@ -204,6 +238,12 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 						return httpapi.NewError(409, "节点仍有使用者资源记录，请先回收关联使用者资源")
 					}
 					if _, err := tx.Exec("DELETE FROM member_key_sync WHERE node_id=?", n.ID); err != nil {
+						return err
+					}
+					if _, err := tx.Exec("DELETE FROM mihomo_profiles WHERE target=?", n.ID); err != nil {
+						return err
+					}
+					if _, err := tx.Exec("DELETE FROM mihomo_sync WHERE target=?", n.ID); err != nil {
 						return err
 					}
 					if _, err := tx.Exec("DELETE FROM cluster_nodes WHERE id=?", n.ID); err != nil {

@@ -19,6 +19,7 @@ import (
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/containers"
 	"project-alpha/internal/gpu"
+	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
 	"project-alpha/internal/registry"
@@ -219,8 +220,13 @@ func Run(ctx context.Context, args []string) error {
 			return err
 		}
 		defer manager.Close()
+		proxy, err := mihomo.New(db)
+		if err != nil {
+			return err
+		}
+		defer proxy.Close()
 		storageHandler := storage.NewHandler(store, manager)
-		node := &cluster.Worker{Updates: updateManager, ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
+		node := &cluster.Worker{Mihomo: proxy, Updates: updateManager, ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
 		var watcher *process.Watcher
 		if source, err := process.Dial(*tetragonSocket); err != nil {
 			log.Printf("未启用容器进程监控：%v", err)
@@ -245,6 +251,11 @@ func Run(ctx context.Context, args []string) error {
 			}
 		}
 		frontend := registry.NewServer(db, regPass, registryToken, hosts, *secure)
+		frontend.Mihomo, err = mihomo.New(db)
+		if err != nil {
+			return err
+		}
+		defer frontend.Mihomo.Close()
 		frontend.Hub.Updates = updateManager
 		defer frontend.Hub.Close()
 		handler = frontend
