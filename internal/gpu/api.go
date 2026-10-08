@@ -81,7 +81,7 @@ func (m *Monitor) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	m.mu.RLock()
 	snapshot := m.current
 	m.mu.RUnlock()
-	return 200, map[string]any{"current": snapshot, "history": h, "now": now, "sample_seconds": samplePeriod.Seconds()}, nil
+	return 200, map[string]any{"current": snapshot.view(now), "history": h, "now": now, "sample_seconds": samplePeriod.Seconds()}, nil
 }
 func (m *Monitor) history(now, from, to, step float64) (History, error) {
 	h := History{From: from, To: to, Step: step, Series: []*Series{}, Users: []UserUsage{}}

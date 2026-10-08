@@ -365,6 +365,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert 'jump_installation' not in share_data
                 assert page.locator('#bastionSudoPassword').count() == 0
                 expect(page.locator('#bastionShareSummary')).to_contain_text('先在 share node')
+                expect(page.locator('#bastionInvitesRefresh')).to_be_disabled()
                 page.route('**/api/bastion/resources', lambda route: route.fulfill(status=200,
                     content_type='application/json', body=json.dumps(share_data)))
                 saves = []
@@ -408,6 +409,8 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                     ssh_host='100.64.0.2', ssh_port=22, status_port=8765, member_count=1, control_url='http://10.0.0.1:8765'))
                 for assignment in share_data['assignments']:
                     assignment['tailscale_id'] = 'node-test' if assignment['username'] == 'alice' else 'node-second'
+                    assignment['invite_id'] = 'invite-' + assignment['username']
+                    assignment['invite_state'] = 'invited'
                 first_node = page.locator('[data-share-node="node-test"]')
                 second_node = page.locator('[data-share-node="node-second"]')
                 page.locator('#bastionGlobalSettings > summary').click()
@@ -436,6 +439,45 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 expect(user_rows).to_have_count(2)
                 expect(user_rows.filter(has_text='alice')).to_contain_text('Share node · Share node (node-test)')
                 expect(user_rows.filter(has_text='bob')).to_contain_text('Share node · Second share node (node-second)')
+                # Query Tailscale through the refresh endpoint, retain successful
+                # updates when another member fails, and allow a later retry.
+                invite_refreshes = []
+                page.route('**/api/bastion/members/*/refresh', lambda route: invite_refreshes.append(route))
+                page.locator('#bastionInvitesRefresh').click()
+                expect(page.locator('#bastionInvitesRefresh')).to_be_disabled()
+                expect(page.locator('#bastionInvitesStatus')).to_contain_text('正在查询 Tailscale')
+                page.locator('#bastionInvitesRefresh').evaluate('(button) => button.click()')
+                for index in range(2):
+                    for _ in range(100):
+                        if len(invite_refreshes) > index:
+                            break
+                        page.wait_for_timeout(20)
+                    route = invite_refreshes[index]
+                    assignment = next(a for a in share_data['assignments'] if a['member_id'] in route.request.url)
+                    assert route.request.method == 'POST' and route.request.post_data_json == {}
+                    if assignment['username'] == 'alice':
+                        assignment['invite_state'] = 'accepted'
+                        route.fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                    else:
+                        route.fulfill(status=502, content_type='application/json', body='{"error":"Tailscale 查询失败"}')
+                expect(page.locator('#bastionInvitesRefresh')).to_be_enabled()
+                assert len(invite_refreshes) == 2
+                expect(user_rows.filter(has_text='alice')).to_contain_text('已接受')
+                expect(first_node.locator('.bastion-assignment')).to_contain_text('已接受')
+                expect(user_rows.filter(has_text='bob')).to_contain_text('等待接受')
+                expect(page.locator('#bastionInvitesStatus')).to_have_text('已查询 2 名使用者的邀请状态 · 成功 1 · 失败 1')
+                expect(page.locator('#bastionInvitesError')).to_have_text('bob：Tailscale 查询失败')
+                page.unroute('**/api/bastion/members/*/refresh')
+                def refresh_invite(route):
+                    assignment = next(a for a in share_data['assignments'] if a['member_id'] in route.request.url)
+                    assignment['invite_state'] = 'accepted'
+                    route.fulfill(status=200, content_type='application/json', body='{"ok":true}')
+                page.route('**/api/bastion/members/*/refresh', refresh_invite)
+                page.locator('#bastionInvitesRefresh').click()
+                expect(page.locator('#bastionInvitesStatus')).to_have_text('已查询 2 名使用者的邀请状态 · 成功 2 · 失败 0')
+                expect(user_rows.filter(has_text='bob')).to_contain_text('已接受')
+                expect(page.locator('#bastionInvitesError')).to_be_empty()
+                page.unroute('**/api/bastion/members/*/refresh')
                 first_node.locator(f'[data-member="{member_id}"]').click()
                 expect(page.locator('#bastionMemberDialog')).to_be_visible()
                 page.locator('#bastionMemberClose').click()
@@ -446,6 +488,37 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert abs(first_node.bounding_box()['x'] - second_node.bounding_box()['x']) < 1
                 assert page.locator('[data-clean-key]').count() == 1
                 assert page.locator('[data-clean-key="' + used_id + '"]').count() == 0
+                # Pools collapse independently and retain per-node searches on refresh.
+                first_pool = first_node.locator('.bastion-key-pool')
+                second_pool = second_node.locator('.bastion-key-pool')
+                expect(first_node.locator('[data-key-search]')).to_be_hidden()
+                first_pool.locator(':scope > summary').click()
+                search = first_node.locator('[data-key-search]')
+                search.fill('  ALI  ')
+                expect(first_node.locator('.bastion-node-keys .bastion-row')).to_have_count(1)
+                expect(first_node.locator('.bastion-node-keys')).to_contain_text('alice')
+                expect(first_node.locator('.bastion-key-results [role="status"]')).to_have_text('显示 1 / 2 条公钥')
+                expect(search).to_be_focused()
+                expect(second_node.locator('[data-key-search]')).to_be_hidden()
+                first_pool.locator(':scope > summary').click()
+                with page.expect_response('**/api/bastion/resources'):
+                    page.locator('#bastionRefresh').click()
+                expect(search).to_be_hidden()
+                first_pool.locator(':scope > summary').focus()
+                first_pool.locator(':scope > summary').press('Enter')
+                expect(search).to_have_value('  ALI  ')
+                expect(first_node.locator('.bastion-node-keys .bastion-row')).to_have_count(1)
+                second_pool.locator(':scope > summary').click()
+                expect(second_node.locator('[data-key-search]')).to_have_value('')
+                expect(second_node.locator('.bastion-node-keys .bastion-row')).to_have_count(1)
+                search.fill('bob')
+                expect(first_node.locator('.bastion-node-keys')).to_have_text('没有匹配该用户的公钥。')
+                search.fill('')
+                expect(first_node.locator('.bastion-node-keys .bastion-row')).to_have_count(2)
+                expect(first_node.locator('[data-clean-key]')).to_be_visible()
+                with page.expect_response('**/api/bastion/resources'):
+                    page.locator('#bastionRefresh').click()
+                expect(search).to_be_visible()
                 first_node.locator('.bastion-node-keys details').last.locator('summary').click()
                 page.set_viewport_size(dict(width=390, height=844))
                 assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth'), 'pool key mobile overflow'

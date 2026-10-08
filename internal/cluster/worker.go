@@ -11,13 +11,14 @@ import (
 	"strings"
 
 	"project-alpha/internal/buildinfo"
+	"project-alpha/internal/gpu"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/updates"
 )
 
-const Protocol = 8
+const Protocol = 9
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -30,11 +31,19 @@ type Container struct {
 	ObservedAt string `json:"observed_at,omitempty"`
 }
 type Inventory struct {
-	Host       string      `json:"host"`
-	Containers []Container `json:"containers"`
-	SnapshotID string      `json:"snapshot_id,omitempty"`
-	ObservedAt string      `json:"observed_at,omitempty"`
-	Active     any         `json:"active"`
+	Host        string       `json:"host"`
+	Containers  []Container  `json:"containers"`
+	SnapshotID  string       `json:"snapshot_id,omitempty"`
+	ObservedAt  string       `json:"observed_at,omitempty"`
+	Active      any          `json:"active"`
+	Filesystems []Filesystem `json:"filesystems"`
+	GPU         gpu.Summary  `json:"gpu"`
+}
+type Filesystem struct {
+	Mount string  `json:"mount"`
+	FS    string  `json:"fs"`
+	Total *uint64 `json:"total"`
+	Used  *uint64 `json:"used"`
 }
 type Info struct {
 	ManagementProtocol int    `json:"management_protocol"`

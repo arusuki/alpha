@@ -108,7 +108,11 @@ func (m *Monitor) persist(next Snapshot) error {
 func deviceOwners(d Device) []string {
 	set := map[string]bool{}
 	for _, p := range d.Processes {
-		set[p.Owner] = true
+		owner := p.Owner
+		if owner == "" {
+			owner = "未识别"
+		}
+		set[owner] = true
 	}
 	out := []string{}
 	for name := range set {

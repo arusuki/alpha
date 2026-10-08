@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
-const state={data:null,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0,reconnecting:new Set(),reconnectErrors:new Map()};
+const state={data:null,refreshFailed:false,epoch:0,pending:null,editing:null,removing:null,busy:false,opening:false,unavailableTarget:null,filter:'all',nodesHTML:'',sharing:null,shareSequence:0,reconnecting:new Set(),reconnectErrors:new Map()};
 const admin=()=>platform.user?.role==='admin';
 const nodeAvailable=n=>n.online&&(n.kind==='registry'||!!n.inventory);
 function configure(){
@@ -48,6 +48,25 @@ function render(){
   $('allocationStatus').textContent=(data.partial?'统计不完整：部分节点不可用。':'计算节点统计完整。')+` ${data.container_count-unassigned} 个有使用者的容器 · ${unassigned} 个未归属容器 · ${dateTime(data.checked_at)}`;
   renderAllocations();
 }
+function renderNodeDisks(inventory){
+  if(!inventory.snapshot_id)return '';
+  const disks=diskFilesystems(inventory.filesystems);
+  return `<section class="node-disks" aria-label="最近扫描的磁盘占用"><div class="node-resource-heading"><span>磁盘占用</span><small>最近完整扫描</small></div>${disks.map(d=>{
+    const known=Number.isFinite(d.total)&&d.total>0&&Number.isFinite(d.used)&&d.used>=0&&d.used<=d.total;
+    const percent=known?100*d.used/d.total:0;
+    return `<div class="node-disk"><div class="node-disk-label"><span class="mono" title="${esc(d.mount)}">${esc(d.mount)}</span><strong>${known?percent.toFixed(1)+'%':'容量未知'}</strong></div>${known?`<div class="node-disk-track" role="meter" aria-label="${esc(d.mount)} 磁盘占用" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent.toFixed(1)}" aria-valuetext="${esc(fmt(d.used)+' / '+fmt(d.total))}"><i style="width:${percent}%"></i></div><small>已用 ${fmt(d.used)} / ${fmt(d.total)}</small>`:''}</div>`;
+  }).join('')||'<p class="node-resource-note">扫描记录中暂无磁盘容量信息</p>'}</section>`;
+}
+function renderNodeGPUs(n){
+  const {devices,unavailable:unknown,note}=GPUUI.view(n.inventory.gpu,state.refreshFailed?'刷新失败，状态待确认':!n.online?'节点离线':'');
+  const busy=devices.filter(d=>d.state==='busy').length;
+  return `<section class="node-gpus" aria-label="GPU 使用情况"><div class="node-resource-heading"><span>GPU</span><small>${unknown?'状态未知':devices.length?`${busy} / ${devices.length} 使用中`:'未检测到 GPU'}</small></div><div class="node-gpu-icons">${devices.map(d=>{
+    const status=d.state;
+    const description=unknown?'状态未知':status==='busy'?`有进程使用 · ${d.process_count} 个进程 · ${d.owners.map(GPUUI.ownerLabel).join('、')}`:'无进程使用';
+    const title=`GPU ${d.index} · ${d.name} · ${description}`;
+    return `<a class="node-gpu-icon gpu-occupancy" data-node-gpu="${esc(n.id+':'+d.uuid)}" data-state="${status}" data-open-node="${n.id}" href="/nodes/${n.id}/#gpus" title="${esc(title)}" aria-label="${esc(title)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M8 2v3m8-3v3M8 19v3m8-3v3M2 8h3m-3 8h3M19 8h3m-3 8h3"/></svg><span>${esc(d.index)}</span></a>`;
+  }).join('')}</div>${devices.length&&!unknown?'<p class="node-gpu-legend"><span class="gpu-occupancy" data-state="idle">绿色 · 无进程</span><span class="gpu-occupancy" data-state="busy">橘色 · 有进程</span></p>':''}${note?`<p class="node-resource-note">${esc(note)}</p>`:''}</section>`;
+}
 function renderNodes(){
   const data=state.data;if(!data)return;
   for(const n of data.nodes)if(nodeAvailable(n))state.reconnectErrors.delete(n.id);
@@ -59,12 +78,12 @@ function renderNodes(){
     const inventory=n.inventory;
     const owners=inventory?new Set(inventory.containers.map(c=>c.owner).filter(Boolean)).size:0;
     const scanned=inventory?.observed_at?new Date(inventory.observed_at).toLocaleString('zh-CN'):'';
-    return `<article class="node-card ${nodeAvailable(n)?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${!n.online?'离线':!inventory?'详情不可用':'在线'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${inventory?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${inventory?owners:'—'}</strong><span>有容器的使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${inventory?`<dl class="node-details"><div><dt>未归属容器</dt><dd>${inventory.containers.filter(c=>!c.owner).length}</dd></div><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>${n.online?'节点在线，详情暂不可用':'暂时无法连接此节点'}</strong><p>${esc(state.reconnectErrors.get(n.id)||n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<a data-open-node="${n.id}" href="/nodes/${n.id}/#scan-settings">扫盘计划</a><button data-page="update-settings">更新设置</button>`:''}${reconnectButton(n)}${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
+    return `<article class="node-card ${nodeAvailable(n)?'':'node-offline'}"><div class="node-card-heading"><span class="node-index">${String(data.nodes.indexOf(n)+1).padStart(2,'0')} / WORKER</span><span class="node-status"><i></i>${!n.online?'离线':!inventory?'详情不可用':'在线'}</span></div><h3>${esc(n.name)}</h3><p class="mono node-address">${esc(n.url)}</p><p class="mono node-address">内网 IP · ${esc(n.internal_ip)}</p><div class="node-metrics"><div><strong>${inventory?inventory.containers.length:'—'}</strong><span>容器记录</span></div><div><strong>${inventory?owners:'—'}</strong><span>有容器的使用者</span></div><svg class="node-symbol ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg></div>${inventory?`${renderNodeDisks(inventory)}${renderNodeGPUs(n)}<dl class="node-details"><div><dt>未归属容器</dt><dd>${inventory.containers.filter(c=>!c.owner).length}</dd></div><div><dt>主机</dt><dd>${esc(inventory.host||'尚未获取')}</dd></div><div><dt>扫描任务</dt><dd ${inventory.active?'class="node-scanning"':''}>${inventory.active?'扫描进行中':'当前空闲'}</dd></div></dl><p class="node-observed">${scanned?'最近扫描 · '+esc(scanned):'尚无完成的扫描'}</p>`:`<div class="node-unavailable"><strong>${n.online?'节点在线，详情暂不可用':'暂时无法连接此节点'}</strong><p>${esc(state.reconnectErrors.get(n.id)||n.error)}</p></div>`}<div class="node-actions"><a class="node-open" data-open-node="${n.id}" href="/nodes/${n.id}/" aria-label="进入节点 ${esc(n.name)}">进入节点 <span aria-hidden="true">↗</span></a>${admin()?`<a data-open-node="${n.id}" href="/nodes/${n.id}/#scan-settings">扫盘计划</a><button data-page="update-settings">更新设置</button>`:''}${reconnectButton(n)}${admin()?`<button data-edit-node="${n.id}" aria-label="编辑节点 ${esc(n.name)}">编辑</button><button data-remove-node="${n.id}" aria-label="移除节点 ${esc(n.name)}">移除</button>`:''}</div></article>`;
   }).join('')||(!data.nodes.length?`<div class="cluster-empty"><span class="empty-node-symbol" aria-hidden="true">＋</span><h3>${admin()?'连接你的第一个节点':'等待节点接入'}</h3><p>${admin()?'添加主机后，在这里统一查看状态并进入管理。':'管理员添加节点后，这里会显示你的主机。'}</p>${admin()?'<button class="primary" data-add-node>添加节点 ↗</button>':''}</div>`:'<div class="cluster-empty"><h3>没有匹配的节点</h3><p>试试其他名称、主机地址或连接状态。</p><button data-clear-nodes>清除筛选</button></div>');
   const container=$('clusterNodes');
   if(state.nodesHTML===html)return;
   const active=document.activeElement;
-  const focus=container.contains(active)?['href','data-share-registry','data-reconnect-node','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
+  const focus=container.contains(active)?['data-node-gpu','href','data-share-registry','data-reconnect-node','data-edit-node','data-remove-node','data-clear-nodes','data-add-node'].map(attr=>[attr,active.getAttribute(attr)]).find(([,value])=>value!==null):null;
   container.innerHTML=html;
   state.nodesHTML=html;
   if(focus){const [attr,value]=focus;const target=[...container.querySelectorAll(`[${attr}]`)].find(el=>el.getAttribute(attr)===value);(target||$('clusterSearch')).focus({preventScroll:true});}
@@ -157,8 +176,8 @@ async function refresh(){
   const epoch=state.epoch;
   const pending=(async()=>{try{
     const data=await api('/api/cluster/overview',{signal:AbortSignal.timeout(12000)});if(epoch!==state.epoch)return;
-    state.data=data;$('clusterError').textContent='';render();
-  }catch(e){if(epoch===state.epoch){$('clusterError').textContent=(state.data?'刷新失败，以下保留上次结果：':'无法读取节点：')+e.message;$('clusterHealth').textContent='集群状态更新失败';$('clusterHealth').parentElement.dataset.state='partial';if(!state.data)$('clusterNodes').innerHTML='<div class="cluster-empty"><h3>暂时无法读取节点</h3><p>请使用「刷新状态」重新连接。</p></div>';$('allocationStatus').dataset.state='partial';$('allocationStatus').textContent=(state.data?'刷新失败，以下为上次结果：':'无法读取统计：')+e.message;}}
+    state.data=data;state.refreshFailed=false;$('clusterError').textContent='';render();
+  }catch(e){if(epoch===state.epoch){state.refreshFailed=true;renderNodes();$('clusterError').textContent=(state.data?'刷新失败，以下保留上次结果：':'无法读取节点：')+e.message;$('clusterHealth').textContent='集群状态更新失败';$('clusterHealth').parentElement.dataset.state='partial';if(!state.data)$('clusterNodes').innerHTML='<div class="cluster-empty"><h3>暂时无法读取节点</h3><p>请使用「刷新状态」重新连接。</p></div>';$('allocationStatus').dataset.state='partial';$('allocationStatus').textContent=(state.data?'刷新失败，以下为上次结果：':'无法读取统计：')+e.message;}}
   finally{if(epoch===state.epoch){state.pending=null;$('clusterNodes').setAttribute('aria-busy','false');$('clusterRefresh').disabled=false;$('allocationsRefresh').disabled=false;}}})();
   state.pending=pending;$('clusterNodes').setAttribute('aria-busy','true');$('clusterRefresh').disabled=true;$('allocationsRefresh').disabled=true;return pending;
 }
@@ -215,7 +234,7 @@ async function retryNode(){
 }
 window.ClusterUI={configure,refresh,unavailable,connected,reset(){
   window.ScanScheduleUI?.reset();
-  state.epoch++;state.opening=false;state.unavailableTarget=null;$('nodeUnavailableRetry').disabled=false;state.data=null;state.pending=null;state.editing=null;state.removing=null;state.filter='all';state.nodesHTML='';busy(false);
+  state.epoch++;state.opening=false;state.unavailableTarget=null;$('nodeUnavailableRetry').disabled=false;state.data=null;state.refreshFailed=false;state.pending=null;state.editing=null;state.removing=null;state.filter='all';state.nodesHTML='';busy(false);
   state.reconnecting.clear();state.reconnectErrors.clear();
   document.body.classList.remove('control-room');
   $('clusterSearch').value='';$('allocationSearch').value='';$('clusterError').textContent='';$('clusterPartial').hidden=true;$('clusterNodeCount').textContent='';

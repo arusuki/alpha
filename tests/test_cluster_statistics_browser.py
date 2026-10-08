@@ -8,7 +8,8 @@ containers = [dict(id=f'{i:064x}', name=f'container-{i:02d}', owner='alice' if i
                    managed=True, state='running', observed_at='2026-10-07T08:00:00Z') for i in range(19)]
 node = dict(id=node_id, name='GPU 01', kind='worker', url='http://10.0.0.11:8765',
             internal_ip='10.0.0.11', online=True, compatible=True,
-            inventory=dict(host='gpu-01', containers=containers, active=None, observed_at='2026-10-07T08:00:00Z'))
+            inventory=dict(host='gpu-01', containers=containers, active=None, observed_at='2026-10-07T08:00:00Z',
+                           filesystems=[], gpu=dict(at=1791360000, stale=False, error='', warning='', devices=[])))
 data = dict(nodes=[node], members=[
     dict(id='a'*32, username='alice', registered=True, count=1,
          nodes=[dict(id=node_id, name='GPU 01', containers=containers[:1])]),
@@ -44,6 +45,56 @@ try:
         expect(page.locator('#clusterUnassigned')).to_have_text('18')
         expect(page.locator('.node-metrics strong').nth(1)).to_have_text('1')
         expect(page.locator('.node-details')).to_contain_text('未归属容器18')
+        expect(page.locator('.node-disks')).to_have_count(0)
+        expect(page.locator('.node-gpus')).to_contain_text('未检测到 GPU')
+        node['inventory']['snapshot_id'] = 'scan-1'
+        node['inventory']['filesystems'] = [dict(mount='/', fs='ext4', used=750, total=1000),
+            dict(mount='/data', fs='xfs', used=0, total=2000), dict(mount='/tmp', fs='tmpfs', used=100, total=200),
+            dict(mount='/unknown', fs='xfs', used=None, total=None)]
+        gpu = node['inventory']['gpu']
+        gpu['devices'] = [dict(uuid=f'GPU-{i}', index=i, name='Test GPU', process_count=0 if i == 0 else 2,
+                               owners=[] if i == 0 else ['alice', 'host:root'], state='idle' if i == 0 else 'busy') for i in range(8)]
+        gpu['devices'][2]['owners'] = ['<img src=x onerror=alert(1)>']
+        page.locator('#clusterRefresh').click()
+        expect(page.locator('.node-disk')).to_have_count(3)
+        expect(page.locator('.node-disk-track')).to_have_count(2)
+        expect(page.locator('.node-disk-track').first).to_have_attribute('aria-valuenow', '75.0')
+        expect(page.locator('.node-disk-track').nth(1)).to_have_attribute('aria-valuenow', '0.0')
+        expect(page.locator('.node-disks')).to_contain_text('容量未知')
+        expect(page.locator('.node-gpu-icon[data-state="idle"]')).to_have_count(1)
+        expect(page.locator('.node-gpu-icon[data-state="busy"]')).to_have_count(7)
+        expect(page.locator('.node-gpu-icon').nth(1)).to_have_attribute('title', 'GPU 1 · Test GPU · 有进程使用 · 2 个进程 · alice、宿主机 · root')
+        expect(page.locator('.node-gpu-icon').first).to_have_attribute('href', f'/nodes/{node_id}/#gpus')
+        expect(page.locator('.node-gpus img')).to_have_count(0)
+        page.screenshot(path='/tmp/project-alpha-node-resources-desktop.png', full_page=True)
+        page.set_viewport_size(dict(width=390, height=844))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'node resources mobile overflow'
+        page.screenshot(path='/tmp/project-alpha-node-resources-mobile.png', full_page=True)
+        page.set_viewport_size(dict(width=1440, height=1080))
+        page.locator('.node-gpu-icon').nth(1).focus()
+        gpu['stale'] = True
+        for device in gpu['devices']:
+            device['state'] = 'unknown'
+        page.evaluate('ClusterUI.refresh()')
+        expect(page.locator('.node-gpu-icon[data-state="unknown"]')).to_have_count(8)
+        expect(page.locator('.node-gpus')).to_contain_text('GPU 数据已过期')
+        expect(page.locator('.node-gpu-icon').nth(1)).to_be_focused()
+        gpu.update(stale=True, error='采集失败')
+        page.locator('#clusterRefresh').click()
+        expect(page.locator('.node-gpu-icon[data-state="unknown"]')).to_have_count(8)
+        expect(page.locator('.node-gpus')).to_contain_text('采集失败')
+        gpu.update(stale=False, error='')
+        for device in gpu['devices']:
+            device['state'] = 'busy' if device['process_count'] else 'idle'
+        page.locator('#clusterRefresh').click()
+        expect(page.locator('.node-gpu-icon[data-state="idle"]')).to_have_count(1)
+        failure = True
+        page.locator('#clusterRefresh').click()
+        expect(page.locator('.node-gpu-icon[data-state="unknown"]')).to_have_count(8)
+        expect(page.locator('.node-gpus')).to_contain_text('刷新失败，状态待确认')
+        failure = False
+        page.locator('#clusterRefresh').click()
+        expect(page.locator('.node-gpu-icon[data-state="busy"]')).to_have_count(7)
         page.locator('.platform-nav [data-page="allocations"]').click()
         expect(page.locator('#allocationContainerCount')).to_have_text('19')
         expect(page.locator('#allocationOwnerCount')).to_have_text('1')

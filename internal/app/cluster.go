@@ -14,7 +14,7 @@ import (
 // inventory reads only small persisted metadata, never the snapshot file tree.
 // A single transaction keeps ownership and managed records at the same revision.
 func inventory(db *platform.Database) (cluster.Inventory, error) {
-	out := cluster.Inventory{Containers: []cluster.Container{}}
+	out := cluster.Inventory{Containers: []cluster.Container{}, Filesystems: []cluster.Filesystem{}}
 	out.Host, _ = os.Hostname()
 	tx, err := db.SQL.Begin()
 	if err != nil {
@@ -30,13 +30,15 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 	}
 	if err == nil {
 		var snapshot struct {
-			Containers []storage.Container `json:"containers"`
-			FinishedAt string              `json:"finished_at"`
+			Containers  []storage.Container  `json:"containers"`
+			FinishedAt  string               `json:"finished_at"`
+			Filesystems []cluster.Filesystem `json:"filesystems"`
 		}
 		if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
 			return out, err
 		}
 		out.ObservedAt = snapshot.FinishedAt
+		out.Filesystems = append(out.Filesystems, snapshot.Filesystems...)
 		for _, c := range snapshot.Containers {
 			byID[c.ID] = cluster.Container{ID: c.ID, Name: c.Name, Owner: c.Owner, State: c.State, ObservedAt: snapshot.FinishedAt}
 		}

@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
-const state={epoch:0,busy:false,settings:null,ssh:null,identity:null,selectedIdentity:'',data:null,member:null,node:null,devices:[]};
+const state={epoch:0,busy:false,settings:null,ssh:null,identity:null,selectedIdentity:'',data:null,member:null,node:null,devices:[],keyPools:new Map()};
 const labels={pending:'待分配',running:'创建中',invited:'等待接受',accepted:'已接受',ready:'已就绪',failed:'失败',creating:'邀请创建中',unknown:'邀请待核对',deleted:'已移除',deleting:'删除中',unallocated:'未申请'};
 const label=s=>labels[s]||s;
 function controls(){
@@ -44,19 +44,30 @@ function assignmentNodeLabel(assignment){
 }
 function assignmentsHTML(assignments,showNode=false){return assignments.map(r=>`<article class="bastion-assignment"><div class="bastion-member-name"><strong>${esc(r.username)}</strong>${showNode?`<small class="sub">${esc(assignmentNodeLabel(r))}</small>`:''}${r.member_status==='deleting'?'<small class="sub">正在删除</small>':''}</div><div class="bastion-member-state"><span>Tailscale 邀请</span>${statusTag(r.invite_state)}</div><div class="bastion-member-state"><span>alpha-jump 公钥</span>${statusTag(r.key_state)}</div><button data-member="${esc(r.member_id)}">查看资源 <span aria-hidden="true">↗</span></button>${r.error?`<p class="error-text">${esc(r.error)}</p>`:''}</article>`).join('');}
 function keysHTML(keys){return keys.map(k=>row(k.fingerprint,`<strong>${k.state==='free'?'free · 未关联用户':'已关联'}</strong>${k.members.length?' · '+k.members.map(m=>esc(m.username)).join('、'):''}<details><summary>查看公钥</summary><code class="pool-public-key">${esc(k.public_key)}</code><small class="sub">条目 ${esc(k.id)}</small></details>`,k.state==='free'?`<button data-clean-key="${esc(k.id)}" data-key-node="${esc(k.node_id)}">清理 free 公钥</button>`:'')).join('');}
+function refreshableInvites(){return (state.data?.assignments||[]).filter(a=>a.tailscale_id&&a.invite_id&&a.member_status!=='deleting'&&!['deleted','deleting'].includes(a.invite_state));}
+function keyPoolView(nodeID){
+ if(!state.keyPools.has(nodeID))state.keyPools.set(nodeID,{open:false,query:''});
+ return state.keyPools.get(nodeID);
+}
+function keyPoolResults(keys,query){
+ const search=query.trim().toLowerCase(),filtered=search?keys.filter(k=>k.members.some(m=>m.username.toLowerCase().includes(search))):keys;
+ const empty=state.data.key_pool.error?'公钥池查询未完整成功，请查看上方错误后刷新。':search?'没有匹配该用户的公钥。':'本节点暂无公钥。';
+ return `<p class="sub" role="status">显示 ${filtered.length} / ${keys.length} 条公钥</p><div class="bastion-list bastion-node-keys">${keysHTML(filtered)||`<p class="empty">${empty}</p>`}</div>`;
+}
 function render(){
  const d=state.data;if(!d)return;
  $('bastionShareSummary').textContent=d.tailscale.length?`已配置 ${d.tailscale.length} 个 share node · ${d.tailscale.filter(n=>n.enabled).length} 个可分配`:'先在 share node 初始化两个账号，再查询节点并加入分享池。';
  const pool=d.key_pool;
  $('bastionKeyPoolError').textContent=pool.error;
  $('bastionKeySync').dataset.locked=String(!d.tailscale.length);
+ $('bastionInvitesRefresh').dataset.locked=String(!refreshableInvites().length);
  $('bastionTailscalePool').innerHTML=d.tailscale.map(n=>{
-  const keys=pool.keys.filter(k=>k.node_id===n.id),members=d.assignments.filter(m=>m.tailscale_id===n.id);
+  const keys=pool.keys.filter(k=>k.node_id===n.id),members=d.assignments.filter(m=>m.tailscale_id===n.id),view=keyPoolView(n.id);
   return `<article class="management-panel bastion-node" data-share-node="${esc(n.id)}">
    <div class="section-heading"><div class="bastion-node-title"><h2>${esc(n.name)}</h2><span class="resource-tag" ${n.enabled?'data-tone="success"':''}>${n.enabled?'可分配':'已停用'}</span><span class="sub">${n.member_count} 名使用者</span></div><div class="actions">${poolButtons(n)}</div></div>
    <div class="bastion-node-connection"><span class="mono">${esc(n.ssh_host)} · SSH ${n.ssh_port} · 总控入口 ${n.status_port}</span><span>总控地址：${esc(n.control_url)}</span><small class="sub mono">节点 ID · ${esc(n.id)}</small></div>
    <div class="bastion-node-accounts"><div><strong class="mono">alpha-worker</strong><span>总控管理账号</span><p>总控通过 SSH 登录此账号管理公钥；此账号运行网页入口代理。</p></div><div><strong class="mono">alpha-jump</strong><span>成员跳板账号</span><p>使用本节点公钥池授权登录，转发到计算节点。</p></div></div>
-   <section class="bastion-node-section"><h3>本节点公钥池 <span class="sub">${keys.length} 条 · ${keys.filter(k=>k.state==='free').length} 条 free</span></h3><p class="resource-description">公钥可关联多名使用者。free 公钥仍可登录，清理后撤销本节点授权。</p><div class="bastion-list bastion-node-keys">${keysHTML(keys)||`<p class="empty">${pool.error?'公钥池查询未完整成功，请查看上方错误后刷新。':'本节点暂无公钥。'}</p>`}</div></section>
+   <details class="bastion-node-section bastion-key-pool" ${view.open?'open':''}><summary><span>本节点公钥池</span> <span class="sub">${keys.length} 条 · ${keys.filter(k=>k.state==='free').length} 条 free</span></summary><p class="resource-description">公钥可关联多名使用者。free 公钥仍可登录，清理后撤销本节点授权。</p><label class="bastion-key-search">按用户搜索公钥<input type="search" data-key-search value="${esc(view.query)}" placeholder="输入用户名，支持部分匹配" autocomplete="off" spellcheck="false"></label><div class="bastion-key-results">${keyPoolResults(keys,view.query)}</div></details>
    <section class="bastion-node-section"><h3>本节点使用者 <span class="sub">${members.length} 名</span></h3><div class="bastion-list">${assignmentsHTML(members)||'<p class="empty">本节点尚未分配使用者。</p>'}</div></section>
   </article>`;
  }).join('')||'<p class="empty">尚未配置分享节点。展开全局连接设置保存凭据，再查询并添加节点。</p>';
@@ -71,7 +82,7 @@ async function member(epoch,id){const v=await api(`/api/members/${id}/resources`
  if(!$('bastionMemberDialog').open)$('bastionMemberDialog').showModal();
 }
 function closeNode(){state.node=null;$('bastionNodeDialog').close();}
-window.BastionUI={open(){return task(e=>load(e,true));},leave(){$('bastionToken').value='';closeNode();},reset(){closeNode();state.epoch++;state.busy=false;state.settings=null;state.ssh=null;state.selectedIdentity='';state.data=null;state.member=null;state.devices=[];renderIdentity(null);$('bastionSSHForm').reset();$('bastionSSHGenerateForm').reset();for(const id of ['bastionSSHCurrent','bastionSSHDirectory','bastionSSHStatus'])$(id).textContent='';$('bastionSSHCreate').open=false;$('bastionSSHInventory').innerHTML='';$('bastionToken').value='';$('bastionMemberDialog').close();for(const id of ['bastionDevices','bastionTailscalePool','bastionAssignments','bastionMemberContent','bastionInviteCandidates'])$(id).innerHTML='';$('bastionError').textContent='';$('bastionStatus').textContent='';$('bastionKeyPoolError').textContent='';$('bastionShareSummary').textContent='';$('bastionGlobalSettings').open=false;$('bastionSettingsForm').reset();controls();}};
+window.BastionUI={open(){return task(e=>load(e,true));},leave(){$('bastionToken').value='';closeNode();},reset(){closeNode();state.epoch++;state.busy=false;state.settings=null;state.ssh=null;state.selectedIdentity='';state.data=null;state.member=null;state.devices=[];state.keyPools.clear();renderIdentity(null);$('bastionSSHForm').reset();$('bastionSSHGenerateForm').reset();for(const id of ['bastionSSHCurrent','bastionSSHDirectory','bastionSSHStatus'])$(id).textContent='';$('bastionSSHCreate').open=false;$('bastionSSHInventory').innerHTML='';$('bastionToken').value='';$('bastionMemberDialog').close();for(const id of ['bastionDevices','bastionTailscalePool','bastionAssignments','bastionMemberContent','bastionInviteCandidates'])$(id).innerHTML='';$('bastionError').textContent='';$('bastionStatus').textContent='';$('bastionKeyPoolError').textContent='';$('bastionShareSummary').textContent='';$('bastionInvitesStatus').textContent='';$('bastionInvitesError').textContent='';$('bastionGlobalSettings').open=false;$('bastionSettingsForm').reset();controls();}};
 $('bastionSSHInventory').addEventListener('click',event=>{
  const remove=event.target.closest('[data-delete-identity]');
  if(remove){
@@ -136,7 +147,34 @@ $('bastionNodeForm').addEventListener('submit',event=>{event.preventDefault();ta
  if(epoch!==state.epoch)return;closeNode();$('bastionStatus').textContent='已校验 alpha-worker 免密登录并保存分享节点。';await load(epoch);
 });});
 $('bastionKeySync').addEventListener('click',()=>task(async e=>{await api('/api/bastion/keys/sync',{method:'POST',body:'{}'});if(e===state.epoch)$('bastionStatus').textContent='已补齐用户公钥，free 条目保留。';await load(e);}));
+$('bastionTailscalePool').addEventListener('toggle',event=>{
+ const pool=event.target;if(!pool.matches('.bastion-key-pool')||!pool.isConnected)return;
+ keyPoolView(pool.closest('[data-share-node]').dataset.shareNode).open=pool.open;
+},true);
+$('bastionTailscalePool').addEventListener('input',event=>{
+ const input=event.target;if(!input.matches('[data-key-search]'))return;
+ const node=input.closest('[data-share-node]'),nodeID=node.dataset.shareNode;
+ keyPoolView(nodeID).query=input.value;
+ node.querySelector('.bastion-key-results').innerHTML=keyPoolResults(state.data.key_pool.keys.filter(k=>k.node_id===nodeID),input.value);
+ controls();
+});
 $('bastionTailscalePool').addEventListener('click',event=>{const button=event.target.closest('[data-clean-key]');if(!button)return;task(async e=>{await api('/api/bastion/keys/'+encodeURIComponent(button.dataset.keyNode)+'/'+button.dataset.cleanKey,{method:'DELETE',body:'{}'});if(e===state.epoch)$('bastionStatus').textContent='已清理 free 公钥。';await load(e);});});
+$('bastionInvitesRefresh').addEventListener('click',()=>task(async epoch=>{
+ const assignments=refreshableInvites(),failures=[];let completed=0;
+ $('bastionInvitesError').textContent='';
+ if(!assignments.length){$('bastionInvitesStatus').textContent='暂无已发出的邀请可查询。';return;}
+ for(const assignment of assignments){
+  $('bastionInvitesStatus').textContent=`正在查询 Tailscale 邀请状态 · ${completed} / ${assignments.length}`;
+  try{await api(`/api/bastion/members/${encodeURIComponent(assignment.member_id)}/refresh`,{method:'POST',body:'{}'});}
+  catch(error){failures.push(`${assignment.username}：${error.message}`);}
+  if(epoch!==state.epoch)return;
+  completed++;
+ }
+ $('bastionInvitesStatus').textContent='查询完成，正在更新资源列表…';
+ await load(epoch);if(epoch!==state.epoch)return;
+ $('bastionInvitesStatus').textContent=`已查询 ${completed} 名使用者的邀请状态 · 成功 ${completed-failures.length} · 失败 ${failures.length}`;
+ $('bastionInvitesError').textContent=failures.join('；');
+}));
 $('bastionRefresh').addEventListener('click',()=>task(e=>load(e,true)));
 $('bastionSettingsForm').addEventListener('submit',event=>{event.preventDefault();task(async e=>{const value={revision:state.settings.revision,tailnet:$('bastionTailnet').value,api_token:$('bastionToken').value};$('bastionToken').value='';await api('/api/tailscale/settings',{method:'PUT',body:JSON.stringify(value)});if(e===state.epoch){state.devices=[];$('bastionDevices').innerHTML='';$('bastionStatus').textContent='凭据已保存。';}await load(e,true);});});
 $('bastionTest').addEventListener('click',()=>task(async e=>{const r=await api('/api/tailscale/test',{method:'POST',body:'{}'});if(e===state.epoch)$('bastionStatus').textContent=`连接成功，可读取 ${r.device_count} 个节点。`;}));
@@ -144,7 +182,7 @@ $('bastionDevicesRefresh').addEventListener('click',()=>task(async e=>{const r=a
 $('page-bastion').addEventListener('click',event=>{const b=event.target.closest('button');if(!b)return;if(b.dataset.addNode||b.dataset.editNode)return openNode(b.dataset.addNode||b.dataset.editNode);if(b.dataset.member){$('bastionDeleteForm').reset();$('bastionResolveForm').reset();$('bastionInviteCandidates').innerHTML='';return task(e=>member(e,b.dataset.member));}if(b.dataset.pool||b.dataset.removePool)task(async e=>{const type=b.dataset.pool||b.dataset.removePool;await api(`/api/bastion/${type}/${encodeURIComponent(b.dataset.id)}`,{method:b.dataset.pool?'PUT':'DELETE',body:JSON.stringify(b.dataset.pool?{enabled:b.dataset.enabled==='true'}:{})});await load(e);});});
 $('bastionMemberClose').addEventListener('click',()=>$('bastionMemberDialog').close());
 $('bastionMemberDialog').addEventListener('close',()=>{state.member=null;$('bastionMemberContent').innerHTML='';$('bastionInviteCandidates').innerHTML='';});
-$('bastionShareRefresh').addEventListener('click',()=>task(async e=>{const id=state.member.member_id;await api(`/api/bastion/members/${id}/refresh`,{method:'POST',body:'{}'});await member(e,id);}));
+$('bastionShareRefresh').addEventListener('click',()=>task(async e=>{const id=state.member.member_id;await api(`/api/bastion/members/${id}/refresh`,{method:'POST',body:'{}'});await member(e,id);await load(e);}));
 $('bastionMemberRefresh').addEventListener('click',()=>task(e=>member(e,state.member.member_id)));
 $('bastionMemberRetry').addEventListener('click',()=>task(async e=>{const id=state.member.member_id;await api(`/api/members/${id}/retry`,{method:'POST',body:'{}'});await member(e,id);}));
 $('bastionDeleteForm').addEventListener('submit',event=>{event.preventDefault();task(async e=>{if($('bastionDeleteConfirm').value!==state.member.access.username)throw Error('请填写完整使用者标识确认删除。');await api(`/api/members/${state.member.member_id}`,{method:'DELETE',body:'{}'});if(e!==state.epoch)return;$('bastionMemberDialog').close();$('bastionStatus').textContent='使用者已删除，容器保留并标为未归属，等待管理员手动回收。';await load(e);});});

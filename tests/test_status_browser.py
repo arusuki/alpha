@@ -62,8 +62,11 @@ def gpu_overview(query):
     start = end - float(query.get('hours', [6])[0])*3600
     devices = [] if node_id == nodes[1]['node_id'] else copy.deepcopy(gpu_devices)
     stale = node_id == nodes[3]['node_id']
+    for device in devices:
+        device.update(state='unknown' if stale else 'busy' if device['processes'] else 'idle',
+                      process_count=len(device['processes']), owners=sorted(set(p['owner'] for p in device['processes'])))
     return dict(now=now, sample_seconds=15,
-                current=dict(at=now-120 if stale else now, devices=devices, error='采集异常' if stale else '', warning=''),
+                current=dict(at=now-120 if stale else now, stale=stale, devices=devices, error='采集异常' if stale else '', warning=''),
                 history={'from': start, 'to': end, 'step': step, 'since': start,
                          'series': [dict(uuid=d['uuid'], name=d['name'], points=[dict(at=start, utilization=42, observed_seconds=step, owners={'bob':step}),dict(at=start+step, utilization=60, observed_seconds=step, owners={'alice':step,'bob':step})]) for d in devices],
                          'users': [dict(owner='bob', seconds=3600), dict(owner='alice', seconds=1800)] if devices else []})
@@ -227,7 +230,7 @@ try:
         expect(page.locator('#gpuCards')).to_have_text('')
         page.locator('#gpuNode').select_option(nodes[3]['node_id'])
         expect(page.locator('#gpuStatus')).to_contain_text('采集异常')
-        expect(page.locator('.gpu-state').first).to_have_text('数据过期')
+        expect(page.locator('.gpu-state').first).to_have_text('状态未知')
         page.locator('#gpuNode').select_option(nodes[0]['node_id'])
         expect(page.locator('#gpuProcessRows')).to_contain_text('bob')
         page.locator('#toggleGPU').click()

@@ -1,5 +1,11 @@
 'use strict';
 (()=>{
+function ownerLabel(name){return name.startsWith('host:')?`宿主机 · ${name.slice(5)}`:name||'未识别';}
+function view(snapshot,error=''){
+ const unavailable=!snapshot||snapshot.stale||!!error,devices=snapshot?.devices||[];
+ const note=error||snapshot?.error||(!snapshot?.at?'GPU 状态待获取':snapshot.stale?'GPU 数据已过期':snapshot.warning);
+ return {unavailable,note,devices:error?devices.map(d=>({...d,state:'unknown'})):devices};
+}
 function create(root,{request,active}){
 root.classList.add('gpu-view');
 root.innerHTML=`<div class="gpu-topline"><span class="gpu-kicker"><i></i> 设备状态</span><button id="gpuRefresh">刷新 ↻</button></div>
@@ -23,8 +29,6 @@ function color(owner){let h=0;for(const c of owner)h=((h*31)+c.charCodeAt(0))>>>
 const value=(n,d=0)=>n==null?'—':Number(n).toLocaleString('zh-CN',{maximumFractionDigits:d});
 const timestamp=t=>new Date(t*1000).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 function duration(s){if(s==null)return '未知';s=Math.max(0,s);if(s<60)return `${Math.floor(s)} 秒`;if(s<3600)return `${Math.floor(s/60)} 分钟`;return `${Math.floor(s/3600)} 小时 ${Math.floor(s%3600/60)} 分钟`;}
-function ownerLabel(name){return name.startsWith('host:')?`宿主机 · ${name.slice(5)}`:name;}
-function owners(d){return [...new Set(d.processes.map(p=>p.owner))].sort();}
 const dot=name=>`<i style="background:${color(name)}"></i>`;
 // Code-native flat illustration: fine strokes and the workspace's paper/olive palette.
 function drawing(){return `<svg class="gpu-device" viewBox="0 0 180 102" fill="none" aria-hidden="true"><path d="M8 18v65m0-57H3m5 49H3" stroke="currentColor" stroke-width="2"/><rect x="14" y="22" width="155" height="61" rx="5" fill="var(--paper)" stroke="currentColor" stroke-width="1.4"/><path d="M22 30h139M22 76h139" stroke="currentColor" opacity=".35"/><rect x="116" y="36" width="39" height="30" rx="2" class="gpu-chip" stroke="currentColor"/><path d="M122 42h27m-27 6h27m-27 6h27m-27 6h27M35 83v8h57v-8m-48 0v8m8-8v8m8-8v8m8-8v8m8-8v8m8-8v8" stroke="currentColor" stroke-width="1.1"/><circle cx="62" cy="52" r="23" stroke="currentColor" stroke-width="1.4"/><circle cx="62" cy="52" r="7" class="gpu-chip" stroke="currentColor"/><g stroke="currentColor" stroke-width="1.1"><path d="M62 45c-9-9-15-5-16-2m23 9c9-9 5-15 2-16m-9 23c9 9 15 5 16 2M55 52c-9 9-5 15-2 16M67 47c0-13-7-14-10-13m10 23c13 0 14-7 13-10M57 57c0 13 7 14 10 13M57 47c-13 0-14 7-13 10"/></g><rect x="157" y="14" width="9" height="8" rx="1" stroke="currentColor"/><circle cx="159" cy="74" r="2" class="gpu-indicator" fill="currentColor"/><path d="M24 15h22m-22-4h10" stroke="currentColor" opacity=".4"/></svg>`;}
@@ -37,17 +41,17 @@ function controls(){
  $('gpuPan').max=String(max);$('gpuPan').value=String(Math.max(0,max-offset));$('gpuPan').disabled=max<=0;
 }
 function render(){
- controls();const data=state.data,current=data?.current,devices=current?.devices||[],stale=!!(state.error||current?.error||current?.at&&data.now-current.at>45);
+ controls();const data=state.data,current=data?.current,{devices,unavailable:stale,note}=view(current,state.error);
  $('gpuStatus').dataset.error=String(stale);
- $('gpuStatus').textContent=state.error||(current?.error?`${current.error}${current.at?' · 保留下方最近一次成功采集的数据':''}`:current?.at?`最近采集 ${timestamp(current.at)} · ${current.warning||'实时更新中，历史最多保留 72 小时'}`:'正在检测 GPU…');
- $('gpuCount').textContent=current?.at?String(devices.length):'—';$('gpuBusy').textContent=current?.at?String(devices.filter(d=>d.processes.length).length):'—';$('gpuUsers').textContent=current?.at?String(new Set(devices.flatMap(owners)).size):'—';
+ $('gpuStatus').textContent=stale?`${note}${current?.at?' · 保留最近一次采集的数据':''}`:`最近采集 ${timestamp(current.at)} · ${note||'实时更新中，历史最多保留 72 小时'}`;
+ $('gpuCount').textContent=current?.at?String(devices.length):'—';$('gpuBusy').textContent=stale?'—':String(devices.filter(d=>d.state==='busy').length);$('gpuUsers').textContent=stale?'—':String(new Set(devices.flatMap(d=>d.owners)).size);
  $('gpuEmpty').hidden=devices.length>0||!current?.at||stale;
  if(!devices.some(d=>d.uuid===state.selected))state.selected=devices[0]?.uuid||null;
  const active=document.activeElement?.dataset?.gpuSelect;
- replace('gpuCards',devices.map(d=>{const busy=d.processes.length>0,names=owners(d);const mode=d.compute_mode==='Prohibited'?'计算已禁用':d.mig?'MIG 已启用':busy?'使用中':'未发现进程';return `<button class="gpu-card" data-gpu-select="${esc(d.uuid)}" data-busy="${busy}" aria-pressed="${state.selected===d.uuid}"><div class="gpu-card-heading"><span>GPU ${d.index.toString().padStart(2,'0')}</span><span class="gpu-state" data-busy="${busy}">${stale?'数据过期':mode}</span></div><div class="gpu-card-body">${drawing()}<div><h3>${esc(d.name)}</h3><small>${esc(d.uuid)}</small><small>${value(d.temperature)} °C${d.mig?' · MIG':''}</small></div></div><div class="gpu-card-metrics"><div><small>GPU 利用率</small><strong>${value(d.utilization)}<em>%</em></strong><div class="gpu-meter"><i style="width:${Math.min(100,Math.max(0,d.utilization||0))}%"></i></div></div><div><small>显存占用</small><strong>${value(d.memory_used_mib==null?null:d.memory_used_mib/1024,1)}<em>/ ${value(d.memory_total_mib==null?null:d.memory_total_mib/1024,1)} GiB</em></strong><div class="gpu-meter"><i style="width:${d.memory_total_mib?Math.min(100,100*(d.memory_used_mib||0)/d.memory_total_mib):0}%"></i></div></div></div><div class="gpu-card-bottom"><span>${esc(names.map(ownerLabel).join('、')||'无活动进程')}</span><span>${d.processes.length} 个进程 ↗</span></div></button>`;}).join(''));
+ replace('gpuCards',devices.map(d=>{const busy=d.state==='busy',names=d.owners;const mode=d.compute_mode==='Prohibited'?'计算已禁用':d.mig?'MIG 已启用':busy?'使用中':'未发现进程';return `<button class="gpu-card gpu-occupancy" data-gpu-select="${esc(d.uuid)}" data-state="${d.state}" aria-pressed="${state.selected===d.uuid}"><div class="gpu-card-heading"><span>GPU ${d.index.toString().padStart(2,'0')}</span><span class="gpu-state">${stale?'状态未知':mode}</span></div><div class="gpu-card-body">${drawing()}<div><h3>${esc(d.name)}</h3><small>${esc(d.uuid)}</small><small>${value(d.temperature)} °C${d.mig?' · MIG':''}</small></div></div><div class="gpu-card-metrics"><div><small>GPU 利用率</small><strong>${value(d.utilization)}<em>%</em></strong><div class="gpu-meter"><i style="width:${Math.min(100,Math.max(0,d.utilization||0))}%"></i></div></div><div><small>显存占用</small><strong>${value(d.memory_used_mib==null?null:d.memory_used_mib/1024,1)}<em>/ ${value(d.memory_total_mib==null?null:d.memory_total_mib/1024,1)} GiB</em></strong><div class="gpu-meter"><i style="width:${d.memory_total_mib?Math.min(100,100*(d.memory_used_mib||0)/d.memory_total_mib):0}%"></i></div></div></div><div class="gpu-card-bottom"><span>${esc(names.map(ownerLabel).join('、')||(stale?'上次采集无活动进程':'无活动进程'))}</span><span>${d.process_count} 个进程${stale?' · 上次采集':''} ↗</span></div></button>`;}).join(''));
  if(active)Array.from($('gpuCards').querySelectorAll('[data-gpu-select]')).find(b=>b.dataset.gpuSelect===active)?.focus({preventScroll:true});
  const selected=devices.find(d=>d.uuid===state.selected);$('gpuProcesses').hidden=!selected;
- if(selected){$('gpuProcessTitle').textContent=`GPU ${selected.index.toString().padStart(2,'0')} · 正在运行`;$('gpuProcessCount').textContent=`${selected.processes.length} 个进程${stale?' · 上次采集':''}`;replace('gpuProcessRows',selected.processes.map(p=>`<tr><td><span class="gpu-owner">${dot(p.owner)}${esc(ownerLabel(p.owner))}</span><small title="${esc(p.container_id)}">${esc(p.container|| (p.owner.startsWith('host:')?'宿主机':'归属待识别'))}</small></td><td>${esc(p.name)}<small>${esc(p.kind)}</small></td><td class="mono">${p.pid}</td><td>${value(p.memory_mib)} MiB</td><td>${duration(p.started_at==null?null:current.at-p.started_at)}</td></tr>`).join('')||'<tr><td colspan="5">当前没有观测到 GPU 进程</td></tr>');}
+ if(selected){$('gpuProcessTitle').textContent=`GPU ${selected.index.toString().padStart(2,'0')} · ${stale?'上次采集':'正在运行'}`;$('gpuProcessCount').textContent=`${selected.process_count} 个进程${stale?' · 上次采集':''}`;replace('gpuProcessRows',selected.processes.map(p=>`<tr><td><span class="gpu-owner">${dot(p.owner)}${esc(ownerLabel(p.owner))}</span><small title="${esc(p.container_id)}">${esc(p.container|| (p.owner.startsWith('host:')?'宿主机':'归属待识别'))}</small></td><td>${esc(p.name)}<small>${esc(p.kind)}</small></td><td class="mono">${p.pid}</td><td>${value(p.memory_mib)} MiB</td><td>${duration(p.started_at==null?null:current.at-p.started_at)}</td></tr>`).join('')||'<tr><td colspan="5">当前没有观测到 GPU 进程</td></tr>');}
  renderHistory();
 }
 function renderHistory(){
@@ -84,7 +88,7 @@ async function load(){
  const timeout=setTimeout(()=>controller.abort(),20000);
  const query=new URLSearchParams({hours:state.hours,step:state.step||Math.max(15,Math.ceil(state.hours*3600/360/15)*15)});
  if(state.end!==null){state.end=Math.max(state.end,Date.now()/1000-72*3600+state.hours*3600);query.set('end',state.end);}
- try{const data=await request('/api/gpu/overview?'+query,{signal:controller.signal});if(epoch!==state.epoch)return;if(!data.current||!Array.isArray(data.current.devices)||!data.history||!Array.isArray(data.history.series)||!Array.isArray(data.history.users))throw Error('GPU 监控返回了无效数据');state.data=data;state.error='';render();}
+ try{const data=await request('/api/gpu/overview?'+query,{signal:controller.signal});if(epoch!==state.epoch)return;if(!data.current||typeof data.current.stale!=='boolean'||!Array.isArray(data.current.devices)||data.current.devices.some(d=>!['idle','busy','unknown'].includes(d.state)||!Array.isArray(d.owners)||!Number.isInteger(d.process_count))||!data.history||!Array.isArray(data.history.series)||!Array.isArray(data.history.users))throw Error('GPU 监控返回了无效数据');state.data=data;state.error='';render();}
  catch(e){if(epoch===state.epoch){state.error=e.name==='AbortError'?'GPU 数据读取超时，稍后自动重试':e.message;render();}}
  finally{clearTimeout(timeout);if(epoch===state.epoch){state.controller=null;$('gpuRefresh').disabled=false;if(active())state.timer=setTimeout(load,15000);}}
 }
@@ -100,7 +104,7 @@ $('gpuPan').addEventListener('change',e=>{const offset=Number(e.target.max)-Numb
 let resizeTimer;window.addEventListener('resize',()=>{clearTimeout(resizeTimer);if(active())resizeTimer=setTimeout(renderHistory,150);});
 return {open(){render();load();},close:stop,reset(){stop();Object.assign(state,{data:null,error:'',selected:null,hours:6,step:0,end:null});$('gpuStep').value='0';replace('gpuCards','');replace('gpuProcessRows','');replace('gpuCharts','');replace('gpuRanking','');replace('gpuLegend','');$('gpuCoverage').textContent='';render();}};
 }
-window.GPUUI={create};
+window.GPUUI={create,view,ownerLabel};
 const root=document.getElementById('page-gpus');
 if(root)Object.assign(window.GPUUI,create(root,{request:(...args)=>api(...args),active:()=>!!platform.user&&platform.page==='gpus'}));
 })();

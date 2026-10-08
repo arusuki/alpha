@@ -21,7 +21,7 @@ def overview(query):
     for i,name in enumerate(['NVIDIA RTX 4090','NVIDIA RTX 4090','NVIDIA A100 80GB','NVIDIA A100 80GB']):
         process=[] if i==3 else [dict(pid=18920+i,name='python train.py' if i!=2 else '<img src=x onerror=alert(1)>',kind='C',memory_mib=12480,container_id='a'*64,container='research-alice' if i==0 else 'finetune-bob',owner='alice' if i==0 else 'bob',started_at=now-7260)]
         if i==1:process.append(dict(pid=21900,name='python evaluate.py',kind='C',memory_mib=4320,container_id='b'*64,container='research-alice',owner='alice',started_at=now-425))
-        devices.append(dict(uuid=f'GPU-test-{i}',index=i,name=name,utilization=[86,63,98,0][i],memory_used_mib=[18340,14840,61250,128][i],memory_total_mib=24576 if i<2 else 81920,temperature=[62,57,68,34][i],compute_mode='Default',mig=False,processes=process))
+        devices.append(dict(uuid=f'GPU-test-{i}',index=i,name=name,utilization=[86,63,98,0][i],memory_used_mib=[18340,14840,61250,128][i],memory_total_mib=24576 if i<2 else 81920,temperature=[62,57,68,34][i],compute_mode='Default',mig=False,processes=process,process_count=len(process),owners=sorted(set(p['owner'] for p in process)),state='unknown' if mode in ('stale','expired') else 'busy' if process else 'idle'))
         points=[]
         for n in range(min(864,math.ceil((end-start)/step))):
             if 70<n<80:continue
@@ -30,7 +30,7 @@ def overview(query):
             points.append(dict(at=start+n*step,utilization=0 if i==3 else round(max(0,min(100,60+22*math.sin(n/9+i)+12*math.sin(n/3)))),observed_seconds=step,owners=users))
         series.append(dict(uuid=f'GPU-test-{i}',name=name,points=points))
     if mode=='empty':devices=[];series=[]
-    return dict(now=now,sample_seconds=15,current=dict(at=now-100 if mode=='stale' else now,devices=devices,error='nvidia-smi 暂时不可用' if mode=='stale' else '',warning=''),history=dict(from_=start,to=end,step=step,series=series,users=[] if mode=='empty' else [dict(owner='alice',seconds=41.25*3600),dict(owner='bob',seconds=29.78*3600),dict(owner='host:root',seconds=2.41*3600)],since=now-58*3600))
+    return dict(now=now,sample_seconds=15,current=dict(at=now-100 if mode in ('stale','expired') else now,stale=mode in ('stale','expired'),devices=devices,error='nvidia-smi 暂时不可用' if mode=='stale' else '',warning=''),history=dict(from_=start,to=end,step=step,series=series,users=[] if mode=='empty' else [dict(owner='alice',seconds=41.25*3600),dict(owner='bob',seconds=29.78*3600),dict(owner='host:root',seconds=2.41*3600)],since=now-58*3600))
 
 class Handler(NodeHandler):
     def do_GET(self):
@@ -87,11 +87,25 @@ with sync_playwright() as p:
     mode='stale'
     with page.expect_response(lambda r:'/api/gpu/overview?' in r.url):page.locator('#gpuRefresh').click()
     page.wait_for_function("document.querySelector('#gpuStatus').dataset.error==='true'")
-    assert page.locator('.gpu-state').first.inner_text()=='数据过期'
+    assert page.locator('.gpu-state').first.inner_text()=='状态未知'
+    assert page.locator('.gpu-card[data-state=unknown]').count()==4
+    assert page.locator('#gpuBusy').inner_text()=='—' and page.locator('#gpuUsers').inner_text()=='—'
+    assert page.locator('.gpu-state').first.evaluate('(el) => getComputedStyle(el).color')=='rgb(119, 126, 122)'
+    mode='expired'
+    with page.expect_response(lambda r:'/api/gpu/overview?' in r.url):page.locator('#gpuRefresh').click()
+    page.wait_for_function("document.querySelector('#gpuStatus').textContent.includes('GPU 数据已过期')")
+    assert page.locator('.gpu-card[data-state=unknown]').count()==4
     mode='error'
     with page.expect_response(lambda r:'/api/gpu/overview?' in r.url):page.locator('#gpuRefresh').click()
     page.wait_for_function("document.querySelector('#gpuStatus').textContent.includes('节点离线')")
-    assert page.locator('.gpu-card').count()==4
+    assert page.locator('.gpu-card[data-state=unknown]').count()==4
+    mode='normal'
+    with page.expect_response(lambda r:'/api/gpu/overview?' in r.url):page.locator('#gpuRefresh').click()
+    page.wait_for_function("document.querySelector('#gpuBusy').textContent==='3'")
+    assert page.locator('.gpu-card[data-state=busy]').count()==3
+    assert page.locator('.gpu-card[data-state=idle]').count()==1
+    assert page.locator('.gpu-card[data-state=busy] .gpu-state').first.evaluate('(el) => getComputedStyle(el).color')=='rgb(173, 85, 29)'
+    assert page.locator('.gpu-card[data-state=idle] .gpu-state').first.evaluate('(el) => getComputedStyle(el).color')=='rgb(40, 115, 67)'
     mode='empty'
     with page.expect_response(lambda r:'/api/gpu/overview?' in r.url):page.locator('#gpuRefresh').click()
     page.wait_for_selector('#gpuEmpty',state='visible')

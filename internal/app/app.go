@@ -226,7 +226,6 @@ func Run(ctx context.Context, args []string) error {
 		}
 		defer proxy.Close()
 		storageHandler := storage.NewHandler(store, manager)
-		node := &cluster.Worker{Mihomo: proxy, Updates: updateManager, ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) { return inventory(db) }}
 		var watcher *process.Watcher
 		if source, err := process.Dial(*tetragonSocket); err != nil {
 			log.Printf("未启用容器进程监控：%v", err)
@@ -236,6 +235,11 @@ func Run(ctx context.Context, args []string) error {
 		}
 		gpuMonitor := gpu.NewMonitor(ctx, db)
 		defer gpuMonitor.Close()
+		node := &cluster.Worker{Mihomo: proxy, Updates: updateManager, ID: identity, Token: token, Tools: storageHandler.DispatchTools, Inventory: func() (cluster.Inventory, error) {
+			value, err := inventory(db)
+			value.GPU = gpuMonitor.Summary()
+			return value, err
+		}}
 		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher), GPU: gpuMonitor}
 		handler = node
 	} else if *registryMode {

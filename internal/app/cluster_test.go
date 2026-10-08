@@ -26,11 +26,11 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 		t.Fatal("worker should have no local account")
 	}
 	initial, err := inventory(db)
-	if err != nil || len(initial.Containers) != 0 {
+	if err != nil || len(initial.Containers) != 0 || len(initial.Filesystems) != 0 || initial.SnapshotID != "" {
 		t.Fatalf("empty inventory: %+v %v", initial, err)
 	}
 	id := strings.Repeat("a", 32)
-	metadata := `{"finished_at":"2026-09-30T10:00:00Z","containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
+	metadata := `{"finished_at":"2026-09-30T10:00:00Z","filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750},{"mount":"/data","fs":"xfs","total":2000,"used":0},{"mount":"/unknown","fs":"xfs","total":null,"used":null}],"containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
 	if _, err = db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',1,2,'{}')", id); err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +51,9 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 	}
 	if len(inv.Containers) != 3 || inv.SnapshotID != id {
 		t.Fatalf("wrong inventory: %+v", inv)
+	}
+	if len(inv.Filesystems) != 3 || inv.Filesystems[0].Mount != "/" || inv.Filesystems[0].FS != "ext4" || *inv.Filesystems[0].Used != 750 || *inv.Filesystems[0].Total != 1000 || *inv.Filesystems[1].Used != 0 || inv.Filesystems[2].Used != nil {
+		t.Fatalf("wrong disk capacities: %+v", inv.Filesystems)
 	}
 	for _, c := range inv.Containers {
 		if c.ID == "one" && (c.Name != "managed-name" || c.Owner != "alice" || !c.Managed || c.ObservedAt == "" || c.State != "running") {
