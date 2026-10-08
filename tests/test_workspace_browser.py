@@ -1,8 +1,8 @@
 """Workspace navigation and process regressions against deterministic local APIs."""
 import json
 from pathlib import Path
-from urllib.parse import urlparse
-from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
+from urllib.parse import parse_qs, urlparse
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server, snapshot_view
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -36,8 +36,8 @@ class Handler(NodeHandler):
             return self.respond(dict(user=user, csrf='test', setup_required=False))
         if path == '/api/state':
             return self.respond(dict(jobs=[job] if has_records else [], directory_jobs=[], latest_id=record if has_records else None, active=None, interval_minutes=30))
-        if path.endswith('/snapshot'):
-            return self.respond(sample)
+        if path.endswith('/view'):
+            return self.respond(snapshot_view(sample, parse_qs(urlparse(self.path).query).get('path', [''])[0]))
         if path.endswith('/changes'):
             return self.respond(dict(job_id=record, base_revision=7, revision=7,
                 metadata={k: v for k, v in sample.items() if k != 'tree'}, replacements=[], ancestors=[]))
@@ -113,7 +113,7 @@ try:
         page.locator('#authSubmit').click()
         page.wait_for_function('platform.latest !== null')
         assert page.locator('#page-dashboard').is_visible()
-        assert not any('/snapshot' in path for path in calls if path.startswith('/api/'))
+        assert not any('/view' in path for path in calls if path.startswith('/api/'))
         assert page.locator('#resultLoadingDialog').is_hidden()
         page.wait_for_function('getComputedStyle(document.querySelector(".workspace-art")).opacity === "1"')
         page.screenshot(path='/tmp/project-alpha-dashboard.png', full_page=True, animations='disabled')

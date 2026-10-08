@@ -12,13 +12,16 @@ import (
 )
 
 // Handler exposes storage routes through the authenticated platform server.
-type Handler struct{ *Service }
+type Handler struct {
+	*Service
+	views snapshotViewCache
+}
 
 func NewHandler(db *Store, manager *Manager) *Handler {
 	return &Handler{Service: NewService(db, manager)}
 }
 
-var jobRoute = regexp.MustCompile(`^/api/jobs/([a-f0-9]{32})(/cancel|/snapshot|/expand|/changes|/events|/overview|/containers|/owners|/container|/directory)?$`)
+var jobRoute = regexp.MustCompile(`^/api/jobs/([a-f0-9]{32})(/cancel|/view|/snapshot|/expand|/changes|/events|/overview|/containers|/owners|/container|/directory)?$`)
 
 func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
 	route, method := r.URL.Path, r.Method
@@ -152,6 +155,9 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if method == "GET" && action == "" {
 			job, err := db.job(id)
 			return 200, job, err
+		}
+		if method == "GET" && action == "/view" {
+			return s.serveSnapshotView(w, r, id)
 		}
 		if method == "GET" && action == "/snapshot" {
 			return s.serveSnapshot(w, r, id)

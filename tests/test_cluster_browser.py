@@ -137,7 +137,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             page.locator('.node-open').first.focus()
             page.evaluate('ClusterUI.refresh()')
             assert page.locator('.node-open').first.evaluate('(el) => el === document.activeElement'), 'refresh lost keyboard focus'
-            assert not any('/api/' in u and '/snapshot' in u for u in requests), 'control room loaded a node snapshot'
+            assert not any('/api/' in u and '/view' in u for u in requests), 'control room loaded a node snapshot'
             page.route(url + '/api/cluster/overview', lambda route: route.fulfill(status=503,
                        content_type='application/json', body=json.dumps(dict(error='临时连接失败'))), times=1)
             page.locator('#clusterRefresh').click()
@@ -226,7 +226,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             page.locator('#startScan').click()
             expect(page.locator('#resultContent')).to_be_visible(timeout=30000)
             assert page.evaluate('platform.loaded'), 'proxied snapshot failed to load'
-            assert any('/api/cluster/nodes/' + first['id'] + '/api/jobs/' in u and '/snapshot' in u for u in requests)
+            assert any('/api/cluster/nodes/' + first['id'] + '/api/jobs/' in u and '/view' in u for u in requests)
             # A report runs on the control and calls the selected worker's tools.
             csrf = page.evaluate('platform.csrf')
             report = context.request.post(url + '/api/cluster/nodes/' + first['id'] + '/api/agent/reports',

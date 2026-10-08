@@ -3,6 +3,7 @@ import json
 import mimetypes
 import os
 import threading
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -11,6 +12,12 @@ REPO = Path(__file__).resolve().parents[1]
 NODE_ID = 'e' * 32
 NODE_PATH = f'/nodes/{NODE_ID}/'
 PROXY_PATH = f'/api/cluster/nodes/{NODE_ID}'
+
+
+def snapshot_view(data, path=''):
+    result = subprocess.run(['node', str(REPO / 'tests/snapshot_view_fixture.js')],
+                            input=json.dumps(dict(data=data, path=path)), text=True, capture_output=True, check=True)
+    return json.loads(result.stdout)
 
 
 def launch_options():

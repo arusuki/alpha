@@ -51,12 +51,6 @@ function load(data, source, preparedUsage, preserveExplorer=false) {
   if (searchFocused && $('mapSearch')) { $('mapSearch').focus({preventScroll:true}); if(caret != null)$('mapSearch').setSelectionRange(caret,caret); }
   renderTask(platform.config && platform.config.value && platform.config.value.interval_minutes);
 }
-function rebuildUsage() {
-  if (!snapshot) return;
-  usage = Usage.build(snapshot);
-  if (ownerFilter !== null && !usage.owners.has(ownerFilter)) ownerFilter = null;
-  render();
-}
 function amount(bytes, row) {
   return `<span class="amount">${fmt(row.known ? bytes : null)}</span>${row.partial ? '<span class="sub incomplete">部分统计</span>' : ''}`;
 }
@@ -210,6 +204,12 @@ function renderExplorer() {
   const current = explorer.trail[explorer.trail.length-1], status = usage.inspect(current.path);
   if (!status.known) { explorer.trail = []; renderExplorer(); return; }
   const node = status.node;
+  if (usage.remote && !node.loaded) {
+    explorer.entries = [];
+    $('explorerContent').innerHTML = '<p class="explorer-empty" role="status">正在读取目录明细…</p>';
+    loadDirectoryView(node.path);
+    return;
+  }
   explorer.entries = Usage.directoryEntries(usage,node,hostOnly());
   if (explorer.focusKey) {
     const index = explorer.entries.findIndex(e => (e.path || e.kind) === explorer.focusKey);
@@ -239,6 +239,24 @@ function renderExplorer() {
   renderDirectoryMap(); refreshDirectoryScan();
   if (explorer.focus != null) showEntry(explorer.focus);
   $('mapSearch').addEventListener('input',e => { explorer.query = e.target.value; explorer.page = 0; explorer.unknownPage = 0; renderDirectoryMap(); });
+}
+let directoryViewLoad = null;
+async function loadDirectoryView(path) {
+  if (directoryViewLoad?.path === path && directoryViewLoad.base === snapshot) return;
+  if (directoryViewLoad) directoryViewLoad.controller.abort();
+  const pending={path,base:snapshot,controller:new AbortController(),generation:platform.generation,sequence:platform.loadSequence};
+  directoryViewLoad=pending;
+  const current=()=>directoryViewLoad===pending && !pending.controller.signal.aborted && snapshot===pending.base && platform.generation===pending.generation && platform.loadSequence===pending.sequence && explorer?.trail[explorer.trail.length-1]?.path===path;
+  try {
+    const prepared=await SnapshotLoader.read(viewURL(snapshot.job_id,true,path),{signal:pending.controller.signal});
+    if (!current()) return;
+    load(prepared.data,$('sourceBadge').textContent,prepared.usage,true);
+  } catch (error) {
+    if (!current() || error.name==='AbortError') return;
+    $('explorerContent').innerHTML=`<div class="explorer-empty" role="status"><p>${esc(error.message)}</p><button data-retry-directory>重试读取目录</button></div>`;
+  } finally {
+    if (directoryViewLoad===pending) directoryViewLoad=null;
+  }
 }
 function renderDirectoryMap() {
   const map = $('directoryMap');
@@ -337,6 +355,7 @@ document.addEventListener('click', e => {
     const sources = $('storageSources');
     sources.querySelector('[aria-pressed="true"]').focus({preventScroll:true});
   }
+  if (button.dataset.retryDirectory !== undefined) renderExplorer();
   if (button.dataset.storageEntry !== undefined) openDirectoryEntry(Number(button.dataset.storageEntry));
   if (button.dataset.storageUp !== undefined || button.dataset.storageCrumb !== undefined) {
     const length = button.dataset.storageUp !== undefined ? explorer.trail.length-1 : Number(button.dataset.storageCrumb)+1;

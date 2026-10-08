@@ -4,7 +4,7 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server, snapshot_view
 from playwright.sync_api import sync_playwright
 
 repo = Path(__file__).resolve().parents[1]
@@ -84,8 +84,8 @@ class Handler(NodeHandler):
                 return self.respond(dict(user=dict(id='admin', username='admin', role='admin'), csrf='test'))
             if path == '/api/state':
                 return self.respond(dict(jobs=[job], directory_jobs=[], latest_id=record_id, active=None, interval_minutes=0))
-            if path.endswith('/snapshot'):
-                return self.respond(sample)
+            if path.endswith('/view'):
+                return self.respond(snapshot_view(sample, parse_qs(urlparse(self.path).query).get('path', [''])[0]))
             if path.endswith('/events'):
                 self.send_response(204)
                 self.end_headers()

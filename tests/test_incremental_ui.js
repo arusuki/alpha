@@ -58,7 +58,12 @@ api=async(path,options={})=>{
  }
  throw Error('unexpected API '+path);
 };
-SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.stringify(sample));validate(data);return {data,usage:Usage.build(data)};};
+SnapshotLoader.read=async(path)=>{
+ calls.push({path});if(rejectChanges)throw Error('读取失败 <script>');
+ const data=JSON.parse(JSON.stringify(sample));validate(data);const prepared={data,usage:Usage.build(data)};
+ if(pauseChanges)return new Promise(resolve=>{resolveChanges=()=>resolve(prepared);});
+ return prepared;
+};
 `);
 (async()=>{
   assert(!element('explorerContent').innerHTML.includes('data-expand-path'),'no general directory toolbar action');
@@ -109,10 +114,9 @@ SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.
   assert(element('directoryMap').innerHTML.includes('deeper'));
   assert(!element('resultLoadingDialog').open,'incremental updates never open the full result loading dialog');
   assert.equal(run('calls.filter(c=>c.path.endsWith("/snapshot")).length'),0,'expansion must never download the entire snapshot');
-  assert.equal(run('calls.filter(c=>c.path.includes("/changes?revision=0")).length'),1);
-  assert(run('snapshot.tree.children.includes(untouchedBranch)'),'unrelated directory trees are reused');
+  assert.equal(run('calls.filter(c=>c.path.includes("/view?")).length'),1);
   assert.equal(run('usage.exclusive+usage.shared+usage.unrelated'),bytesBefore+1024,'global usage is rebuilt with the new tree');
-  const reads=run('calls.filter(c=>c.path.includes("/changes?")).length');await run('syncState()');assert.equal(run('calls.filter(c=>c.path.includes("/changes?")).length'),reads,'unchanged revision does not reload');
+  const reads=run('calls.filter(c=>c.path.includes("/view?")).length');await run('syncState()');assert.equal(run('calls.filter(c=>c.path.includes("/view?")).length'),reads,'unchanged revision does not reload');
   click({storageEntry:String(run(`explorer.entries.findIndex(e=>e.name==='deeper')`))});
   assert(element('directoryMap').innerHTML.includes('点击扫描并拆分'),'new deeper leaf can continue again');
   run('showEntry(explorer.entries.findIndex(e=>e.kind==="residual"));usage.nodes.get(explorer.trail[explorer.trail.length-1].path).omitted_entries=0;renderExplorer();showEntry(explorer.entries.findIndex(e=>e.kind==="residual"))');
@@ -174,9 +178,9 @@ SnapshotLoader.read=async(path)=>{calls.push({path});const data=JSON.parse(JSON.
   element('ownerForm').listeners.submit({preventDefault(){}});
   await new Promise(setImmediate);
   assert(run('ownerPatchController.signal.aborted'),'saving ownership invalidates an in-flight metadata patch');
-  assert.equal(run('snapshot.containers[0].owner'),'saved-new-owner');
-  run('resolveChanges()');
+  run('pauseChanges=false;resolveChanges()');
   assert.equal(await run('ownerPatch'),false);
+  await new Promise(setImmediate);
   assert.equal(run('snapshot.containers[0].owner'),'saved-new-owner','late metadata cannot undo a successful owner edit');
   assert.equal(run('snapshot.revision'),run('revisionBeforeOwnerEdit'),'aborted metadata does not advance the directory revision');
   // Repeated refreshes share one patch request, and session changes make late

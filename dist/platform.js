@@ -208,18 +208,15 @@ function startSnapshotStream() {
   const id=snapshot.job_id;
   if(platform.stream && platform.stream.id===id)return;
   stopSnapshotStream();
-  const stream={id,generation:platform.generation,source:new EventSource(apiURL(`/api/jobs/${encodeURIComponent(id)}/events?revision=${snapshot.revision}`))};
+  const stream={id,generation:platform.generation,source:new EventSource(apiURL(`/api/jobs/${encodeURIComponent(id)}/events?view=1&revision=${snapshot.revision}`))};
   platform.stream=stream;
   stream.source.addEventListener('changes',event=>{
     if(platform.stream!==stream || platform.generation!==stream.generation || !snapshot || snapshot.job_id!==id || platform.resultLoad || platform.changesLoad)return;
     try {
       const changes=JSON.parse(event.data);
       if(changes.revision<=snapshot.revision)return;
-      if(changes.base_revision!==snapshot.revision) { stopSnapshotStream();loadSnapshotChanges();return; }
-      const data=SnapshotData.applyChanges(snapshot,changes);
-      load(data,platform.followLatest?'最新扫描结果':'历史扫描结果',Usage.build(data),true);
-      platform.changesError=null;platform.skippedAutoLoad=null;
-      controls();
+      stopSnapshotStream();
+      loadSnapshotChanges();
     } catch(error) {
       stopSnapshotStream();
       platform.changesError={id,message:error.message};
@@ -227,7 +224,7 @@ function startSnapshotStream() {
     }
   });
   // Network interruptions reconnect automatically. State polling also repairs
-  // a missed update, using exactly the same versioned changes endpoint.
+  // a missed notification by reloading the current display view.
 }
 function renderResultLoading(p) {
   const stages=SnapshotLoader.stages, index=stages.findIndex(([key])=>key===p.stage);
@@ -270,18 +267,18 @@ function loadJob(id, historical=false, preserveExplorer=false) {
       $('resultLoadingJob').textContent=`任务 ${id.slice(0,8)}`;
       renderResultLoading({stage:'download',done:0,total:null,detail:'等待服务器读取扫描结果'});
       if(!$('resultLoadingDialog').open)$('resultLoadingDialog').showModal();
-      const prepared=await SnapshotLoader.read(apiURL(`/api/jobs/${encodeURIComponent(id)}/snapshot`),{changesURL:apiURL(`/api/jobs/${encodeURIComponent(id)}/changes`),signal:pending.controller.signal,scope:platform.user.id,onProgress:p=>{if(current())renderResultLoading(p);}});
+      const prepared=await SnapshotLoader.read(viewURL(id,preserveExplorer),{signal:pending.controller.signal,onProgress:p=>{if(current())renderResultLoading(p);}});
       if(!current())return false;
       renderResultLoading({stage:'render',done:0,total:1,unit:'个视图',detail:'展示磁盘概览、容器排行与目录明细'});
       // Let the browser paint and handle cancellation before committing the new
-      // result. All tree parsing and accounting has already finished in Worker.
+      // result. Accounting has already been completed by the server.
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       if(!current())return false;
       load(prepared.data,historical?'历史扫描结果':'最新扫描结果',prepared.usage,preserveExplorer);
       platform.loaded=id;platform.followLatest=!historical;platform.skippedAutoLoad=null;
       platform.changesError=null;
       $('resultContent').hidden=false;$('firstScan').hidden=true;
-      renderHistory();controls();message(prepared.cacheError || '');refreshSnapshotCache();startSnapshotStream();
+      renderHistory();controls();message('');startSnapshotStream();
       return true;
     } catch(error) {
       if(error.name==='AbortError' || !current())return false;
@@ -299,21 +296,22 @@ function loadJob(id, historical=false, preserveExplorer=false) {
   })();
   return pending.promise;
 }
+function viewURL(id,preserve=true,path) {
+  const current=path ?? (preserve && explorer?.trail.length ? explorer.trail[explorer.trail.length-1].path : '');
+  return apiURL(`/api/jobs/${encodeURIComponent(id)}/view${current ? '?path='+encodeURIComponent(current) : ''}`);
+}
 function loadSnapshotChanges() {
   if(platform.changesLoad)return platform.changesLoad.promise;
   if(!snapshot || !platform.loaded || platform.resultLoad)return Promise.resolve(false);
-  const base=snapshot, id=platform.loaded;
+  const base=snapshot, id=platform.loaded, requestedURL=viewURL(platform.loaded);
   const pending={id,controller:new AbortController(),generation:platform.generation,sequence:platform.loadSequence};
   platform.changesLoad=pending;platform.changesError=null;
   const current=()=>!pending.controller.signal.aborted && pending.generation===platform.generation && pending.sequence===platform.loadSequence && snapshot===base && platform.loaded===id;
   pending.promise=(async()=>{
     try {
-      const changes=await api(`/api/jobs/${encodeURIComponent(id)}/changes?revision=${base.revision || 0}`,{signal:pending.controller.signal});
-      if(!current())return false;
-      const data=SnapshotData.applyChanges(base,changes);
-      const nextUsage=Usage.build(data);
-      if(!current())return false;
-      load(data,platform.followLatest?'最新扫描结果':'历史扫描结果',nextUsage,true);
+      const prepared=await SnapshotLoader.read(requestedURL,{signal:pending.controller.signal});
+      if(!current() || viewURL(id)!==requestedURL)return false;
+      load(prepared.data,platform.followLatest?'最新扫描结果':'历史扫描结果',prepared.usage,true);
       platform.skippedAutoLoad=null;
       renderHistory();controls();startSnapshotStream();
       return true;
@@ -349,7 +347,7 @@ function showPage(page,navigate=true) {
   document.querySelectorAll('.platform-page').forEach(el=>el.hidden=el.id!==`page-${page}`);
   document.querySelectorAll('.platform-nav [data-page]').forEach(el=>{const active=el.dataset.page===(storage?'overview':page);el.classList.toggle('active',active);el.setAttribute('aria-current',active?'page':'false');});
   document.querySelectorAll('#storageNav [data-page]').forEach(el=>el.setAttribute('aria-current',el.dataset.page===page?'page':'false'));
-  $('snapshotCachePanel').hidden=!storage;if(storage)refreshSnapshotCache();
+
   $('storageNav').hidden=!storage;$('storageMonitor').hidden=!['overview','history'].includes(page);
   $('scanActions').hidden=!['overview','history'].includes(page);$('hostInfo').hidden=!storage;$('dashboardRefresh').hidden=page!=='dashboard';
   if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$(page==='cluster'?'clusterTitle':'pageTitle').focus?.({preventScroll:true});}
@@ -368,44 +366,6 @@ function showPage(page,navigate=true) {
   if(page==='cleanup')window.CleanupUI?.open();else window.CleanupUI?.close();
 }
 window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||(!platform.nodeID?'cluster':'dashboard'),false));
-let cacheListSequence = 0;
-async function refreshSnapshotCache() {
-  const scope=platform.user?.id, generation=platform.generation, sequence=++cacheListSequence;
-  if(!scope)return;
-  const current=()=>generation===platform.generation && sequence===cacheListSequence;
-  try {
-    const rows=await SnapshotCache.list(scope);
-    if(!current())return;
-    rows.sort((a,b)=>b.savedAt-a.savedAt);
-    $('snapshotCacheSummary').textContent=`${rows.length} 条 · ${fmt(rows.reduce((sum,row)=>sum+row.size,0))}`;
-    $('clearSnapshotCache').disabled=!rows.length;
-    $('snapshotCacheError').textContent='';
-    $('snapshotCacheRows').innerHTML=rows.map(row=>`<tr><td>${esc(row.jobId || '扫描结果')}<span class="sub">${esc(row.host || '')}</span></td><td>${esc(dateTime(row.savedAt/1000))}</td><td class="amount" title="${row.size} 字节">${fmt(row.size)}</td><td><button data-delete-cache="${esc(row.url)}">删除缓存</button></td></tr>`).join('') || '<tr><td colspan="4" class="empty">暂无本地缓存，打开扫描结果后会自动缓存。</td></tr>';
-  } catch (_) {
-    if(!current())return;
-    $('snapshotCacheSummary').textContent='缓存不可用';
-    $('snapshotCacheError').textContent='无法访问浏览器本地缓存，请检查浏览器的存储设置。';
-    $('snapshotCacheRows').innerHTML='';$('clearSnapshotCache').disabled=true;
-  }
-}
-async function deleteSnapshotCache(url,button) {
-  const scope=platform.user?.id,generation=platform.generation;
-  if(!scope)return;
-  button.disabled=true;
-  try {
-    await SnapshotCache.remove(scope,url);
-    if(generation!==platform.generation)return;
-    button.disabled=false;
-    await refreshSnapshotCache();
-    message(url?'已删除本地缓存，下次打开结果时将重新下载。':'已清空本地缓存，下次打开结果时将重新下载。');
-  } catch (_) {
-    if(generation===platform.generation){button.disabled=false;$('snapshotCacheError').textContent='删除本地缓存失败，请重试。';}
-  }
-}
-$('clearSnapshotCache').addEventListener('click',e=>deleteSnapshotCache(null,e.currentTarget));
-$('snapshotCacheRows').addEventListener('click',e=>{const button=e.target.closest('[data-delete-cache]');if(button)deleteSnapshotCache(button.dataset.deleteCache,button);});
-$('snapshotCachePanel').addEventListener('toggle',()=>{if($('snapshotCachePanel').open)refreshSnapshotCache();});
-window.addEventListener('focus',()=>{if(platform.user && !$('snapshotCachePanel').hidden)refreshSnapshotCache();});
 function renderHistory() {
   $('jobsBody').innerHTML=platform.history.filter(j=>j.trigger!=='incremental').map(j=>`<tr class="${j.id===platform.loaded?'history-selected':''}"><td>${esc(dateTime(j.created_at))}<span class="sub">${esc(j.created_by)} · ${esc(triggerNames[j.trigger]||j.trigger)} · ${esc(j.id.slice(0,8))}${j.snapshot_revision ? ` · 明细版本 ${j.snapshot_revision}` : ''}</span></td><td><span class="pill status-${esc(j.status)}">${esc(statusNames[j.status]||j.status)}</span>${j.warnings?`<span class="sub">${j.warnings} 条扫描提示</span>`:''}</td><td class="amount">${fmt(j.allocated)}</td><td>${j.status==='completed'?`<button data-open-job="${esc(j.id)}">查看结果</button> `:''}<button data-job-detail="${esc(j.id)}">详情</button>${platform.user && platform.user.role==='admin'?` <button class="danger" data-delete-job="${esc(j.id)}" ${['queued','running','cancelling'].includes(j.status)?'disabled title="任务结束后可删除"':''}>删除</button>`:''}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">还没有扫描记录。任务开始后会自动保存在这里。</td></tr>';
   $('moreHistory').hidden=platform.historyExhausted || platform.history.length<50;
@@ -524,13 +484,12 @@ $('reloadAudit').addEventListener('click',()=>act(()=>loadAccounts(),$('reloadAu
 let ownerId;
 $('closeOwner').addEventListener('click',()=>$('ownerDialog').close());
 $('ownerForm').addEventListener('submit',e=>{e.preventDefault();act(async()=>{
-  const response=await api('/api/owners',{method:'PUT',body:JSON.stringify({container_id:ownerId,owner:$('ownerInput').value})});
-  // An in-flight patch may contain the previous owner overlay. Discard it;
-  // the next poll will read the same directory revision with the saved owner.
-  if(platform.changesLoad)platform.changesLoad.controller.abort();
+  await api('/api/owners',{method:'PUT',body:JSON.stringify({container_id:ownerId,owner:$('ownerInput').value})});
+  if(platform.changesLoad){platform.changesLoad.controller.abort();await platform.changesLoad.promise;}
   stopSnapshotStream();
-  snapshot.containers.forEach(c=>{c.owner=response.owners[c.id] ?? c.label_owner;});
-  $('ownerDialog').close();rebuildUsage();startSnapshotStream();message('容器所属用户已保存，用户用量已更新。');
+  if(directoryViewLoad){directoryViewLoad.controller.abort();directoryViewLoad=null;}
+  $('ownerDialog').close();
+  if(await loadSnapshotChanges())message('容器所属用户已保存，用户用量已更新。');
 },e.submitter);});
 async function expandLeaf(path) {
   if(!platform.user || platform.user.role!=='admin' || !snapshot || platform.active || platform.expandStarting || platform.changesLoad || platform.changesError && platform.changesError.id===snapshot.job_id) return;

@@ -1,7 +1,7 @@
 import copy,json,threading,time,mimetypes
 from pathlib import Path
 from urllib.parse import urlparse,parse_qs
-from browser_support import NodeHandler, NODE_PATH, launch_options, start_server
+from browser_support import NodeHandler, NODE_PATH, launch_options, start_server, snapshot_view
 from playwright.sync_api import sync_playwright
 root=Path(__file__).resolve().parents[1]/'dist';g=1024**3
 sample=json.loads((root.parent/'tests/fixtures/snapshot.json').read_text());id='a'*32
@@ -44,14 +44,14 @@ class Handler(NodeHandler):
    try:
     for _ in range(120):
      with lock:batch=copy.deepcopy([u for u in updates if u['revision']>cursor])
-     for u in batch:self.wfile.write(('id: '+str(u['revision'])+'\nevent: changes\ndata: '+json.dumps(u)+'\n\n').encode());cursor=u['revision']
+     for u in batch:self.wfile.write(('id: '+str(u['revision'])+'\nevent: changes\ndata: '+json.dumps(dict(job_id=id,revision=u['revision']))+'\n\n').encode());cursor=u['revision']
      self.wfile.write(b': heartbeat\n\n');self.wfile.flush();time.sleep(.05)
    except (BrokenPipeError,ConnectionResetError):pass
    return
   with lock:
    if path=='/api/session':value=dict(user=dict(id='admin',username='admin',role='admin'),csrf='test')
    elif path=='/api/state':value=state
-   elif path.endswith('/snapshot'):value=sample
+   elif path.endswith('/view'):value=snapshot_view(sample,parse_qs(parsed.query).get('path',[''])[0])
    elif path.endswith('/changes'):
     revision=int(parse_qs(parsed.query)['revision'][0]);changes=[u for u in updates if u['revision']>revision]
     if changes:value=patch(revision,sample,changes[-1]['replacements'][0]['path'])
@@ -81,7 +81,7 @@ with sync_playwright() as p:
  assert page.locator('#taskScanned').inner_text()=='60 GiB'
  assert '30 GiB' in page.locator('#taskCapacityNote').inner_text()
  assert page.locator('#jobsBody tr').count()==1
- page.locator('#containerChart [data-container]').first.click()
+ page.locator('#containerChart [data-container]').first.click();page.wait_for_function('explorer && explorer.entries.some(e=>e.pending)')
  gray=page.locator('.map-tile').filter(has_text='子目录待分析的历史占用')
  gray.click();page.wait_for_function('snapshot.revision===1')
  assert page.locator('.map-tile').filter(has_text='MNIST-v2').count()==1
@@ -104,9 +104,9 @@ with sync_playwright() as p:
  page.set_viewport_size(dict(width=390,height=844))
  assert page.locator('#containerDialog').evaluate('(e)=>e.scrollWidth<=e.clientWidth')
  # State tiles and the map stay within the mobile dialog.
- assert len([r for r in requests if r.endswith('/snapshot')])==1,requests
+ assert not any(r.endswith('/snapshot') or r.endswith('/changes') for r in requests),requests
  assert not errors,errors
  assert len([r for r in requests if r.endswith('/events')])>=1
- print('Chromium live map passed: cumulative history, direct gray click, SSE split 30 → 20+10 → 20+5+5, search focus preserved, container/Host drilldown, mobile layout, one initial snapshot download, no page errors.')
+ print('Chromium live map passed: cumulative history, direct gray click, SSE split 30 → 20+10 → 20+5+5, search focus preserved, container/Host drilldown, mobile layout, display views only, no page errors.')
  browser.close()
 server.shutdown()

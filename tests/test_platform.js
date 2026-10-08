@@ -27,26 +27,26 @@ var sample=JSON.parse(sampleText);sample.containers.forEach(c=>c.label_owner=c.o
 var calls=[];
 var job={id:'a'.repeat(32),created_at:100,status:'completed',trigger:'manual',created_by:'admin',snapshot_revision:0,allocated:123,progress:{phase:'completed',entries:12},finished_at:101};
 var config={revision:1,value:{root:['/srv'],exclude:[],no_docker:true,include_docker_root:false,max_depth:5,max_nodes:50000,docker_timeout:120,owner_label:'project-alpha.owner',interval_minutes:0,scan_backend:'auto',scan_mode:'normal'}};
-var responses={'/api/state':{jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0},['/api/jobs/'+job.id+'/snapshot']:sample};
+var responses={'/api/state':{jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0},['/api/jobs/'+job.id+'/view']:sample};
 `,sandbox);
 vm.runInContext(`
 responses['/api/settings']=config;
 api=async function(path,options={}){
   calls.push({path,options});
   if(path==='/api/settings' && options.method==='PUT'){config={revision:2,value:JSON.parse(options.body).value};responses[path]=config;return config;}
-  if(path==='/api/owners')return {owners:{[sample.containers[0].id]:'alice'}};
+  if(path==='/api/owners'){sample.containers[0].owner='alice';return {owners:{[sample.containers[0].id]:'alice'}};}
   if(path==='/api/logout')return {ok:true};
   if(!(path in responses))throw Error('Unexpected API '+path);
   return responses[path];
 };
-SnapshotLoader.read=async function(path){const data=await api(path);validate(data);return {data,usage:Usage.build(data)};};`,sandbox);
+SnapshotLoader.read=async function(path){const data=await api(path.split('?')[0]);validate(data);return {data,usage:Usage.build(data)};};`,sandbox);
 const run=code=>vm.runInContext(code,sandbox);
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 (async()=>{
   run('showAuth(true)');assert(element('authTitle').textContent.includes('初始化'));assert(element('console').hidden);
   await run('enter({user:{id:"admin-id",username:"admin",role:"admin"},csrf:"test"})');
   assert.equal(run('platform.page'),'dashboard');assert.equal(run('platform.loaded'),null);
-  assert(!run('calls.some(c=>c.path.endsWith("/snapshot"))'),'login must not download a snapshot');
+  assert(!run('calls.some(c=>c.path.endsWith("/view"))'),'login must not download a snapshot');
   run('showPage("overview")');await run('syncState()');if(run('platform.resultLoad'))await run('platform.resultLoad.promise');
   assert(!element('console').hidden);assert(!element('resultContent').hidden);assert.equal(run('platform.loaded'),'a'.repeat(32));
   run("snapshot.filesystems.push({device:'virtual',mount:'/run',fs:'tmpfs',total:50*1024**3,used:0,available:50*1024**3,scanned:0,unexplained:0});renderScanSummary(0)");
@@ -129,7 +129,7 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   assert.equal(element('taskFill').style.width,'100%');assert.equal(element('taskMeter').attributes['aria-valuenow'],'100');
   assert(element('taskPercent').textContent.includes('120%'));assert(element('taskContainers').textContent.includes('无容器'));
   run('platform.active=null;select("container",snapshot.containers[0])');assert(element('detail').innerHTML.includes('data-edit-owner'));
-  run('ownerId=snapshot.containers[0].id');element('ownerInput').value='alice';
+  run('platform.loaded=snapshot.job_id;ownerId=snapshot.containers[0].id');element('ownerInput').value='alice';
   element('ownerForm').listeners.submit({preventDefault(){}});await flush();
   assert(run('usage.owners.has("alice")'));assert(element('detail').innerHTML.includes('alice'));
   run('showPage("overview")');await run('syncState()');
@@ -144,7 +144,7 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   assert.equal(run('platform.loaded'),run('job.id'));assert(!element('confirmDeleteJob').disabled);
   run(`
     var olderJob={...job,id:'b'.repeat(32),created_at:90};
-    responses['/api/jobs/'+olderJob.id+'/snapshot']={...sample,job_id:olderJob.id};
+    responses['/api/jobs/'+olderJob.id+'/view']={...sample,job_id:olderJob.id};
     api=async(path,options={})=>{
       if(options.method==='DELETE'){
         calls.push({path,options});
@@ -177,9 +177,9 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
     SnapshotLoader.read=function(path,options){return new Promise((resolve,reject)=>pendingReads.push({path,options,resolve,reject}));};
     showPage('history');
     var cancelledRead=loadJob('cancel-test',true);
-    pendingReads[0].options.onProgress({stage:'parse',done:0,total:null,bytes:123456,detail:'解析 JSON 文档'});
+    pendingReads[0].options.onProgress({stage:'download',done:0,total:null,bytes:123456,detail:'读取展示数据'});
   `);
-  assert(element('resultLoadingDialog').open);assert.equal(element('resultLoadingPhase').textContent,'解析 JSON 文档');
+  assert(element('resultLoadingDialog').open);assert.equal(element('resultLoadingPhase').textContent,'读取展示数据');
   assert(!('aria-valuenow' in element('resultLoadingMeter').attributes));
   run(`pendingReads[0].options.onProgress({stage:'aggregate',done:200,total:1000,unit:'节点',detail:'汇总空间用量'})`);
   assert.equal(element('resultLoadingPercent').textContent,'20%');assert(element('resultLoadingCount').textContent.includes('200 节点 / 1,000 节点'));

@@ -20,7 +20,28 @@ func (s *Handler) streamSnapshot(w http.ResponseWriter, r *http.Request, id stri
 	if err != nil || revision < 0 {
 		return 0, nil, httpapi.NewError(400, "请提供当前扫描记录版本")
 	}
-	changes, err := s.Changes(id, revision)
+	readChanges := func() (object, error) {
+		if r.URL.Query().Get("view") != "1" {
+			return s.Changes(id, revision)
+		}
+		job, err := s.Job(id)
+		if err != nil {
+			return nil, err
+		}
+		if job["status"] != "completed" {
+			return nil, httpapi.NewError(409, "该任务尚未生成完整结果")
+		}
+		var head int64
+		err = s.DB.SQL.QueryRow("SELECT coalesce((SELECT revision FROM snapshot_records WHERE job_id=?),0)", id).Scan(&head)
+		if err != nil {
+			return nil, err
+		}
+		if revision > head {
+			return nil, httpapi.NewError(409, "扫描记录版本超前，请重新打开结果")
+		}
+		return object{"job_id": id, "revision": head}, nil
+	}
+	changes, err := readChanges()
 	if err != nil {
 		return 0, nil, err
 	}
@@ -61,7 +82,7 @@ func (s *Handler) streamSnapshot(w http.ResponseWriter, r *http.Request, id stri
 			return 0, nil, nil
 		}
 		if head > revision {
-			changes, err = s.Changes(id, revision)
+			changes, err = readChanges()
 			if err != nil {
 				return 0, nil, nil
 			}

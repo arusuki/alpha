@@ -10,15 +10,18 @@ Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，
 
 | 接口 | 参数及结果 |
 |---|---|
+| `GET /api/jobs/:id/view?path=/srv/data` | 服务端计算的全局用量、来源摘要和当前目录一层明细；省略 path 时打开扫描根 |
 | `GET /api/jobs/:id/snapshot` | 当前已提交的完整记录，含 `revision` |
 | `GET /api/jobs/:id/changes?revision=N` | N 之后的目录替换、祖先统计与元数据 |
-| `GET /api/jobs/:id/events?revision=N` | 同一差量结果的 SSE 推送 |
+| `GET /api/jobs/:id/events?revision=N` | 同一差量结果的 SSE 推送；`view=1` 时仅通知最新版本 |
 | `GET /api/jobs/:id/overview` | 全盘摘要、设备和容器用量、完整性 |
 | `GET /api/jobs/:id/containers` | `query`、`sort_by`、`offset`、`limit`；默认按 exclusive 排序 |
 | `GET /api/jobs/:id/owners` | `offset`、`limit`；用户去重用量与跨用户共享 |
 | `GET /api/jobs/:id/container?container=ID_OR_NAME` | 容器详情与物理目录来源 |
 | `GET /api/jobs/:id/directory?path=/srv/data` | `path`、`offset`、`limit`；目录明细和已保存的文件统计 |
 | `POST /api/jobs/:id/expand` | `{ "path": "/srv/data", "revision": 0, "depth": 8 }`；返回 202 和目录任务 |
+
+网页使用 `view` 按需读取展示数据，不下载或本地缓存完整快照，也不在浏览器解析全树、计算归属。目录下钻只读取当前层；SSE 通知后重新读取当前视图，保留选择、路径和搜索条件。后端每个 Handler 最多缓存一份已解析记录和统计索引，目录版本、归属或基线文件变化时失效，读取缓存仍校验登录和记录存在。
 
 分页默认 `offset=0, limit=30`，最多 50 条。查询响应包含原记录 ID、`revision` 和 `updated_at`，不触发扫描。当前网页的“继续分析”使用同一个 `Explore` 实现；探索更新原记录，结果通过已有轮询和 SSE 显示。
 

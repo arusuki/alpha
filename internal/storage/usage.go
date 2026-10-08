@@ -27,6 +27,8 @@ type usageIndex struct {
 	Containers                               map[string]*ContainerUsage
 	Owners                                   map[string]*OwnerUsage
 	HostAllocated, ContainerAllocated        map[string]int64
+	HostApparent                             map[string]int64
+	HostVisible, Incomplete                  map[string]bool
 	HostOnly                                 map[string]bool
 	HostBlockers                             map[string]hostBlocker
 	Exclusive, Shared, CrossOwner, Unrelated int64
@@ -69,7 +71,7 @@ func buildUsage(s *Snapshot) *usageIndex {
 	u := &usageIndex{
 		Nodes: map[string]*Node{}, Containers: map[string]*ContainerUsage{}, Owners: map[string]*OwnerUsage{},
 		HostAllocated: map[string]int64{}, ContainerAllocated: map[string]int64{}, HostOnly: map[string]bool{},
-		HostBlockers: map[string]hostBlocker{},
+		HostBlockers: map[string]hostBlocker{}, HostApparent: map[string]int64{}, HostVisible: map[string]bool{}, Incomplete: map[string]bool{},
 	}
 	for _, c := range s.Containers {
 		u.Containers[c.ID] = &ContainerUsage{Container: c}
@@ -229,7 +231,7 @@ func buildUsage(s *Snapshot) *usageIndex {
 			pending = append(pending, n.Children...)
 		}
 	}
-	incomplete := stringSet{}
+	incomplete := u.Incomplete
 	for i := len(order) - 1; i >= 0; i-- {
 		n := order[i]
 		bad := n.Scanning || n.SizeUnknown || n.Errors > 0 || n.Excluded > 0 || n.Kind == "excluded" || n.Kind == "unreadable" || (n.Kind == "reference" && u.resolve(n.Path) == nil)
@@ -275,6 +277,8 @@ func buildUsage(s *Snapshot) *usageIndex {
 		}
 		ids := claims[n.Path]
 		hostBytes, containerBytes := int64(0), int64(0)
+		apparent, hostApparent := n.Apparent, int64(0)
+		visible := len(ids) == 0
 		// Aggregate failures propagate from their actual child in the reference
 		// graph, preserving the path that explains why a parent is blocked.
 		local := *n
@@ -289,14 +293,19 @@ func buildUsage(s *Snapshot) *usageIndex {
 		}
 		for _, ch := range n.Children {
 			hostBytes += u.HostAllocated[ch.Path]
+			apparent -= ch.Apparent
+			hostApparent += u.HostApparent[ch.Path]
+			visible = visible || u.HostVisible[ch.Path]
 			containerBytes += u.ContainerAllocated[ch.Path]
 		}
 		if len(ids) == 0 {
 			hostBytes += bytes
+			hostApparent += max(int64(0), apparent)
 		} else {
 			containerBytes += bytes
 		}
 		u.HostAllocated[n.Path] = hostBytes
+		u.HostApparent[n.Path], u.HostVisible[n.Path] = hostApparent, visible
 		u.ContainerAllocated[n.Path] = containerBytes
 		if blocker.Code == "" && hostBytes+containerBytes != n.Allocated {
 			blocker = hostBlocker{n.Path, "inconsistent_totals", "父子目录容量汇总不一致"}
