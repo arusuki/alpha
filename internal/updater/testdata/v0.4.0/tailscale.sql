@@ -1,4 +1,4 @@
--- Source: v0.3.1 internal/tailscale/schema.sql (schema 33).
+-- Source: v0.4.0 internal/tailscale/schema.sql (schema 34).
 CREATE TABLE tailscale_settings (
  id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL,
  tailnet TEXT NOT NULL, token_ciphertext TEXT NOT NULL

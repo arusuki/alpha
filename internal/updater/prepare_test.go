@@ -21,7 +21,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 		t.Run(fmt.Sprint(tamper), func(t *testing.T) {
 			db := oldDatabase(t, "registry")
 			bin := t.TempDir()
-			original := script("project-alpha", "v0.3.1")
+			original := script("project-alpha", "v0.4.0")
 			writeFile(t, filepath.Join(bin, "project-alpha"), original)
 			lock, err := db.LockService()
 			if err != nil {
@@ -36,7 +36,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 			if prepared == nil {
 				t.Fatal("missing staged release")
 			}
-			assertVersion(t, db, 33)
+			assertVersion(t, db, 34)
 			got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 			if string(got) != string(original) {
 				t.Fatal("preparation replaced running program")
@@ -61,7 +61,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "checksum changed") {
 					t.Fatal(err)
 				}
-				assertVersion(t, db, 33)
+				assertVersion(t, db, 34)
 				got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 				if string(got) != string(original) {
 					t.Fatal("tampered update modified installation")
@@ -96,13 +96,13 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestPublishedNoticeDownloadsWithoutAPI(t *testing.T) {
 	db := oldDatabase(t, "registry")
 	bin := t.TempDir()
-	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.3.1"))
-	g := releaseServer(t, script("alpha-updater", "v0.3.2"), false)
+	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.4.0"))
+	g := releaseServer(t, script("alpha-updater", "v0.5.4"), false)
 	transport := g.client.Transport
 	requests := 0
 	g.client = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
-		if r.URL.Host != "github.com" || !strings.HasPrefix(r.URL.Path, "/arusuki/alpha/releases/download/v0.3.2/") {
+		if r.URL.Host != "github.com" || !strings.HasPrefix(r.URL.Path, "/arusuki/alpha/releases/download/v0.5.4/") {
 			t.Errorf("unexpected API request: %s", r.URL)
 			return nil, fmt.Errorf("API blocked")
 		}
@@ -116,7 +116,7 @@ func TestPublishedNoticeDownloadsWithoutAPI(t *testing.T) {
 		forwarded, _ := http.NewRequestWithContext(r.Context(), "GET", g.base+"/assets/"+name, nil)
 		return transport.RoundTrip(forwarded)
 	})}
-	o := options{role: "registry", directory: db.Directory, binDir: bin, tag: "v0.3.2", published: true, prepare: func(p *PreparedUpdate) error { return nil }}
+	o := options{role: "registry", directory: db.Directory, binDir: bin, tag: "v0.5.4", published: true, prepare: func(p *PreparedUpdate) error { return nil }}
 	if err := run(context.Background(), o, g, io.Discard); err != nil {
 		t.Fatal(err)
 	}

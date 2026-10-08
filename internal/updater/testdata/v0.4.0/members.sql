@@ -1,4 +1,4 @@
--- Source: v0.3.1 internal/members/schema.sql (schema 33).
+-- Source: v0.4.0 internal/members/schema.sql (schema 34).
 CREATE TABLE member_registration_schema (
  id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, fields TEXT NOT NULL
 );
@@ -12,7 +12,7 @@ CREATE TABLE member_invitations (
 );
 CREATE TABLE members (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE,
- profile TEXT NOT NULL, registration_schema TEXT NOT NULL,
+ profile TEXT NOT NULL, registration_schema TEXT NOT NULL, registration_containers TEXT NOT NULL,
  password_hash TEXT NOT NULL, password_ciphertext TEXT NOT NULL,
  ssh_public_key TEXT NOT NULL, resource_token_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL CHECK(status IN ('active','deleting')),
  -- Registration provenance survives invitation deletion and binds registry retries.

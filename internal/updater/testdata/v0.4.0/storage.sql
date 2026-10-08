@@ -1,4 +1,4 @@
--- Source: v0.3.1 internal/storage/schema.sql (schema 33).
+-- Source: v0.4.0 internal/storage/schema.sql (schema 34).
 CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, status TEXT NOT NULL, trigger TEXT NOT NULL, created_by TEXT NOT NULL,
@@ -8,6 +8,7 @@ CREATE TABLE jobs (
 CREATE INDEX idx_jobs_created ON jobs(created_at DESC);
 CREATE UNIQUE INDEX idx_jobs_active ON jobs((1)) WHERE status IN ('queued','running','cancelling');
 CREATE TABLE owners (container_id TEXT PRIMARY KEY, owner TEXT NOT NULL);
+CREATE UNIQUE INDEX owners_one_container ON owners(owner) WHERE owner<>'';
 CREATE TABLE snapshot_records (
  job_id TEXT PRIMARY KEY REFERENCES jobs(id) ON DELETE CASCADE,
  revision INTEGER NOT NULL,

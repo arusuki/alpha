@@ -1,4 +1,4 @@
--- Source: v0.3.1 internal/bastion/schema.sql (schema 33).
+-- Source: v0.4.0 internal/bastion/schema.sql (schema 34).
 CREATE TABLE bastion_ssh_settings (
  id INTEGER PRIMARY KEY CHECK(id=1), identity_file TEXT NOT NULL DEFAULT '',
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)

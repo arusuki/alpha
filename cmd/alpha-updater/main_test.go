@@ -38,7 +38,6 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 	}{
 		{"control", cluster.Initialize, 34, "DROP TABLE member_key_sync; DROP TABLE member_key_revocations", []string{"members", "member_invitations"}, false},
 		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals", []string{"managed_containers", "owners", "member_container_slots"}, false},
-		{"worker", app.Initialize, 33, "DROP TABLE gpu_intervals; DROP INDEX member_slot_container; DROP INDEX managed_container_owner; DROP INDEX owners_one_container; ALTER TABLE member_container_slots DROP COLUMN container_id; ALTER TABLE member_container_slots DROP COLUMN mode", []string{"managed_containers", "owners"}, false},
 		{"worker", app.Initialize, 34, "DROP TABLE gpu_intervals", []string{"managed_containers", "owners", "member_container_slots"}, false},
 		{"worker", app.Initialize, 36, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
 		{"control", cluster.Initialize, 36, "", []string{"members", "member_invitations"}, false},
@@ -46,6 +45,21 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		{"worker", app.Initialize, 36, "CREATE TRIGGER reject_schedule_upgrade BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'schedule upgrade rejected'); END", []string{"managed_containers", "owners", "member_container_slots", "settings"}, true},
 		{"registry", registry.Initialize, 35, "", []string{"registry_control", "registry_sessions"}, false},
 		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals; CREATE TABLE gpu_intervals_expiry(value TEXT); INSERT INTO gpu_intervals_expiry VALUES('preserve')", []string{"managed_containers", "owners", "member_container_slots", "gpu_intervals_expiry"}, true},
+	}
+	// Unsupported versions use ordinary data with a rejected version marker;
+	// no expired schema fixtures or migrations are retained.
+	for _, version := range []int{1, platform.DatabaseVersion + 1} {
+		for _, role := range []string{"control", "worker", "registry"} {
+			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
+			cases = append(cases, struct {
+				role       string
+				initialize func(*sql.Tx) error
+				version    int
+				downgrade  string
+				tables     []string
+				conflict   bool
+			}{role, initialize, version, "", nil, true})
+		}
 	}
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, tc := range cases {
@@ -84,18 +98,6 @@ INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VAL
 INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					if err != nil {
 						t.Fatal(err)
-					}
-				}
-
-				if tc.role == "worker" && tc.version == 33 {
-					triggers, e := platform.Rows(db.SQL, "SELECT name FROM sqlite_master WHERE type='trigger'")
-					if e != nil {
-						t.Fatal(e)
-					}
-					for _, r := range triggers {
-						if _, e = db.SQL.Exec("DROP TRIGGER " + r["name"].(string)); e != nil {
-							t.Fatal(e)
-						}
 					}
 				}
 

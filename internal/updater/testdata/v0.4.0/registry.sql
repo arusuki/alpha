@@ -1,4 +1,4 @@
--- Source: v0.3.1 internal/registry/schema.sql (schema 33).
+-- Source: v0.4.0 internal/registry/schema.sql (schema 34).
 CREATE TABLE registry_control (
  id INTEGER PRIMARY KEY CHECK(id=1), control_id TEXT NOT NULL
 );
