@@ -71,3 +71,30 @@ func TestDirectControlAccessUsesAllowedHosts(t *testing.T) {
 		client.Expect(403, "GET", "/api/session", nil, map[string]string{"Host": host})
 	}
 }
+
+func TestShareEntranceBlocksManagementEvenWithAllowedHostAndAdminSession(t *testing.T) {
+	db, err := OpenDatabase(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	if _, err = db.SQL.Exec("CREATE TABLE bastion_tailscale(id TEXT,name TEXT,enabled INTEGER,ssh_host TEXT,ssh_port INTEGER,status_port INTEGER,control_url TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.SQL.Exec("INSERT INTO bastion_tailscale VALUES('share','Share',1,'100.64.0.2',22,9765,'http://10.0.0.1:8765')"); err != nil {
+		t.Fatal(err)
+	}
+	server := NewServer(db, nil, web.Assets, []string{"100.64.0.2"}, false)
+	client := &testutil.Client{T: t, Handler: server}
+	client.Login(true, "admin", "password-123456")
+	for _, path := range []string{"/", "/nodes/" + strings.Repeat("a", 32) + "/", "/app.js", "/api/session", "/api/cluster/overview", "/api/users"} {
+		client.Expect(403, "GET", path, nil, map[string]string{"Host": "100.64.0.2:9765"})
+	}
+	for _, path := range []string{"/api/setup", "/api/login"} {
+		client.Expect(403, "POST", path, map[string]string{}, map[string]string{"Host": "100.64.0.2:9765"})
+	}
+	for _, path := range []string{"/status/alice", "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/clipboard.js"} {
+		client.Expect(200, "GET", path, nil, map[string]string{"Host": "100.64.0.2:9765"})
+	}
+	client.Expect(200, "GET", "/", nil, nil)
+}

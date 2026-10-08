@@ -123,17 +123,25 @@ func (s *Server) guard(r *http.Request) error {
 	if err != nil || host.Host == "" || host.User != nil || host.Path != "" {
 		return httpapi.NewError(400, "无效的 Host")
 	}
-	if !s.AllowedHosts[strings.ToLower(host.Hostname())] {
-		address, err := netip.ParseAddr(host.Hostname())
-		if err != nil {
-			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
-		}
-		ip := address.Unmap().String()
+	shareEntrance := false
+	if address, err := netip.ParseAddr(host.Hostname()); err == nil {
 		var count int
-		port := host.Port()
-		if s.DB.SQL.QueryRow("SELECT count(*) FROM bastion_tailscale WHERE ssh_host=? AND CAST(status_port AS TEXT)=?", ip, port).Scan(&count) != nil || count == 0 {
-			return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+		// The platform is also used without the optional control/bastion module.
+		if err := s.DB.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='bastion_tailscale'").Scan(&count); err != nil {
+			return err
 		}
+		if count > 0 {
+			if err := s.DB.SQL.QueryRow("SELECT count(*) FROM bastion_tailscale WHERE ssh_host=? AND CAST(status_port AS TEXT)=?", address.Unmap().String(), host.Port()).Scan(&count); err != nil {
+				return err
+			}
+			shareEntrance = count > 0
+		}
+	}
+	if !s.AllowedHosts[strings.ToLower(host.Hostname())] && !shareEntrance {
+		return httpapi.NewError(403, "该访问域名未在服务配置中允许")
+	}
+	if shareEntrance && !httpapi.MemberEntranceAllowed(r) {
+		return httpapi.NewError(403, "分享入口仅开放使用者 status 面板，请打开 /status/你的使用者标识")
 	}
 	if r.Method != "GET" {
 		origin := r.Header.Get("Origin")

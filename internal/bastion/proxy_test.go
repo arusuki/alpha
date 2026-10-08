@@ -78,3 +78,38 @@ func TestProxyRejectsVariableTargetsAndReportsUnavailableControl(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 }
+
+func TestShareProxyBlocksManagementBeforeUpstream(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(204) }))
+	defer upstream.Close()
+	handler, closeTransport, err := newShareProxy(installation{ListenHost: "100.64.0.2", StatusPort: 9765, ControlURL: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTransport()
+	for _, path := range []string{"/", "/nodes/" + strings.Repeat("a", 32) + "/", "/app.js", "/api/session", "/api/setup", "/api/login", "/api/cluster/overview", "/api/cluster/nodes", "/api/members", "/api/status/alice/../../cluster/overview", "/status/alice/../", "/api/status/alice/gpu/extra"} {
+		for _, method := range []string{"GET", "POST"} {
+			r := httptest.NewRequest(method, path, nil)
+			r.Host = "100.64.0.2:9765"
+			r.AddCookie(&http.Cookie{Name: "project_alpha_session", Value: "admin-cookie"})
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != 403 {
+				t.Fatalf("%s %s: %d", method, path, w.Code)
+			}
+		}
+	}
+	if calls != 0 {
+		t.Fatal("blocked request reached control", calls)
+	}
+	for _, path := range []string{"/status/alice", "/status/alice/", "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/clipboard.js", "/api/status/alice", "/api/status/alice/gpu"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = "100.64.0.2:9765"
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != 204 {
+			t.Fatalf("%s: %d", path, w.Code)
+		}
+	}
+}

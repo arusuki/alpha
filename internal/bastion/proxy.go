@@ -11,6 +11,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"project-alpha/internal/httpapi"
 )
 
 // proxyTarget is a fixed upstream, never a destination supplied by a client.
@@ -50,6 +52,11 @@ func newShareProxy(c installation) (http.Handler, func(), error) {
 		// Origin, CSRF and bearer-token checks also protect the proxy entrance.
 		if r.Host != netAddress(c.ListenHost, c.StatusPort) || r.URL.IsAbs() {
 			http.Error(w, "分享节点入口地址无效", http.StatusBadRequest)
+			return
+		}
+		if !httpapi.MemberEntranceAllowed(r) {
+			w.Header().Set("Cache-Control", "no-store")
+			http.Error(w, "分享入口仅开放使用者 status 面板，请打开 /status/你的使用者标识", http.StatusForbidden)
 			return
 		}
 		proxy.ServeHTTP(w, r)

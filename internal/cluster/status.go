@@ -57,7 +57,7 @@ type memberNodeStatus struct {
 	CandidatesError string               `json:"candidates_error,omitempty"`
 }
 
-var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password|/keys)?$`)
+var statusAPIRoute = regexp.MustCompile(`^/api/status/([a-z][a-z0-9_-]{2,31})(/containers|/login|/logout|/password|/keys|/gpu)?$`)
 
 // statusPublic binds the username in both reads and applications to the login session's member.
 // The HTML shell is public; a username alone never grants access to resources.
@@ -70,7 +70,7 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
 	method := "POST"
-	if parts[2] == "" {
+	if parts[2] == "" || parts[2] == "/gpu" {
 		method = "GET"
 	}
 	if r.Method != method {
@@ -95,6 +95,9 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 	}
 	if username != parts[1] {
 		return 0, nil, httpapi.NewError(403, "登录会话与页面使用者不匹配，请打开本人的状态页")
+	}
+	if parts[2] == "/gpu" {
+		return h.memberGPU(r, platform.User{ID: id, Username: "member:" + username, Role: "viewer"})
 	}
 	if parts[2] == "/logout" {
 		return 200, map[string]bool{"ok": true}, store.Logout(token)

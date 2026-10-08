@@ -5,7 +5,7 @@
   const username=decodeURIComponent(location.pathname.split('/')[2]);
   const endpoint='/api/status/'+encodeURIComponent(username);
   const storageKey='alpha.member-session.'+username;
-  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null,keysDirty:false,keysSaving:false};
+  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null,keysDirty:false,keysSaving:false,gpuOpen:false,gpuNode:null};
   const labels={unallocated:'尚无容器',pending:'等待分配',running:'正在分配',ready:'已分配容器',failed:'分配失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
   function controls(){
@@ -16,6 +16,8 @@
   }
   function clearSession(message=''){
     state.epoch++;state.request?.abort();state.request=null;
+    state.gpuOpen=false;state.gpuNode=null;gpuUI.reset();$('gpuNode').replaceChildren();
+    $('gpuPanel').hidden=true;$('toggleGPU').setAttribute('aria-expanded','false');$('toggleGPU').innerHTML='查看节点 GPU 使用情况 <span aria-hidden="true">→</span>';
     clearTimeout(state.timer);state.token='';state.data=null;state.busy=false;state.applying=null;stored('');
     state.keysDirty=false;state.keysSaving=false;$('keysForm').reset();$('keysError').textContent='';$('keysMessage').textContent='';$('keysSyncState').textContent='';
     $('loginPassword').value='';$('passwordForm').reset();$('passwordError').textContent='';$('loginPanel').hidden=false;$('statusContent').hidden=true;
@@ -31,6 +33,24 @@
       if(!response.ok){const error=Error(value.error||'请求失败');error.status=response.status;throw error;}
       return value;
     }finally{if(state.request===controller)state.request=null;}
+  }
+  const gpuUI=GPUUI.create($('statusGPUView'),{
+    active:()=>!!state.token&&state.gpuOpen&&!!state.gpuNode&&!document.hidden,
+    request:async(path,options)=>{
+      const epoch=state.epoch;
+      const query=new URLSearchParams(path.split('?')[1]);query.set('node_id',state.gpuNode);
+      const response=await fetch(endpoint+'/gpu?'+query,{...options,cache:'no-store',credentials:'omit',headers:{Authorization:'Bearer '+state.token}});
+      let data;try{data=await response.json();}catch{throw Error('服务返回的数据无效，请刷新重试');}
+      if(!response.ok){if(epoch===state.epoch&&(response.status===401||response.status===403))clearSession(data.error);throw Error(data.error||'GPU 查询失败');}
+      return data;
+    }
+  });
+  function renderGPUNodes(){
+    const previous=state.gpuNode,nodes=state.data.nodes;
+    if(!nodes.some(n=>n.node_id===state.gpuNode))state.gpuNode=nodes.find(n=>n.online)?.node_id||nodes[0]?.node_id||null;
+    $('gpuNode').innerHTML=nodes.map(n=>`<option value="${esc(n.node_id)}">${esc(n.node_name)}${n.online?'':'（离线）'}</option>`).join('')||'<option value="">暂无计算节点</option>';
+    $('gpuNode').value=state.gpuNode||'';$('gpuNode').disabled=!nodes.length;
+    if(previous!==state.gpuNode){gpuUI.reset();if(state.gpuOpen)gpuUI.open();}
   }
   function containers(node){
     const rows=[...node.containers];
@@ -71,7 +91,7 @@
     $('onlineNodes').textContent=data.nodes.filter(n=>n.online).length;
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
     $('checkedAt').textContent='更新于 '+new Date(data.checked_at*1000).toLocaleTimeString();
-    renderGuide(data);
+    renderGuide(data);renderGPUNodes();
     if(!state.keysDirty)$('memberKeys').value=data.ssh_public_key;
     const keyLabels={pending:'等待下发',failed:'下发失败',ready:'已同步'};
     $('keysSyncState').textContent=['跳板 · '+(keyLabels[data.access.key_state]||'等待下发')+(data.access.error?' · '+data.access.error:''),...data.nodes.filter(n=>n.key_state).map(n=>n.node_name+' · '+(keyLabels[n.key_state]||n.key_state)+(n.key_error?' · '+n.key_error:''))].join('\n');
@@ -176,6 +196,12 @@
     finally{if(epoch===state.epoch){state.busy=false;controls();schedule();}}
   });
   $('refreshStatus').addEventListener('click',()=>refresh());
+  $('toggleGPU').addEventListener('click',()=>{
+    state.gpuOpen=!state.gpuOpen;$('gpuPanel').hidden=!state.gpuOpen;$('toggleGPU').setAttribute('aria-expanded',String(state.gpuOpen));
+    $('toggleGPU').innerHTML=state.gpuOpen?'收起 GPU 使用情况 <span aria-hidden="true">↑</span>':'查看节点 GPU 使用情况 <span aria-hidden="true">→</span>';
+    if(state.gpuOpen){$('gpuTitle').focus({preventScroll:true});gpuUI.open();}else gpuUI.close();
+  });
+  $('gpuNode').addEventListener('change',()=>{state.gpuNode=$('gpuNode').value;gpuUI.reset();gpuUI.open();});
   $('copySSHConfig').addEventListener('click',async()=>{
     const epoch=state.epoch;
     try{await AlphaClipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请追加保存到本机 ~/.ssh/config；仅使用自定义私钥路径时需要修改注释项。';}
@@ -186,9 +212,9 @@
     fetch(endpoint+'/logout',{method:'POST',credentials:'omit',headers:{Authorization:'Bearer '+token}}).catch(()=>{});
   });
   $('statusNodes').addEventListener('click',event=>{const button=event.target.closest('[data-apply]');if(button&&!button.disabled)apply(button.dataset.apply);});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden)clearTimeout(state.timer);else refresh();});
-  window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);state.request?.abort();});
-  window.addEventListener('pageshow',event=>{if(event.persisted){state.busy=false;state.applying=null;refresh();}});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(state.timer);gpuUI.close();}else{refresh();if(state.gpuOpen)gpuUI.open();}});
+  window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);gpuUI.close();state.request?.abort();});
+  window.addEventListener('pageshow',event=>{if(event.persisted){state.busy=false;state.applying=null;refresh();if(state.gpuOpen)gpuUI.open();}});
   $('memberIdentity').textContent='使用者 · '+username;
   state.token=stored();if(state.token)refresh();
 })();

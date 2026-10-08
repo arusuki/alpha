@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>总控 · 我的工作空间 · Project Alpha</title>
   <link rel="stylesheet" href="/status.css">
+  <link rel="stylesheet" href="/gpu.css">
+  <script src="/gpu.js" defer></script>
   <script src="/clipboard.js" defer></script>
   <script src="/status.js" defer></script>
 </head>
@@ -23,6 +25,11 @@
     <p id="statusError" class="error" role="alert"></p>
     <section id="statusContent" hidden aria-label="我的节点资源">
       <div class="workspace-intro"><strong>日常管理，就在这里</strong><p>查看容器、申请容器、获取 SSH 配置、管理公钥和修改密码，都在此总控页面完成。保持 Tailscale 已连接；注册页现在可以关闭。</p><p id="controlStatusAddress" class="muted"></p><p class="muted">收藏此地址：macOS 按 ⌘D，Windows / Linux 按 Ctrl+D。</p><nav class="quick-links" aria-label="使用指引"><a href="#statusNodes">查看我的容器 ↓</a><a href="#memberKeysTitle">管理 SSH 公钥 ↓</a><a href="#accessGuideTitle">配置 SSH 连接 ↓</a><a href="#connectionHelp">连接问题排查 ↓</a></nav></div>
+      <div class="gpu-entry"><div><strong>先看 GPU，再选计算节点</strong><p>查看谁在使用 GPU，以及实时进程、显存和占用曲线。</p></div><button id="toggleGPU" class="primary" type="button" aria-expanded="false" aria-controls="gpuPanel">查看节点 GPU 使用情况 <span aria-hidden="true">→</span></button></div>
+      <section id="gpuPanel" class="member-gpu-panel" hidden aria-labelledby="gpuTitle">
+        <div class="directory-heading"><div><h2 id="gpuTitle" tabindex="-1">节点 GPU 使用情况</h2><p class="muted">选择计算节点，查看所有使用者的 GPU 占用及最近 72 小时历史。</p></div><label class="gpu-node-select">计算节点 <select id="gpuNode"></select></label></div>
+        <div id="statusGPUView"></div>
+      </section>
       <div class="summary" aria-label="资源汇总">
         <div><span>全部节点</span><strong id="totalNodes">0</strong></div>
         <div><span>在线节点</span><strong id="onlineNodes">0</strong></div>
