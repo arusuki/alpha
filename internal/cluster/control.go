@@ -165,6 +165,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	if r.URL.Path == "/api/cluster/overview" && r.Method == "GET" {
 		return h.overview(r, user)
 	}
+	if r.URL.Path == "/api/cluster/scan-schedule" && r.Method == "POST" {
+		return h.distributeScanSchedule(w, r, user)
+	}
 	if r.URL.Path == "/api/cluster/nodes" {
 		if r.Method == "GET" {
 			nodes, err := h.nodes("")

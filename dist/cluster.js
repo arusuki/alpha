@@ -214,6 +214,7 @@ async function retryNode(){
   finally{if(epoch===state.epoch){state.opening=false;$('nodeUnavailableRetry').disabled=false;}}
 }
 window.ClusterUI={configure,refresh,unavailable,connected,reset(){
+  window.ScanScheduleUI?.reset();
   state.epoch++;state.opening=false;state.unavailableTarget=null;$('nodeUnavailableRetry').disabled=false;state.data=null;state.pending=null;state.editing=null;state.removing=null;state.filter='all';state.nodesHTML='';busy(false);
   state.reconnecting.clear();state.reconnectErrors.clear();
   document.body.classList.remove('control-room');

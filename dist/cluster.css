@@ -267,3 +267,15 @@
 
 #page-allocations .resource-overview{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:540px){.cluster-stats,#page-allocations .resource-overview{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:22px}.cluster-stats article:nth-child(2),#page-allocations .resource-overview article:nth-child(2){border-right:0}#page-allocations .resource-overview article{padding-left:12px}}
+
+/* Central scan plan distribution. */
+#scanPlanDialog{width:min(720px,calc(100vw - 32px))}
+#scanPlanFields{min-width:0;border:0;padding:0;margin:20px 0}
+#scanPlanFields>div,#scanPlanFields>label,#scanPlanFields>fieldset{margin-top:18px}
+#scanPlanFields fieldset{min-width:0;border:1px solid var(--line);padding:14px;margin-top:16px}
+#scanPlanFields legend{padding:0 6px;font-weight:600}
+#scanPlanTargets{max-height:220px;overflow:auto;margin-top:14px;gap:12px}
+#scanPlanTargets label,#scanPlanResults p{overflow-wrap:anywhere;min-width:0}
+#scanPlanResults{max-height:240px;overflow:auto}
+#scanPlanResults p{padding:8px 0;border-bottom:1px solid var(--line)}
+#scanPlanDialog .form-actions{flex-wrap:wrap}

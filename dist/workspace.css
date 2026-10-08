@@ -351,6 +351,8 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 #page-containers details>summary { cursor:pointer; font-weight:600; padding:12px 0; }
 #page-containers details[open]>summary { margin-bottom:14px; }
 #managedContainerRows td { vertical-align:top; overflow-wrap:anywhere; }
+#managedContainerRows .managed-container-owner { display:block; color:var(--ink); }
+#managedContainerRows .process-container-id { margin-top:4px; font-size:.7rem; }
 #managedContainerRows td:last-child { min-width:180px; }
 #managedContainerRows button { margin:0 4px 6px 0; }
 #containerCredentials { white-space:pre-wrap; overflow-wrap:anywhere; }

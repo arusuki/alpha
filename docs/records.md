@@ -6,7 +6,9 @@ Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，
 
 ## 自动扫盘与记录保留
 
-管理员在总控的 worker 节点卡片选择 **扫盘计划**，或进入节点的 **扫描配置**，为各节点独立保存计划：
+管理员在总控 **节点目录 → 扫盘计划一键下发** 设置统一计划，默认选中全部 worker，也可选择部分节点。下发只更新计划和保留数量，保留各节点的目录、排除项和扫描方式；逐台显示成功或失败，可重试失败节点。离线节点不会排队等待下发，新加入的节点需再次下发。仍可通过 worker 卡片的 **扫盘计划** 或节点 **扫描配置** 单独调整。
+
+支持以下计划：
 
 - **关闭自动扫描**：只手动触发。
 - **按间隔扫描**：设置 5–10080 分钟，从上次全盘任务结束后计时。没有历史记录时立即开始。
@@ -16,6 +18,8 @@ Docker 扫描保存本机 endpoint、daemon ID 和扫描时的物理数据根，
 计划保存在 worker，由已有扫描管理循环执行，总控断开不影响计划。每个节点仍只运行一个扫描。保留策略在节点空闲时生效，删除超出的数据库记录、关联目录任务和结果文件，保留宿主机源文件；即使关闭自动扫描，已设置的保留策略仍然生效。正在执行的任务不被清理。
 
 设置通过节点代理 `GET/PUT /api/cluster/nodes/:id/api/settings` 读取和保存，写入要求管理员权限、CSRF 和当前 `revision`。新增字段为 `schedule_mode`（`off/interval/calendar`）、`schedule_times`、`schedule_weekdays`（0 为周日）、`schedule_timezone`、`retain_records`，间隔仍使用 `interval_minutes`。`GET .../api/state` 提供计划摘要和历史记录边界，页面自动移除过期记录。
+
+`POST /api/cluster/scan-schedule` 接收 `node_ids` 和 `schedule`；后者包含上述六个计划字段。总控要求管理员权限和 CSRF，先校验全部目标及计划，再并发读取各 worker 当前配置、合并计划并按读取的 `revision` 保存；并发修改返回该节点失败，不覆盖他人配置。响应 `results` 逐项包含 `id`、`name`、`ok`，失败项包含 `error`。部分失败不撤销已成功节点；重试时重新读取配置。计划仍保存在 worker，无新增数据库结构。
 
 数据库升级沿用 [alpha-updater](updater.md) 的原地升级入口与生成窗口（`internal/platform/upgrade_history.json`），目标版本以 `alpha-updater --help` 为准。升级保留已有扫描间隔、记录及快照，默认不开启自动清理；总控和 worker 需一起更新到相同集群协议。
 

@@ -34,6 +34,7 @@ python3 tests/test_members_browser.py
 python3 tests/test_registry_browser.py
 python3 tests/test_registration_choices_browser.py
 python3 tests/test_cluster_browser.py
+python3 tests/test_scan_schedule_browser.py
 python3 tests/test_status_browser.py
 ```
 

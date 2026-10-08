@@ -72,6 +72,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/gpu.js": "gpu.js", "/gpu.css": "gpu.css",
 		"/": "index.html", "/usage.js": "usage.js", "/snapshot.js": "snapshot.js",
 		"/snapshot-loader.js": "snapshot-loader.js",
+		"/scan-schedule.js":   "scan-schedule.js",
 		"/clipboard.js":       "clipboard.js",
 		"/app.js":             "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js", "/updates.js": "updates.js",
 		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
