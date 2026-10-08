@@ -27,7 +27,7 @@ func TestServiceCrashStopsWorkerAndDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec("UPDATE settings SET value=json_set(value,'$.interval_minutes',5) WHERE id=1"); err != nil {
+	if _, err = db.SQL.Exec("UPDATE settings SET value=json_set(value,'$.interval_minutes',5,'$.schedule_mode','interval') WHERE id=1"); err != nil {
 		db.SQL.Close()
 		t.Fatal(err)
 	}

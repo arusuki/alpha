@@ -1,4 +1,4 @@
-CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, schedule_last_run REAL NOT NULL DEFAULT 0);
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, status TEXT NOT NULL, trigger TEXT NOT NULL, created_by TEXT NOT NULL,
  created_at REAL NOT NULL, started_at REAL, finished_at REAL, config TEXT NOT NULL,

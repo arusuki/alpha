@@ -19,6 +19,10 @@ func (m *Manager) Delete(id, actor string) (object, error) {
 	if err := m.reapLocked(); err != nil {
 		return nil, err
 	}
+	return m.deleteLocked(id, actor)
+}
+
+func (m *Manager) deleteLocked(id, actor string) (object, error) {
 	deleted := []string{}
 	err := m.db.Transaction(func(tx *sql.Tx) error {
 		var status string

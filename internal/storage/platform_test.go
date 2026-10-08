@@ -262,6 +262,7 @@ func TestSchedulerUsesSavedConfiguration(t *testing.T) {
 	p.Login(true, "administrator", "A-test-password-123")
 	c := p.configure()
 	c.IntervalMinutes = 5
+	c.ScheduleMode = "interval"
 	p.Expect(200, "PUT", "/api/settings", object{"revision": 2, "value": c}, nil)
 	if err := p.m.tick(); err != nil {
 		t.Fatal(err)

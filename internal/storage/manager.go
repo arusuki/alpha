@@ -126,6 +126,11 @@ func (m *Manager) startPlanLocked(actor, trigger string, plan scanPlan) (object,
 			}
 			return err
 		}
+		if trigger == "scheduled" {
+			if _, err = tx.Exec("UPDATE settings SET schedule_last_run=? WHERE id=1", platform.Now()); err != nil {
+				return err
+			}
+		}
 		return platform.Audit(tx, actor, "scan.start", id+" / "+trigger)
 	})
 	if err != nil {
@@ -283,14 +288,17 @@ func (m *Manager) tick() error {
 		return nil
 	}
 	s, err := m.db.config()
-	if err != nil || s.Value.IntervalMinutes == 0 {
+	if err != nil {
 		return err
 	}
-	var last sql.NullFloat64
-	if err = m.db.SQL.QueryRow("SELECT max(coalesce(finished_at,created_at)) FROM jobs WHERE trigger<>'incremental'").Scan(&last); err != nil {
+	if err = m.pruneLocked(s.Value.RetainRecords); err != nil {
 		return err
 	}
-	if !last.Valid || platform.Now()-last.Float64 >= float64(s.Value.IntervalMinutes*60) {
+	due, err := m.db.scheduleDue(s.Value, time.Now())
+	if err != nil {
+		return err
+	}
+	if due {
 		_, err = m.startLocked("scheduler", "scheduled")
 		return err
 	}

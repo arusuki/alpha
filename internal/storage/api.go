@@ -45,6 +45,14 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if err != nil {
 			return failure(err)
 		}
+		oldest, err := platform.Rows(db.SQL, "SELECT id,created_at FROM jobs WHERE trigger<>'incremental' ORDER BY created_at,id LIMIT 1")
+		if err != nil {
+			return failure(err)
+		}
+		var historyFloor any
+		if len(oldest) > 0 {
+			historyFloor = oldest[0]
+		}
 		var active any
 		directories, err := db.directoryJobs()
 		if err != nil {
@@ -56,7 +64,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				break
 			}
 		}
-		return 200, object{"jobs": jobs, "directory_jobs": directories, "latest_id": latest, "active": active, "interval_minutes": config.Value.IntervalMinutes}, nil
+		return 200, object{"jobs": jobs, "directory_jobs": directories, "latest_id": latest, "active": active, "interval_minutes": config.Value.IntervalMinutes, "schedule_mode": config.Value.ScheduleMode, "schedule_times": config.Value.ScheduleTimes, "schedule_weekdays": config.Value.ScheduleWeekdays, "schedule_timezone": config.Value.ScheduleTimezone, "retain_records": config.Value.RetainRecords, "history_floor": historyFloor}, nil
 	}
 	if method == "GET" && route == "/api/jobs" {
 		before := platform.Now() + 1
@@ -87,7 +95,9 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			if err != nil {
 				return failure(err)
 			}
+			s.Manager.mu.Lock()
 			result, err := db.saveConfig(c, revision, user.Username)
+			s.Manager.mu.Unlock()
 			return 200, result, err
 		}
 	}

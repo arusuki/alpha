@@ -61,7 +61,7 @@ async function enter(session,restorePage=false) {
   window.BastionUI?.reset();
   window.ClusterUI?.reset();
   window.CleanupUI?.reset();
-  platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
+  platform.deletedIDs=new Set();platform.deleteTarget=null;platform.deleting=false;platform.generation++;platform.user=session.user;platform.csrf=session.csrf;platform.config=null;platform.history=[];platform.jobs=[];platform.active=null;platform.latest=null;platform.interval=0;platform.schedule=null;platform.historyExhausted=false;platform.loaded=null;platform.followLatest=true;
   window.AuthUI?.hide();
   $('authPanel').hidden=true;$('console').hidden=false;$('sessionControls').hidden=false;
   $('sessionUser').textContent=`${session.user.username} · ${session.user.role==='admin'?'管理员':'只读'}`;
@@ -98,10 +98,17 @@ async function syncState() {
   state.jobs=state.jobs.filter(j=>!platform.deletedIDs.has(j.id));
   if(platform.deletedIDs.has(state.latest_id))state.latest_id=null;
   platform.jobs=[...state.directory_jobs.filter(j=>!platform.deletedIDs.has(j.id)),...state.jobs];platform.latest=state.latest_id;platform.active=state.active;
+  const previouslyLoaded=platform.history.find(j=>j.id===platform.loaded);
   const history=new Map(platform.history.filter(j=>j.trigger!=='incremental').map(j=>[j.id,j]));state.jobs.filter(j=>j.trigger!=='incremental').forEach(j=>history.set(j.id,j));
   platform.history=Array.from(history.values()).sort((a,b)=>b.created_at-a.created_at);
   if(state.jobs.length<50)platform.historyExhausted=true;
-  platform.interval=state.interval_minutes;
+  platform.interval=state.interval_minutes;platform.schedule=state;
+  if(state.jobs.length<50)platform.history=state.jobs.slice();
+  else if(state.history_floor)platform.history=platform.history.filter(j=>j.created_at>state.history_floor.created_at || j.created_at===state.history_floor.created_at && j.id>=state.history_floor.id);
+  if(previouslyLoaded && !platform.history.some(j=>j.id===previouslyLoaded.id)){
+    platform.deletedIDs.add(previouslyLoaded.id);clearLoadedRecord();
+    message('当前扫描记录已被清理。');
+  }
   renderTask(state.interval_minutes);renderHistory();controls();window.DashboardUI?.render();
   // Loading large snapshots is an explicit storage action, never a login side effect.
   if(platform.page!=='overview')return;
@@ -113,10 +120,16 @@ async function syncState() {
   }
   if(platform.followLatest && state.latest_id && platform.loaded!==state.latest_id && !platform.resultLoad && !platform.changesLoad && platform.skippedAutoLoad!==state.latest_id) return await loadJob(state.latest_id);
 }
+function scanScheduleLabel(interval) {
+  const s=platform.schedule;
+  if(s?.schedule_mode==='calendar')return `时间计划 · ${s.schedule_times.join('、')} · ${s.schedule_timezone}`;
+  if(s?.schedule_mode==='off')return '手动扫描';
+  return interval?`定时扫描 · ${interval} 分钟`:'手动扫描';
+}
 function renderTask(interval) {
   if (!platform.active && snapshot) { renderScanSummary(interval); return; }
   const job=platform.active || platform.jobs.find(j=>j.trigger!=='incremental');
-  $('scheduleStatus').textContent=interval?`定时扫描 · ${interval} 分钟`:'手动扫描';
+  $('scheduleStatus').textContent=scanScheduleLabel(interval);
   $('taskMonitor').hidden=!job;
   if(!job)return;
   const p=job.progress || {};
@@ -182,7 +195,7 @@ function renderScanSummary(interval) {
   const capacityNote=filesystemCapacityNote(filesystems);
   const used=filesystems.reduce((sum,d)=>sum+d.used,0);
   const scanned=snapshot.tree.allocated;
-  $('scheduleStatus').textContent=interval?`定时扫描 · ${interval} 分钟`:'手动扫描';
+  $('scheduleStatus').textContent=scanScheduleLabel(interval);
   $('taskMonitor').hidden=false;$('taskMonitor').classList.toggle('busy',false);$('taskMonitor').dataset.status='completed';
   $('taskStatus').textContent='累计扫描结果';$('taskPhase').textContent='已保存';
   $('taskTarget').textContent=dockerDisk?`Docker 所在文件系统 ${dockerDisk.mount} · 可用 ${fmt(dockerDisk.available)}`:'各文件系统容量与用量';$('taskTarget').title='';
@@ -380,6 +393,17 @@ function openDeleteJob(id) {
   $('deleteJobError').textContent='';$('confirmDeleteJob').disabled=false;
   $('deleteJobDialog').showModal();
 }
+function clearLoadedRecord(){
+  stopSnapshotStream();
+  if(platform.changesLoad)platform.changesLoad.controller.abort();
+  platform.loadSequence++;platform.resultLoad=null;platform.changesLoad=null;
+  if($('resultLoadingDialog').open)$('resultLoadingDialog').close();
+  for(const name of ['containerDialog','ownerDialog'])if($(name).open)$(name).close();
+  platform.loaded=null;platform.followLatest=true;platform.skippedAutoLoad=null;platform.changesError=null;
+  snapshot=null;usage=null;selected=null;query='';ownerFilter=null;stateFilter='all';tablePage=0;
+  $('resultContent').hidden=true;$('firstScan').hidden=false;
+  $('sourceBadge').textContent='尚未扫描';$('hostInfo').textContent='尚未完成扫描';
+}
 async function deleteJob() {
   if(!platform.user || platform.user.role!=='admin' || !platform.deleteTarget || platform.deleting)return;
   const id=platform.deleteTarget,generation=platform.generation;
@@ -391,15 +415,7 @@ async function deleteJob() {
     deleted.forEach(id=>platform.deletedIDs.add(id));
     if(platform.resultLoad && deleted.has(platform.resultLoad.id))platform.resultLoad.controller.abort();
     if(deleted.has(platform.loaded)) {
-      stopSnapshotStream();
-      if(platform.changesLoad)platform.changesLoad.controller.abort();
-      platform.loadSequence++;platform.resultLoad=null;platform.changesLoad=null;
-      if($('resultLoadingDialog').open)$('resultLoadingDialog').close();
-      for(const name of ['containerDialog','ownerDialog'])if($(name).open)$(name).close();
-      platform.loaded=null;platform.followLatest=true;platform.skippedAutoLoad=null;platform.changesError=null;
-      snapshot=null;usage=null;selected=null;query='';ownerFilter=null;stateFilter='all';tablePage=0;
-      $('resultContent').hidden=true;$('firstScan').hidden=false;
-      $('sourceBadge').textContent='尚未扫描';$('hostInfo').textContent='尚未完成扫描';
+      clearLoadedRecord();
     }
     platform.history=platform.history.filter(j=>!deleted.has(j.id));
     platform.jobs=platform.jobs.filter(j=>!deleted.has(j.id));
@@ -424,12 +440,17 @@ async function jobDetails(id) {
   $('jobDetails').hidden=false;$('jobDetails').innerHTML=`<h2>任务 ${esc(j.id.slice(0,8))} · ${esc(statusNames[j.status])}</h2><p>开始：${esc(dateTime(j.started_at))} / 结束：${esc(dateTime(j.finished_at))}</p>${j.error?`<p class="error-text">${esc(j.error)}</p>`:''}<h3>任务创建时的配置</h3><pre>${esc(JSON.stringify(j.config,null,2))}</pre><h3>最后进度</h3><pre>${esc(JSON.stringify(j.progress,null,2))}</pre>`;
 }
 async function loadSettings() {
-  const result=await api('/api/settings');platform.config=result;
+  const generation=platform.generation;
+  const result=await api('/api/settings');if(generation!==platform.generation)return;platform.config=result;
   const c=result.value;
   $('cfgRoots').value=c.root.join('\n');$('cfgExcludes').value=c.exclude.join('\n');$('cfgDocker').checked=!c.no_docker;
   $('cfgScanBackend').value=c.scan_backend;$('cfgDockerRoot').checked=c.include_docker_root;$('cfgDepth').value=c.max_depth;$('cfgNodes').value=c.max_nodes;
   $('cfgScanMode').value=c.scan_mode;
   $('cfgTimeout').value=c.docker_timeout;$('cfgOwnerLabel').value=c.owner_label;$('cfgInterval').value=c.interval_minutes;
+  $('cfgScheduleMode').value=c.schedule_mode;$('cfgRetainRecords').value=c.retain_records;
+  $('cfgScheduleTimes').value=c.schedule_times.join('\n');$('cfgScheduleTimezone').value=c.schedule_timezone;
+  for(let day=0;day<7;day++)$('cfgWeekday'+day).checked=c.schedule_weekdays.includes(day);
+  scanScheduleControls();
   $('settingsStatus').textContent=`已保存配置 · 版本 ${result.revision}`;
 }
 async function loadAccounts() {
@@ -468,12 +489,20 @@ $('moreHistory').addEventListener('click',()=>act(async()=>{
   const existing=new Set(platform.history.map(j=>j.id));platform.history.push(...response.jobs.filter(j=>!existing.has(j.id) && !platform.deletedIDs.has(j.id)));renderHistory();
   if(response.jobs.length<50){platform.historyExhausted=true;$('moreHistory').hidden=true;}
 },$('moreHistory')));
+function scanScheduleControls(){
+  const mode=$('cfgScheduleMode').value;
+  $('cfgIntervalFields').hidden=mode!=='interval';$('cfgInterval').disabled=mode!=='interval';
+  $('cfgCalendarFields').hidden=mode!=='calendar';$('cfgScheduleTimezone').disabled=mode!=='calendar';
+}
+$('cfgScheduleMode').addEventListener('change',scanScheduleControls);
 $('reloadSettings').addEventListener('click',()=>act(()=>loadSettings(),$('reloadSettings')));
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();act(async()=>{
   if(!platform.config)throw Error('请先载入扫描配置');
   const lines=id=>$(id).value.split('\n').map(x=>x.trim()).filter(Boolean);
-  const value={scan_backend:$('cfgScanBackend').value,scan_mode:$('cfgScanMode').value,root:lines('cfgRoots'),exclude:lines('cfgExcludes'),no_docker:!$('cfgDocker').checked,include_docker_root:$('cfgDockerRoot').checked,max_depth:Number($('cfgDepth').value),max_nodes:Number($('cfgNodes').value),docker_timeout:Number($('cfgTimeout').value),owner_label:$('cfgOwnerLabel').value.trim(),interval_minutes:Number($('cfgInterval').value)};
-  platform.config=await api('/api/settings',{method:'PUT',body:JSON.stringify({value,revision:platform.config.revision})});
+  const value={scan_backend:$('cfgScanBackend').value,scan_mode:$('cfgScanMode').value,root:lines('cfgRoots'),exclude:lines('cfgExcludes'),no_docker:!$('cfgDocker').checked,include_docker_root:$('cfgDockerRoot').checked,max_depth:Number($('cfgDepth').value),max_nodes:Number($('cfgNodes').value),docker_timeout:Number($('cfgTimeout').value),owner_label:$('cfgOwnerLabel').value.trim(),interval_minutes:Number($('cfgInterval').value),schedule_mode:$('cfgScheduleMode').value,schedule_times:lines('cfgScheduleTimes'),schedule_weekdays:[0,1,2,3,4,5,6].filter(day=>$('cfgWeekday'+day).checked),schedule_timezone:$('cfgScheduleTimezone').value.trim(),retain_records:Number($('cfgRetainRecords').value)};
+  const generation=platform.generation;
+  const result=await api('/api/settings',{method:'PUT',body:JSON.stringify({value,revision:platform.config.revision})});
+  if(generation!==platform.generation)return;platform.config=result;
   $('settingsStatus').textContent=`保存成功 · 版本 ${platform.config.revision}`;message('扫描配置已保存，将应用于下一次任务。');await syncState();
 },$('saveSettings'));});
 $('createUserForm').addEventListener('submit',e=>{e.preventDefault();act(async()=>{

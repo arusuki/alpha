@@ -151,6 +151,24 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
             assert all('token' not in n for n in nodes)
             first = next(n for n in nodes if n['name'] == 'GPU 01')
             second = next(n for n in nodes if n['name'] == 'GPU 02')
+            # Focused live verification of the new node plan and isolation.
+            page.locator('a[href="/nodes/' + first['id'] + '/#scan-settings"]').click()
+            expect(page.locator('#page-scan-settings')).to_be_visible()
+            expect(page.locator('#settingsStatus')).to_contain_text('已保存配置')
+            expect(page.locator('#cfgScheduleMode')).to_have_value('off')
+            page.locator('#cfgScheduleMode').select_option('calendar')
+            page.locator('#cfgScheduleTimes').fill('02:00')
+            page.locator('#cfgScheduleTimezone').fill('Asia/Shanghai')
+            page.locator('#cfgRetainRecords').fill('7')
+            page.locator('#saveSettings').click()
+            expect(page.locator('#settingsStatus')).to_contain_text('保存成功')
+            saved = context.request.get(url + '/api/cluster/nodes/' + first['id'] + '/api/settings').json()['value']
+            untouched = context.request.get(url + '/api/cluster/nodes/' + second['id'] + '/api/settings').json()['value']
+            assert saved['schedule_mode'] == 'calendar' and saved['retain_records'] == 7
+            assert saved['schedule_times'] == ['02:00'] and saved['schedule_timezone'] == 'Asia/Shanghai'
+            assert untouched['schedule_mode'] == 'off' and untouched['retain_records'] == 0
+            page.locator('#nodeContext a').click()
+            expect(page.locator('#page-cluster')).to_be_visible()
             # Users register only on the central control, via the existing invitation flow.
             page.locator('.platform-nav [data-page="members"]').click()
             expect(page.locator('#memberSchemaEditor')).to_be_enabled()

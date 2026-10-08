@@ -37,6 +37,7 @@ var databaseUpgrades = []databaseUpgrade{
 	{From: 33, To: 34, Apply: upgradeContainerChoices},
 	{From: 34, To: 35, Apply: upgradeMemberKeys},
 	{From: 35, To: 36, Apply: upgradeGPUHistory},
+	{From: 36, To: 37, Apply: upgradeScanSchedule},
 }
 
 func databaseUpgradePlan(version int) ([]databaseUpgrade, error) {

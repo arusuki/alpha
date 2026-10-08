@@ -22,12 +22,17 @@ type Config struct {
 	OwnerLabel        string   `json:"owner_label"`
 	DockerTimeout     int      `json:"docker_timeout"`
 	IntervalMinutes   int      `json:"interval_minutes"`
+	ScheduleMode      string   `json:"schedule_mode"`
+	ScheduleTimes     []string `json:"schedule_times"`
+	ScheduleWeekdays  []int    `json:"schedule_weekdays"`
+	ScheduleTimezone  string   `json:"schedule_timezone"`
+	RetainRecords     int      `json:"retain_records"`
 	ScanBackend       string   `json:"scan_backend"`
 	ScanMode          string   `json:"scan_mode"`
 }
 
 func defaultConfig() Config {
-	return Config{Root: []string{}, Exclude: []string{}, MaxDepth: 5, MaxNodes: 50000, OwnerLabel: "project-alpha.owner", DockerTimeout: 120, ScanBackend: "auto", ScanMode: "normal"}
+	return Config{Root: []string{}, Exclude: []string{}, MaxDepth: 5, MaxNodes: 50000, OwnerLabel: "project-alpha.owner", DockerTimeout: 120, ScanBackend: "auto", ScanMode: "normal", ScheduleMode: "off", ScheduleTimes: []string{}, ScheduleWeekdays: []int{0, 1, 2, 3, 4, 5, 6}, ScheduleTimezone: "UTC"}
 }
 
 var labelPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
@@ -36,10 +41,10 @@ var containerPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func parseConfig(raw json.RawMessage) (Config, error) {
 	var fields map[string]json.RawMessage
 	var c Config
-	if json.Unmarshal(raw, &fields) != nil || len(fields) != 11 {
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 16 {
 		return c, httpapi.NewError(400, "扫描配置字段不完整或包含未知字段")
 	}
-	for _, key := range []string{"root", "exclude", "no_docker", "include_docker_root", "max_depth", "max_nodes", "owner_label", "docker_timeout", "interval_minutes", "scan_backend", "scan_mode"} {
+	for _, key := range []string{"root", "exclude", "no_docker", "include_docker_root", "max_depth", "max_nodes", "owner_label", "docker_timeout", "interval_minutes", "scan_backend", "scan_mode", "schedule_mode", "schedule_times", "schedule_weekdays", "schedule_timezone", "retain_records"} {
 		if v, ok := fields[key]; !ok || string(v) == "null" {
 			return c, httpapi.NewError(400, "扫描配置字段不完整或包含未知字段")
 		}
@@ -53,6 +58,9 @@ func parseConfig(raw json.RawMessage) (Config, error) {
 const maxScanNodes = 100000
 
 func (c Config) validate() error {
+	if err := c.validateSchedule(); err != nil {
+		return err
+	}
 	if c.ScanMode != "normal" && c.ScanMode != "fast" {
 		return httpapi.NewError(400, "扫描模式必须是 normal 或 fast")
 	}

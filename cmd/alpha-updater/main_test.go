@@ -38,12 +38,18 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 	}{
 		{"control", cluster.Initialize, 34, "DROP TABLE member_key_sync; DROP TABLE member_key_revocations", []string{"members", "member_invitations"}, false},
 		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"worker", app.Initialize, 33, "DROP TABLE gpu_intervals; DROP INDEX member_slot_container; DROP INDEX managed_container_owner; DROP INDEX owners_one_container; ALTER TABLE member_container_slots DROP COLUMN container_id; ALTER TABLE member_container_slots DROP COLUMN mode", []string{"managed_containers", "owners"}, false},
+		{"worker", app.Initialize, 34, "DROP TABLE gpu_intervals", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"worker", app.Initialize, 36, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"control", cluster.Initialize, 36, "", []string{"members", "member_invitations"}, false},
+		{"registry", registry.Initialize, 36, "", []string{"registry_control", "registry_sessions"}, false},
+		{"worker", app.Initialize, 36, "CREATE TRIGGER reject_schedule_upgrade BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'schedule upgrade rejected'); END", []string{"managed_containers", "owners", "member_container_slots", "settings"}, true},
 		{"registry", registry.Initialize, 35, "", []string{"registry_control", "registry_sessions"}, false},
 		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals; CREATE TABLE gpu_intervals_expiry(value TEXT); INSERT INTO gpu_intervals_expiry VALUES('preserve')", []string{"managed_containers", "owners", "member_container_slots", "gpu_intervals_expiry"}, true},
 	}
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, tc := range cases {
-			t.Run(fmt.Sprintf("%s/%s/conflict=%t", entry, tc.role, tc.conflict), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s/%s/v%d/conflict=%t", entry, tc.role, tc.version, tc.conflict), func(t *testing.T) {
 				db, err := platform.OpenDatabase(t.TempDir(), tc.initialize)
 				if err != nil {
 					t.Fatal(err)
@@ -71,6 +77,28 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 				if err != nil {
 					t.Fatal(err)
 				}
+				if tc.role == "worker" {
+					_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN schedule_last_run;
+UPDATE settings SET value=json_remove(json_set(value,'$.interval_minutes',30),'$.schedule_mode','$.schedule_times','$.schedule_weekdays','$.schedule_timezone','$.retain_records');
+INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
+INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				if tc.role == "worker" && tc.version == 33 {
+					triggers, e := platform.Rows(db.SQL, "SELECT name FROM sqlite_master WHERE type='trigger'")
+					if e != nil {
+						t.Fatal(e)
+					}
+					for _, r := range triggers {
+						if _, e = db.SQL.Exec("DROP TRIGGER " + r["name"].(string)); e != nil {
+							t.Fatal(e)
+						}
+					}
+				}
+
 				if tc.downgrade != "" {
 					if _, err = db.SQL.Exec(tc.downgrade); err != nil {
 						t.Fatal(err)
@@ -88,6 +116,9 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 					return rows
 				}
 				tables := append([]string{"service_identity"}, tc.tables...)
+				if tc.role == "worker" {
+					tables = append(tables, "jobs", "snapshot_records")
+				}
 				before := make(map[string][]map[string]any)
 				for _, table := range tables {
 					before[table] = read("SELECT * FROM " + table + " ORDER BY 1")
@@ -141,6 +172,18 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 					}
 					gpuSchema := read("SELECT name FROM sqlite_master WHERE name IN ('gpu_intervals','gpu_intervals_expiry')")
 					if tc.role == "worker" {
+						var raw string
+						var cursor float64
+						if err := db.SQL.QueryRow("SELECT value,schedule_last_run FROM settings WHERE id=1").Scan(&raw, &cursor); err != nil {
+							t.Fatal(err)
+						}
+						var config map[string]any
+						if err := json.Unmarshal([]byte(raw), &config); err != nil {
+							t.Fatal(err)
+						}
+						if config["schedule_mode"] != "interval" || config["interval_minutes"] != float64(30) || config["retain_records"] != float64(0) || cursor != 100 {
+							t.Fatalf("lost scheduling config: %s / %v", raw, cursor)
+						}
 						if len(gpuSchema) != 2 {
 							t.Fatal("worker GPU table or expiry index missing")
 						}

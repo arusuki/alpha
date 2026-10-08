@@ -26,7 +26,7 @@ apiURL=path=>path;
 var sample=JSON.parse(sampleText);sample.containers.forEach(c=>c.label_owner=c.owner);sample.job_id='a'.repeat(32);
 var calls=[];
 var job={id:'a'.repeat(32),created_at:100,status:'completed',trigger:'manual',created_by:'admin',snapshot_revision:0,allocated:123,progress:{phase:'completed',entries:12},finished_at:101};
-var config={revision:1,value:{root:['/srv'],exclude:[],no_docker:true,include_docker_root:false,max_depth:5,max_nodes:50000,docker_timeout:120,owner_label:'project-alpha.owner',interval_minutes:0,scan_backend:'auto',scan_mode:'normal'}};
+var config={revision:1,value:{root:['/srv'],exclude:[],no_docker:true,include_docker_root:false,max_depth:5,max_nodes:50000,docker_timeout:120,owner_label:'project-alpha.owner',interval_minutes:0,scan_backend:'auto',scan_mode:'normal',schedule_mode:'off',schedule_times:[],schedule_weekdays:[0,1,2,3,4,5,6],schedule_timezone:'UTC',retain_records:0}};
 var responses={'/api/state':{jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0},['/api/jobs/'+job.id+'/view']:sample};
 `,sandbox);
 vm.runInContext(`
@@ -75,6 +75,14 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   assert.equal(run('platform.config.value.scan_mode'),'fast');
   element('cfgScanMode').value='normal';await run('loadSettings()');
   assert.equal(element('cfgScanMode').value,'fast','saved scan mode must survive reload');
+  element('cfgScheduleMode').value='calendar';run('scanScheduleControls()');
+  assert(element('cfgInterval').disabled);assert(!element('cfgCalendarFields').hidden);
+  element('cfgScheduleTimes').value='02:00\n14:30';element('cfgScheduleTimezone').value='Asia/Shanghai';element('cfgRetainRecords').value='3';
+  element('cfgWeekday0').checked=false;
+  element('settingsForm').listeners.submit({preventDefault(){}});await flush();await run('loadSettings()');
+  assert.equal(run('platform.config.value.schedule_mode'),'calendar');assert.equal(run('platform.config.value.retain_records'),3);
+  assert.equal(element('cfgScheduleTimes').value,'02:00\n14:30');assert(!element('cfgWeekday0').checked);
+  run('platform.schedule=platform.config.value;renderTask(0)');assert(element('scheduleStatus').textContent.includes('Asia/Shanghai'));
   run('platform.followLatest=false;platform.loaded="historical"');await run('syncState()');assert.equal(run('platform.loaded'),'historical');
   run('platform.active={id:"a".repeat(32),status:"running"};controls()');assert(element('startScan').disabled);assert(!element('cancelScan').hidden);
   run(`platform.active={id:'progress',status:'running',trigger:'agent-full',created_at:Date.now()/1000-65,progress:{phase:'host',entries:1000,allocated:256*1024**3,capacity_known:true,capacity_total:1024**4,capacity_used:768*1024**3,containers_total:4,containers_done:1,containers_remaining:3,current_containers:[],path:'/srv/data'}};renderTask(0)`);
@@ -201,6 +209,8 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   run('showAuth(false)');assert(element('console').hidden);assert.equal(run('platform.csrf'),'');
   run(`pendingReads[4].resolve({data:sample,usage:Usage.build(sample)});`);
   assert.equal(await run('logoutRead'),false);assert.equal(run('platform.loaded'),'newer-test');
+  run(`platform.user={username:'admin',role:'admin'};platform.page='history';platform.history=[job];platform.loaded=job.id;platform.followLatest=false;platform.deletedIDs=new Set();responses['/api/state']={jobs:[],directory_jobs:[],latest_id:null,active:null,interval_minutes:0,schedule_mode:'off',history_floor:null};`);
+  await run('syncState()');assert.equal(run('platform.history.length'),0);assert.equal(run('platform.loaded'),null);assert.equal(run('snapshot'),null);
   console.log('Platform frontend checks passed: setup/login state, backend results, settings save, historical selection, active-job controls, viewer restrictions and logout.');
   console.log('Result loading checks passed: phase/count display, cancellation, preserved results, retry suppression, stale completion, errors and logout.');
 })().catch(error=>{console.error(error);process.exitCode=1;});
