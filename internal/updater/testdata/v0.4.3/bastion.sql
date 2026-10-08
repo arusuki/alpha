@@ -1,4 +1,4 @@
--- Source: v0.4.0 internal/bastion/schema.sql (schema 34).
+-- Source: v0.4.3 internal/bastion/schema.sql (schema 35).
 CREATE TABLE bastion_ssh_settings (
  id INTEGER PRIMARY KEY CHECK(id=1), identity_file TEXT NOT NULL DEFAULT '',
  revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0)
@@ -20,3 +20,6 @@ CREATE TABLE member_access (
  error TEXT NOT NULL DEFAULT '', updated_at REAL NOT NULL
 );
 CREATE UNIQUE INDEX member_invite_id ON member_access(invite_id) WHERE invite_id<>'';
+CREATE TABLE member_key_revocations (
+ member_id TEXT NOT NULL REFERENCES members(id), public_key TEXT NOT NULL,
+ PRIMARY KEY(member_id,public_key));

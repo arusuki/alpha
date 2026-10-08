@@ -78,7 +78,7 @@ func TestStatusMultipleKeysSaveIsolationFailureAndRetry(t *testing.T) {
 	}
 }
 
-func TestMultipleKeyRegistrationAndUpgradePreservesExistingData(t *testing.T) {
+func TestMultipleKeyRegistrationPreservesExistingData(t *testing.T) {
 	dir := t.TempDir()
 	db, err := platform.OpenDatabase(dir, Initialize)
 	if err != nil {
@@ -94,16 +94,7 @@ func TestMultipleKeyRegistrationAndUpgradePreservesExistingData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec("DROP TABLE member_key_sync; DROP TABLE member_key_revocations; DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime; PRAGMA user_version=34"); err != nil {
-		t.Fatal(err)
-	}
-	db.SQL.Close()
-	db, err = platform.OpenDatabase(dir, Initialize)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer db.SQL.Close()
-	store = &members.Store{Database: db}
 	var key string
 	if err = db.SQL.QueryRow("SELECT ssh_public_key FROM members WHERE id=?", first.ID).Scan(&key); err != nil || key != resourceTestKey {
 		t.Fatalf("lost key: %s %v", key, err)
@@ -121,7 +112,7 @@ func TestMultipleKeyRegistrationAndUpgradePreservesExistingData(t *testing.T) {
 	if err = db.SQL.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != platform.DatabaseVersion {
 		t.Fatal(version, err)
 	}
-	// Reopening is idempotent; neither migration table should be re-created.
+	// Reopening preserves registrations.
 	db.SQL.Close()
 	db, err = platform.OpenDatabase(dir, Initialize)
 	if err != nil {

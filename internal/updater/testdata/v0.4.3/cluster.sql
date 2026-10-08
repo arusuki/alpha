@@ -1,4 +1,4 @@
--- Source: v0.4.0 internal/cluster/{store,provision}.go (schema 34).
+-- Source: v0.4.3 internal/cluster/{store,provision}.go (schema 35).
 CREATE TABLE cluster_nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL UNIQUE,
  token TEXT NOT NULL, created_at REAL NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('worker','registry')),
@@ -11,3 +11,6 @@ CREATE TABLE member_node_resources (
  mode TEXT NOT NULL DEFAULT 'create' CHECK(mode IN ('create','adopt')), target_id TEXT NOT NULL DEFAULT '',
  PRIMARY KEY(member_id,node_id));
  CREATE TABLE member_work (member_id TEXT PRIMARY KEY REFERENCES members(id),pending INTEGER NOT NULL);
+ CREATE TABLE member_key_sync (
+ member_id TEXT NOT NULL REFERENCES members(id), node_id TEXT NOT NULL REFERENCES cluster_nodes(id),
+ state TEXT NOT NULL, error TEXT NOT NULL DEFAULT '', PRIMARY KEY(member_id,node_id));

@@ -41,7 +41,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 		modules = append(modules, "registry")
 	}
 	for _, m := range modules {
-		b, e := os.ReadFile("testdata/v0.4.0/" + m + ".sql")
+		b, e := os.ReadFile("testdata/v0.4.3/" + m + ".sql")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -49,7 +49,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 			t.Fatal(m, e)
 		}
 	}
-	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=34", role); err != nil {
+	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=35", role); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = raw.Exec("INSERT INTO users VALUES('user','admin','existing-password-hash','admin',1,123)"); err != nil {
@@ -70,7 +70,7 @@ func writeFile(t *testing.T, path string, b []byte) {
 func buildTarget(t *testing.T) []byte {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "alpha-updater")
-	cmd := exec.Command("go", "build", "-ldflags=-X project-alpha/internal/buildinfo.Version=v0.5.4", "-o", path, "../../cmd/alpha-updater")
+	cmd := exec.Command("go", "build", "-ldflags=-X project-alpha/internal/buildinfo.Version=v0.6.0", "-o", path, "../../cmd/alpha-updater")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build target updater: %v: %s", err, b)
 	}
@@ -103,11 +103,11 @@ func makeArchive(t *testing.T, entries map[string][]byte) []byte {
 }
 func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	t.Helper()
-	packageName := "project-alpha_v0.5.4_linux_" + runtime.GOARCH
+	packageName := "project-alpha_v0.6.0_linux_" + runtime.GOARCH
 	archive := makeArchive(t, map[string][]byte{
-		packageName + "/bin/project-alpha":   script("project-alpha", "v0.5.4"),
+		packageName + "/bin/project-alpha":   script("project-alpha", "v0.6.0"),
 		packageName + "/bin/alpha-updater":   target,
-		packageName + "/bin/rootless-docker": script("rootless-docker", "v0.5.4"),
+		packageName + "/bin/rootless-docker": script("rootless-docker", "v0.6.0"),
 	})
 	hash := sha256.Sum256(archive)
 	if badHash {
@@ -117,7 +117,7 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/arusuki/alpha/releases/latest":
-			json.NewEncoder(w).Encode(release{Tag: "v0.5.4", Assets: []asset{{Name: packageName + ".tar.gz", URL: server.URL + "/assets/archive"}, {Name: "SHA256SUMS", URL: server.URL + "/assets/sums"}}})
+			json.NewEncoder(w).Encode(release{Tag: "v0.6.0", Assets: []asset{{Name: packageName + ".tar.gz", URL: server.URL + "/assets/archive"}, {Name: "SHA256SUMS", URL: server.URL + "/assets/sums"}}})
 		case "/assets/archive":
 			w.Write(archive)
 		case "/assets/sums":
@@ -140,7 +140,7 @@ func assertVersion(t *testing.T, db *platform.Database, want int) {
 		t.Fatalf("account changed: %s %v", hash, err)
 	}
 }
-func TestReleaseUpdateFromV040(t *testing.T) {
+func TestReleaseUpdateFromV043(t *testing.T) {
 	target := buildTarget(t)
 	g := releaseServer(t, target, false)
 	for _, role := range []string{"control", "worker", "registry", "share-node"} {
@@ -169,7 +169,7 @@ func TestReleaseUpdateFromV040(t *testing.T) {
 			}
 			for _, f := range binaries(role) {
 				if f.source != "alpha-updater" {
-					writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.4.0"))
+					writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.4.3"))
 				}
 			}
 			// Helpers not required by a role must never be overwritten.
@@ -207,10 +207,10 @@ func TestReleaseUpdateFromV040(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer backup.Close()
-				assertVersion(t, &platform.Database{SQL: backup}, 34)
+				assertVersion(t, &platform.Database{SQL: backup}, 35)
 			}
 			got, err := executableVersion(context.Background(), filepath.Join(dir, binaries(role)[0].destination), "project-alpha")
-			if err != nil || got != "v0.5.4" {
+			if err != nil || got != "v0.6.0" {
 				t.Fatal(got, err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, ".alpha-update-pending")); !os.IsNotExist(err) {
@@ -231,16 +231,16 @@ func TestReleaseUpdateFromV040(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, f := range binaries("worker") {
-			writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.4.0"))
+			writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.4.3"))
 		}
 		err := run(context.Background(), options{role: "worker", directory: db.Directory, binDir: dir}, g, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "previous binaries restored") {
 			t.Fatal(err)
 		}
-		assertVersion(t, db, 34)
+		assertVersion(t, db, 35)
 		for _, f := range binaries("worker") {
 			b, _ := os.ReadFile(filepath.Join(dir, f.destination))
-			if !bytes.Equal(b, script(f.source, "v0.4.0")) {
+			if !bytes.Equal(b, script(f.source, "v0.4.3")) {
 				t.Fatal("binary not restored", f)
 			}
 		}
@@ -252,11 +252,11 @@ func TestReleaseUpdateFromV040(t *testing.T) {
 }
 
 func TestRejectedUpdatesPreserveFiles(t *testing.T) {
-	for _, scenario := range []string{"check", "running", "wrong-role", "checksum", "pending"} {
+	for _, scenario := range []string{"check", "running", "wrong-role", "checksum", "pending", "unsupported"} {
 		t.Run(scenario, func(t *testing.T) {
 			db := oldDatabase(t, "worker")
 			dir := t.TempDir()
-			original := script("project-alpha", "v0.4.0")
+			original := script("project-alpha", "v0.4.3")
 			writeFile(t, filepath.Join(dir, "project-alpha"), original)
 			o := options{role: "auto", directory: db.Directory, binDir: dir}
 			switch scenario {
@@ -270,10 +270,14 @@ func TestRejectedUpdatesPreserveFiles(t *testing.T) {
 				defer lock.Close()
 			case "wrong-role":
 				o.role = "control"
+			case "unsupported":
+				if _, err := db.SQL.Exec("PRAGMA user_version=34"); err != nil {
+					t.Fatal(err)
+				}
 			case "pending":
 				writeFile(t, filepath.Join(dir, ".alpha-update-pending"), []byte("interrupted"))
 			}
-			g := releaseServer(t, script("alpha-updater", "v0.5.4"), scenario == "checksum")
+			g := releaseServer(t, script("alpha-updater", "v0.6.0"), scenario == "checksum")
 			err := run(context.Background(), o, g, io.Discard)
 			if scenario == "check" {
 				if err != nil {
@@ -286,7 +290,18 @@ func TestRejectedUpdatesPreserveFiles(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("expected rejection")
 			}
-			assertVersion(t, db, 34)
+			wantVersion := 35
+			if scenario == "unsupported" {
+				wantVersion = 34
+				if err == nil || !strings.Contains(err.Error(), "unsupported database version") {
+					t.Fatalf("expected explicit unsupported version error: %v", err)
+				}
+				entries, readErr := os.ReadDir(dir)
+				if readErr != nil || len(entries) != 1 {
+					t.Fatalf("unsupported version changed installation: %v %v", entries, readErr)
+				}
+			}
+			assertVersion(t, db, wantVersion)
 			got, _ := os.ReadFile(filepath.Join(dir, "project-alpha"))
 			if !bytes.Equal(got, original) {
 				t.Fatal("binary changed")

@@ -1,4 +1,4 @@
--- Source: v0.4.0 internal/platform/container_ownership.sql.
+-- Source: v0.4.3 internal/platform/container_ownership.sql (schema 35).
 CREATE TRIGGER managed_owner_insert BEFORE INSERT ON managed_containers WHEN NEW.owner<>'' BEGIN
   SELECT RAISE(ABORT,'该使用者在此 node 已有容器') WHERE EXISTS(SELECT 1 FROM owners WHERE owner=NEW.owner AND container_id<>NEW.id);
  END;
