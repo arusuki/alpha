@@ -200,3 +200,32 @@ jobs:
             gh release create "$RELEASE_TAG" release/*.tar.gz release/SHA256SUMS \
               --verify-tag --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
           fi
+
+  cleanup-releases:
+    name: Keep the latest 10 releases
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    # Serialize cleanup across tags without blocking or cancelling publication.
+    concurrency:
+      group: release-retention
+      cancel-in-progress: false
+    steps:
+      - name: Delete older published releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # Fetch all pages before deleting anything. Stable releases and
+          # prereleases share the limit; drafts are left untouched.
+          release_ids="$(gh api --paginate "repos/$GH_REPO/releases?per_page=100" |
+            jq -sr 'add // [] | map(select(.draft == false)) |
+              sort_by(.published_at, .id) | reverse | .[10:][] | .id')"
+          while IFS= read -r release_id; do
+            [[ -n "$release_id" ]] || continue
+            echo "Deleting release ID $release_id"
+            # Keep Git tags: database upgrade history depends on them.
+            gh api --method DELETE "repos/$GH_REPO/releases/$release_id"
+          done <<< "$release_ids"
