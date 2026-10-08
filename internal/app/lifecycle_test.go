@@ -35,6 +35,11 @@ func TestServiceCrashStopsWorkerAndDocker(t *testing.T) {
 	pidfile := filepath.Join(root, "pids")
 	mustWrite(t, filepath.Join(root, "docker"), []byte("#!/bin/sh\nsleep 60 &\necho $PPID $! > '"+pidfile+"'\nwait\n"))
 	os.Chmod(filepath.Join(root, "docker"), 0700)
+	// Keep host GPU discovery from invoking the Docker stub before the scanner.
+	mustWrite(t, filepath.Join(root, "nvidia-smi"), []byte("#!/bin/sh\nexit 1\n"))
+	if err := os.Chmod(filepath.Join(root, "nvidia-smi"), 0700); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
 	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
 	t.Setenv("DOCKER_CONTEXT", "")
@@ -72,6 +77,9 @@ func TestServiceCrashStopsWorkerAndDocker(t *testing.T) {
 	if worker == 0 || child == 0 {
 		raw, _ := os.ReadFile(logfile.Name())
 		t.Fatalf("worker did not launch: %s", raw)
+	}
+	if worker == server.Process.Pid {
+		t.Fatal("Docker stub was invoked by the service instead of the scanner")
 	}
 	defer syscall.Kill(-worker, syscall.SIGKILL)
 	if err = server.Process.Kill(); err != nil {
