@@ -1,4 +1,4 @@
--- Source: v0.4.3 internal/storage/schema.sql (schema 35).
+-- Source: v0.5.0 internal/storage/schema.sql (schema 36).
 CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, status TEXT NOT NULL, trigger TEXT NOT NULL, created_by TEXT NOT NULL,

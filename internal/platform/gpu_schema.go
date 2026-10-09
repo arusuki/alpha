@@ -12,14 +12,3 @@ func InstallGPUHistory(tx *sql.Tx) error {
  CREATE INDEX gpu_intervals_expiry ON gpu_intervals(ended_at);`)
 	return err
 }
-
-func upgradeGPUHistory(tx *sql.Tx) error {
-	var role string
-	if err := tx.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
-		return err
-	}
-	if role == "worker" {
-		return InstallGPUHistory(tx)
-	}
-	return nil
-}

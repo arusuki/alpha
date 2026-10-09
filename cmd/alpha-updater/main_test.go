@@ -36,24 +36,20 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		tables     []string
 		conflict   bool
 	}{
-		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals", []string{"managed_containers", "owners", "member_container_slots"}, false},
 		{"worker", app.Initialize, 36, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
 		{"control", cluster.Initialize, 36, "", []string{"members", "member_invitations"}, false},
 		{"registry", registry.Initialize, 36, "", []string{"registry_control", "registry_sessions"}, false},
 		{"worker", app.Initialize, 36, "CREATE TRIGGER reject_schedule_upgrade BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'schedule upgrade rejected'); END", []string{"managed_containers", "owners", "member_container_slots", "settings"}, true},
-		{"registry", registry.Initialize, 35, "", []string{"registry_control", "registry_sessions"}, false},
-		{"control", cluster.Initialize, 35, "", []string{"members", "member_invitations"}, false},
 		{"control", cluster.Initialize, 37, "", []string{"members", "member_invitations"}, false},
 		{"worker", app.Initialize, 37, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
 		{"registry", registry.Initialize, 37, "", []string{"registry_control", "registry_sessions"}, false},
 		{"control", cluster.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"members", "mihomo_runtime"}, true},
 		{"worker", app.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"managed_containers", "mihomo_runtime"}, true},
 		{"registry", registry.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"registry_sessions", "mihomo_runtime"}, true},
-		{"worker", app.Initialize, 35, "DROP TABLE gpu_intervals; CREATE TABLE gpu_intervals_expiry(value TEXT); INSERT INTO gpu_intervals_expiry VALUES('preserve')", []string{"managed_containers", "owners", "member_container_slots", "gpu_intervals_expiry"}, true},
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
 	// no expired schema fixtures or migrations are retained.
-	for _, version := range []int{1, 34, platform.DatabaseVersion + 1} {
+	for _, version := range []int{1, 34, 35, platform.DatabaseVersion + 1} {
 		for _, role := range []string{"control", "worker", "registry"} {
 			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
 			cases = append(cases, struct {
@@ -113,13 +109,13 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 						t.Fatal(err)
 					}
 				}
-				if tc.version >= 35 && tc.version < 38 {
+				if tc.version >= 36 && tc.version < 38 {
 					if _, err = db.SQL.Exec("DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime"); err != nil {
 						t.Fatal(err)
 					}
 				}
 
-				if tc.version >= 35 && tc.version < 39 {
+				if tc.version >= 36 && tc.version < 39 {
 					switch tc.role {
 					case "worker":
 						_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN analysis_user_id;

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"project-alpha/internal/platform"
@@ -15,11 +16,6 @@ func scheduledAnalysisOldDatabase(t *testing.T, role string, version int) *platf
 	db := oldDatabase(t, role)
 	if role == "worker" {
 		if _, err := db.SQL.Exec(`INSERT INTO settings(id,value) VALUES(1,'{"root":[],"exclude":[],"no_docker":false,"include_docker_root":false,"max_depth":5,"max_nodes":50000,"owner_label":"project-alpha.owner","docker_timeout":120,"interval_minutes":0,"scan_backend":"auto","scan_mode":"normal"}')`); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if role == "worker" && version >= 36 {
-		if err := db.Transaction(platform.InstallGPUHistory); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -85,7 +81,7 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{35, 36, 37, 38} {
+			for _, version := range []int{36, 37, 38} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := scheduledAnalysisOldDatabase(t, role, version)
 					for range 2 {
@@ -139,13 +135,13 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 		}
 		t.Run(entry+"/unsupported", func(t *testing.T) {
 			db := oldDatabase(t, "worker")
-			if _, err := db.SQL.Exec("PRAGMA user_version=34"); err != nil {
+			if _, err := db.SQL.Exec("PRAGMA user_version=35"); err != nil {
 				t.Fatal(err)
 			}
-			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil {
+			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 				t.Fatal("unsupported database accepted")
 			}
-			assertVersion(t, db, 34)
+			assertVersion(t, db, 35)
 		})
 	}
 }
