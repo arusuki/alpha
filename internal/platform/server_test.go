@@ -93,7 +93,7 @@ func TestShareEntranceBlocksManagementEvenWithAllowedHostAndAdminSession(t *test
 	for _, path := range []string{"/api/setup", "/api/login"} {
 		client.Expect(403, "POST", path, map[string]string{}, map[string]string{"Host": "100.64.0.2:9765"})
 	}
-	for _, path := range []string{"/status/alice", "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/clipboard.js"} {
+	for _, path := range []string{"/status/alice", "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/member-disk.js", "/usage.js", "/clipboard.js"} {
 		client.Expect(200, "GET", path, nil, map[string]string{"Host": "100.64.0.2:9765"})
 	}
 	client.Expect(200, "GET", "/", nil, nil)

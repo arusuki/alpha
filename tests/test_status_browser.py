@@ -46,6 +46,39 @@ gpu_started = threading.Event()
 gpu_hold.set()
 gpu_fail = False
 gpu_calls = []
+disk_calls = []
+disk_hold = threading.Event()
+disk_started = threading.Event()
+disk_hold.set()
+disk_fail = False
+
+
+def disk_view(query):
+    if 'container' in query:
+        if 'path' in query:
+            path = query['path'][0]
+            if path == '/mine':
+                entries = [dict(name='workspace', path='/mine/workspace', known=True, allocated=2048, expandable=True),
+                           dict(name='<img src=x onerror=alert(1)>', path='/mine/file', known=True, allocated=1024, expandable=False),
+                           dict(name='尚未统计', path='/mine/unknown', known=False, allocated=0, expandable=True)]
+                return dict(node=dict(known=True, allocated=8192, partial=True), entries=entries if query.get('offset') == ['0'] else [],
+                            self_and_omitted_allocated=1024, other_entries_allocated=4096, has_more=query.get('offset') == ['0'])
+            if path == '/mine/workspace':
+                return dict(node=dict(known=True, allocated=2048, partial=False),
+                            entries=[dict(name='checkpoints', path='/mine/workspace/checkpoints', known=True, allocated=2048, expandable=True)],
+                            self_and_omitted_allocated=0, other_entries_allocated=0, has_more=False)
+            if path == '/mine/workspace/checkpoints':
+                return dict(node=dict(known=True, allocated=2048, partial=False),
+                            entries=[dict(name='model.bin', path=path+'/model.bin', known=True, allocated=2048, expandable=False)],
+                            self_and_omitted_allocated=0, other_entries_allocated=0, has_more=False)
+            return dict(node=dict(known=False, allocated=0, partial=True), entries=[], self_and_omitted_allocated=0, other_entries_allocated=0, has_more=False)
+        return dict(sources=[dict(label='可写层 /', path='/mine', known=True, allocated=8192, expandable=True)], writable_layer=dict(allocated=8192))
+    return dict(observed_at='2026-10-09T12:00:00+08:00', updated_at='', exclusive=2048, shared=1024, unrelated=1024,
+                filesystems=[dict(mount='/data', fs='ext4', total=8192, used=4096, available=4096)],
+                containers=[dict(id='mine', name='alice-workspace', owner='alice', exclusive=1024, shared=1024, known=True, partial=False, expandable=True),
+                            dict(id='other', name='bob-workspace', owner='bob', exclusive=1024, shared=1024, known=True, partial=False, expandable=False)])
+
+
 gpu_devices = [dict(uuid='GPU-1', index=0, name='NVIDIA Test GPU', utilization=42, memory_used_mib=1024,
                     memory_total_mib=24576, temperature=58, compute_mode='Default', mig=False,
                     processes=[dict(pid=1234, name='python train.py', kind='C', memory_mib=1024,
@@ -97,6 +130,21 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def do_GET(self):
+        if urlsplit(self.path).path == endpoint + '/disk':
+            if self.authorized():
+                query = parse_qs(urlsplit(self.path).query)
+                disk_calls.append(query)
+                disk_started.set()
+                disk_hold.wait(15)
+                if query['node_id'][0] == nodes[1]['node_id']:
+                    self.send(404, dict(error='暂无磁盘扫描结果'))
+                elif query['node_id'][0] == nodes[2]['node_id']:
+                    self.send(502, dict(error='节点不可达'))
+                elif disk_fail:
+                    self.send(503, dict(error='磁盘查询失败'))
+                else:
+                    self.send(200, disk_view(query))
+            return
         if urlsplit(self.path).path == endpoint + '/gpu':
             if self.authorized():
                 query = parse_qs(urlsplit(self.path).query)
@@ -115,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, dict(member_id=member, username='alice', ssh_public_key=member_keys, control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.lstrip('/')
-        if filename not in ('status.html', 'status.js', 'status.css', 'clipboard.js', 'gpu.js', 'gpu.css'):
+        if filename not in ('status.html', 'status.js', 'status.css', 'clipboard.js', 'gpu.js', 'gpu.css', 'usage.js', 'member-disk.js'):
             self.send(404, {})
             return
         mime = {'html': 'text/html', 'js': 'application/javascript', 'css': 'text/css'}[filename.split('.')[-1]]
@@ -198,6 +246,74 @@ try:
         expect(page.locator('#gpuCharts')).to_contain_text('bob')
         expect(page.locator('#gpuRanking')).to_contain_text('alice')
         expect(page.locator('#gpuRanking')).to_contain_text('bob')
+        # Disk and GPU panels have separate visibility, selection and requests.
+        expect(page.locator('#diskPanel')).to_be_hidden()
+        assert not disk_calls
+        page.locator('#toggleDisk').click()
+        expect(page.locator('#diskPanel')).to_be_visible()
+        expect(page.locator('#gpuPanel')).to_be_visible()
+        expect(page.locator('#diskFilesystems')).to_contain_text('50.0% 已用')
+        expect(page.locator('#diskContainers')).to_contain_text('bob-workspace')
+        expect(page.locator('#diskContainers details')).to_have_count(1)
+        expect(page.locator('#diskContainers details[open]')).to_have_count(0)
+        page.locator('#diskContainers summary').click()
+        expect(page.locator('.disk-map')).to_be_visible()
+        expect(page.locator('.disk-source-picker')).to_contain_text('可写层')
+        expect(page.locator('.disk-map-tile')).to_have_count(4)
+        # Tile areas retain the whole directory, including other pages and residual bytes.
+        areas = page.locator('.disk-map-tile').evaluate_all("tiles => Object.fromEntries(tiles.map(t => [t.dataset.diskTile, parseFloat(t.style.width)*parseFloat(t.style.height)]))")
+        assert abs(areas['0']/areas['1'] - 2) < .01
+        assert abs(areas['-1']/areas['1'] - 4) < .01
+        page.locator('[data-disk-tile="0"]').click()
+        expect(page.locator('.disk-detail-path')).to_have_text('/mine/workspace')
+        page.locator('[data-disk-tile="0"]').focus()
+        page.keyboard.press('Enter')
+        expect(page.locator('.disk-detail-path')).to_have_text('/mine/workspace/checkpoints')
+        count = len(disk_calls)
+        page.locator('[data-disk-tile="0"]').click()
+        expect(page.locator('.disk-map-inspector')).to_contain_text('model.bin · 2 KiB')
+        assert len(disk_calls) == count
+        page.locator('[data-disk-crumb="1"]').click()
+        expect(page.locator('.disk-detail-path')).to_have_text('/mine')
+        page.locator('[data-disk-tile="-1"]').click()
+        expect(page.locator('[data-disk-prev]')).to_be_visible()
+        assert disk_calls[-1]['offset'] == ['50']
+        page.locator('[data-disk-prev]').click()
+        expect(page.locator('[data-disk-tile="0"]')).to_be_visible()
+        page.locator('[data-disk-tile="-2"]').click()
+        expect(page.locator('.disk-map-inspector')).to_contain_text('目录自身及未展开空间')
+        page.locator('[data-disk-source="2"]').click()
+        expect(page.locator('.disk-map-empty')).to_be_visible()
+        page.locator('[data-disk-back]').click()
+        expect(page.locator('.disk-source-list')).to_contain_text('<img src=x onerror=alert(1)>')
+        assert page.locator('#diskPanel img').count() == 0
+        assert all(q.get('container', ['mine']) == ['mine'] for q in disk_calls)
+        page.locator('#diskPanel').screenshot(path='/tmp/alpha-status-disk-desktop.png')
+        page.set_viewport_size(dict(width=390, height=844))
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.locator('#diskPanel').screenshot(path='/tmp/alpha-status-disk-mobile.png')
+        page.set_viewport_size(dict(width=1440, height=1080))
+        disk_fail = True
+        page.locator('#diskRefresh').click()
+        expect(page.locator('#diskStatus')).to_contain_text('磁盘查询失败')
+        expect(page.locator('#diskContainers')).to_have_text('')
+        disk_fail = False
+        page.locator('#diskRefresh').click()
+        expect(page.locator('#diskContainers')).to_contain_text('alice-workspace')
+        page.locator('#diskNode').select_option(nodes[1]['node_id'])
+        expect(page.locator('#diskStatus')).to_contain_text('暂无磁盘扫描结果')
+        expect(page.locator('#gpuNode')).to_have_value(nodes[0]['node_id'])
+        page.locator('#diskNode').select_option(nodes[2]['node_id'])
+        expect(page.locator('#diskStatus')).to_contain_text('节点不可达')
+        page.locator('#diskNode').select_option(nodes[0]['node_id'])
+        expect(page.locator('#diskContainers')).to_contain_text('alice-workspace')
+        page.locator('#toggleDisk').click()
+        expect(page.locator('#diskPanel')).to_be_hidden()
+        expect(page.locator('#gpuPanel')).to_be_visible()
+        count = len(disk_calls)
+        page.evaluate("document.getElementById('diskRefresh').click()")
+        page.wait_for_timeout(100)
+        assert len(disk_calls) == count
         assert page.locator('#gpuCards img').count() == 0
         assert page.locator('#statusContent a[href^="/nodes/"], #statusContent a[href="/"]').count() == 0
         with page.expect_response(lambda r: '/gpu?' in r.url and 'hours=72' in r.url):
@@ -322,6 +438,10 @@ try:
         # Leaving while GPU and creation responses are outstanding cannot restore private data.
         gpu_hold.clear()
         gpu_started.clear()
+        disk_hold.clear()
+        disk_started.clear()
+        page.locator('#toggleDisk').click()
+        assert disk_started.wait(5)
         page.locator('#toggleGPU').click()
         assert gpu_started.wait(5)
         hold.clear()
@@ -332,6 +452,7 @@ try:
         page.locator('#logout').click()
         hold.set()
         gpu_hold.set()
+        disk_hold.set()
         expect(page.locator('#statusContent')).to_be_hidden()
         assert page.locator('#statusNodes').inner_text() == ''
         assert page.locator('#gpuCards').inner_text() == ''
@@ -339,6 +460,9 @@ try:
         assert 'bob' not in page.locator('#gpuCharts').inner_text()
         assert 'bob' not in page.locator('#gpuRanking').inner_text()
         expect(page.locator('#gpuPanel')).to_be_hidden()
+        expect(page.locator('#diskPanel')).to_be_hidden()
+        expect(page.locator('#diskContainers')).to_have_text('')
+        expect(page.locator('#diskFilesystems')).to_have_text('')
         assert page.locator('#sshConfig').inner_text() == ''
         assert page.locator('#memberKeys').input_value() == ''
         assert page.evaluate('sessionStorage.length') == 0
@@ -355,5 +479,6 @@ try:
 finally:
     hold.set()
     gpu_hold.set()
+    disk_hold.set()
     server.shutdown()
     server.server_close()

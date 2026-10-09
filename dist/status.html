@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="/status.css">
   <link rel="stylesheet" href="/gpu.css">
   <script src="/gpu.js" defer></script>
+  <script src="/usage.js" defer></script>
+  <script src="/member-disk.js" defer></script>
   <script src="/clipboard.js" defer></script>
   <script src="/status.js" defer></script>
 </head>
@@ -29,6 +31,11 @@
       <section id="gpuPanel" class="member-gpu-panel" hidden aria-labelledby="gpuTitle">
         <div class="directory-heading"><div><h2 id="gpuTitle" tabindex="-1">节点 GPU 使用情况</h2><p class="muted">选择计算节点，查看所有使用者的 GPU 占用及最近 72 小时历史。</p></div><label class="gpu-node-select">计算节点 <select id="gpuNode"></select></label></div>
         <div id="statusGPUView"></div>
+      </section>
+      <div class="disk-entry"><div><strong>磁盘空间用量</strong><p>查看节点磁盘容量，展开自己的容器定位空间占用。</p></div><button id="toggleDisk" class="primary" type="button" aria-expanded="false" aria-controls="diskPanel">查看磁盘空间用量 <span aria-hidden="true">→</span></button></div>
+      <section id="diskPanel" class="member-disk-panel" hidden aria-labelledby="diskTitle">
+        <div class="directory-heading"><div><h2 id="diskTitle" tabindex="-1">节点磁盘空间用量</h2><p class="muted">磁盘数据来自最近一次完成的扫描；只能展开自己的容器用量。</p></div><label class="disk-node-select">计算节点 <select id="diskNode"></select></label></div>
+        <div id="statusDiskView"></div>
       </section>
       <div class="summary" aria-label="资源汇总">
         <div><span>全部节点</span><strong id="totalNodes">0</strong></div>

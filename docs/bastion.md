@@ -94,6 +94,7 @@ sudo ./project-alpha share-node --uninstall
 | POST | `/api/status/<username>/keys` | `{"ssh_public_key":"公钥一\n公钥二"}`；保存公钥列表并自动下发，返回 202；失败后再次保存可重试 |
 | POST | `/api/status/<username>/password` | `{"current_password":"…","password":"…"}`；修改密码并撤销全部状态页会话 |
 | GET | `/api/status/<username>` | 本人状态页数据；全部 node 的基本信息、在线状态、容器总数、本人容器及领养候选列表（已领养项只读显示） |
+| GET | `/api/status/<username>/disk?node_id=…` | 最近完成扫描的分区容量与容器用量概览；附加 `container` 查看本人容器来源，附加 `path`、`offset` 分页读取其已采集目录明细（每页 50 项） |
 | POST | `/api/status/<username>/containers` | `{"node_id":"…","mode":"create","container_id":""}`；与本人容器申请接口共用领养或新建流程，URL 用户名必须与登录会话所属使用者一致 |
 
 `/api/status/*` 除登录外携带 `Authorization: Bearer <session_token>`；不接受资源令牌。修改密码要求当前密码正确。密码长度和存储见 [使用者登记](members.md)。新容器与创建失败后尚未初始化的容器使用当前密码完成初始化；已经初始化的容器不会重置。
@@ -101,6 +102,8 @@ sudo ./project-alpha share-node --uninstall
 `control` 返回通过 share node 代理的本人 `status_url`；未分配分享节点时 URL 为空。`access.share_host/share_ssh_port/status_port` 为成员入口，`nodes[].internal_ip` 取自计算节点配置。
 
 status 顶层 `ssh_public_key` 返回本人公钥列表（一行一个），`nodes[].key_state/key_error` 返回最近公钥修改的同步状态和错误。`access` 返回分享节点、邀请链接及状态、公钥状态和错误；`nodes` 返回各 worker 的分配方式（`mode`）、领养目标（`target_id`）、分配状态、容器 ID/名称、端口及总控配置的计算节点内网 IP（`internal_ip`），不返回服务凭据或 root 密码。
+
+状态页的磁盘面板与 GPU 面板独立开关、选择节点和刷新，显示分区已用、总量、可用空间，以及容器独占和共享用量。容器明细默认收起，只允许本人展开；展开后可选择可写层或挂载来源，通过交互式容量图点击目录逐层下钻，使用面包屑返回，并点击文件查看用量。分页外的目录项和目录自身及未展开空间单独标注，零占用或未知项保留在列表中。其他人的容器仅显示用量摘要。服务端逐次校验容器归属和目录范围，不下发宿主机目录树或其他容器的来源路径；宿主机分区入口挂载不能用于展开全盘。磁盘数据为扫描观察值，刷新不会触发扫描；缺少明细时需等待管理员补充扫描，共享空间和可写层不能重复相加。总控、worker 和 share node 代理需更新后使用此入口。
 
 总控 `/status/<username>` 页面（如 `/status/alice`）用注册时设置的密码登录后查看节点及容器，并申请尚未分配的在线节点；`username` 是注册时的唯一使用者标识。页面同时给出 SSH config 示例：分配的 share node IP 和 SSH 端口用于固定 `alpha-jump`，计算节点 IP 和分配端口用于容器，通过 `ProxyJump alpha-jump` 连接；私钥路径应指向注册公钥对应的本机私钥。尚无容器时先申请，成功后配置自动更新。登录会话仅存当前标签页的 `sessionStorage`，12 小时后过期，退出时同时撤销服务端会话；浏览器不保存密码。离线节点保留中央分配记录，运行状态来自最近采集。
 

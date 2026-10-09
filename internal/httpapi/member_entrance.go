@@ -6,7 +6,7 @@ import (
 )
 
 var memberPage = regexp.MustCompile(`^/status/[a-z][a-z0-9_-]{2,31}/?$`)
-var memberRead = regexp.MustCompile(`^/api/status/[a-z][a-z0-9_-]{2,31}(/gpu)?$`)
+var memberRead = regexp.MustCompile(`^/api/status/[a-z][a-z0-9_-]{2,31}(/gpu|/disk)?$`)
 var memberWrite = regexp.MustCompile(`^/api/status/[a-z][a-z0-9_-]{2,31}/(login|logout|password|keys|containers)$`)
 
 // MemberEntranceAllowed is shared by the share proxy and control's Host guard.
@@ -18,7 +18,7 @@ func MemberEntranceAllowed(r *http.Request) bool {
 			return true
 		}
 		switch r.URL.Path {
-		case "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/clipboard.js", "/api/members/registration-schema", "/api/members/me/resources":
+		case "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/usage.js", "/member-disk.js", "/clipboard.js", "/api/members/registration-schema", "/api/members/me/resources":
 			return true
 		}
 	}

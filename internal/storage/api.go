@@ -29,6 +29,10 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	var err error
 	admin := user.Role == "admin"
 	failure := func(err error) (int, any, error) { return 0, nil, err }
+	if method == "GET" && route == "/api/member-disk" {
+		result, err := s.memberDisk(r, user)
+		return 200, result, err
+	}
 	if route == "/api/settings" && !admin {
 		return failure(httpapi.NewError(403, "此操作需要管理员权限"))
 	}

@@ -5,7 +5,7 @@
   const username=decodeURIComponent(location.pathname.split('/')[2]);
   const endpoint='/api/status/'+encodeURIComponent(username);
   const storageKey='alpha.member-session.'+username;
-  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null,keysDirty:false,keysSaving:false,gpuOpen:false,gpuNode:null};
+  const state={token:'',data:null,busy:false,epoch:0,timer:null,request:null,keysDirty:false,keysSaving:false,gpuOpen:false,gpuNode:null,diskOpen:false,diskNode:null};
   const labels={unallocated:'尚无容器',pending:'等待分配',running:'正在分配',ready:'已分配容器',failed:'分配失败',deleting:'正在回收',deleted:'尚无容器'};
   function stored(value){try{if(value===undefined)return sessionStorage.getItem(storageKey)||'';if(value)sessionStorage.setItem(storageKey,value);else sessionStorage.removeItem(storageKey);}catch{}return '';}
   function controls(){
@@ -17,6 +17,8 @@
   function clearSession(message=''){
     state.epoch++;state.request?.abort();state.request=null;
     state.gpuOpen=false;state.gpuNode=null;gpuUI.reset();$('gpuNode').replaceChildren();
+    state.diskOpen=false;state.diskNode=null;diskUI.reset();$('diskNode').replaceChildren();
+    $('diskPanel').hidden=true;$('toggleDisk').setAttribute('aria-expanded','false');$('toggleDisk').innerHTML='查看磁盘空间用量 <span aria-hidden="true">→</span>';
     $('gpuPanel').hidden=true;$('toggleGPU').setAttribute('aria-expanded','false');$('toggleGPU').innerHTML='查看节点 GPU 使用情况 <span aria-hidden="true">→</span>';
     clearTimeout(state.timer);state.token='';state.data=null;state.busy=false;state.applying=null;stored('');
     state.keysDirty=false;state.keysSaving=false;$('keysForm').reset();$('keysError').textContent='';$('keysMessage').textContent='';$('keysSyncState').textContent='';
@@ -51,6 +53,23 @@
     $('gpuNode').innerHTML=nodes.map(n=>`<option value="${esc(n.node_id)}">${esc(n.node_name)}${n.online?'':'（离线）'}</option>`).join('')||'<option value="">暂无计算节点</option>';
     $('gpuNode').value=state.gpuNode||'';$('gpuNode').disabled=!nodes.length;
     if(previous!==state.gpuNode){gpuUI.reset();if(state.gpuOpen)gpuUI.open();}
+  }
+  const diskUI=MemberDiskUI.create($('statusDiskView'),{
+    active:()=>!!state.token&&state.diskOpen&&!!state.diskNode&&!document.hidden,
+    request:async(query,options)=>{
+      const epoch=state.epoch;query.set('node_id',state.diskNode);
+      const response=await fetch(endpoint+'/disk?'+query,{...options,cache:'no-store',credentials:'omit',headers:{Authorization:'Bearer '+state.token}});
+      let data;try{data=await response.json();}catch{throw Error('服务返回的数据无效，请刷新重试');}
+      if(!response.ok){if(epoch===state.epoch&&response.status===401)clearSession(data.error);throw Error(data.error||'磁盘查询失败');}
+      return data;
+    }
+  });
+  function renderDiskNodes(){
+    const previous=state.diskNode,nodes=state.data.nodes;
+    if(!nodes.some(n=>n.node_id===state.diskNode))state.diskNode=nodes.find(n=>n.online)?.node_id||nodes[0]?.node_id||null;
+    $('diskNode').innerHTML=nodes.map(n=>`<option value="${esc(n.node_id)}">${esc(n.node_name)}${n.online?'':'（离线）'}</option>`).join('')||'<option value="">暂无计算节点</option>';
+    $('diskNode').value=state.diskNode||'';$('diskNode').disabled=!nodes.length;
+    if(previous!==state.diskNode){diskUI.reset();if(state.diskOpen)diskUI.open();}
   }
   function containers(node){
     const rows=[...node.containers];
@@ -91,7 +110,7 @@
     $('onlineNodes').textContent=data.nodes.filter(n=>n.online).length;
     $('allocatedNodes').textContent=data.nodes.filter(n=>containers(n).length>0||n.state==='ready').length;
     $('checkedAt').textContent='更新于 '+new Date(data.checked_at*1000).toLocaleTimeString();
-    renderGuide(data);renderGPUNodes();
+    renderGuide(data);renderGPUNodes();renderDiskNodes();
     if(!state.keysDirty)$('memberKeys').value=data.ssh_public_key;
     const keyLabels={pending:'等待下发',failed:'下发失败',ready:'已同步'};
     $('keysSyncState').textContent=['跳板 · '+(keyLabels[data.access.key_state]||'等待下发')+(data.access.error?' · '+data.access.error:''),...data.nodes.filter(n=>n.key_state).map(n=>n.node_name+' · '+(keyLabels[n.key_state]||n.key_state)+(n.key_error?' · '+n.key_error:''))].join('\n');
@@ -202,6 +221,12 @@
     if(state.gpuOpen){$('gpuTitle').focus({preventScroll:true});gpuUI.open();}else gpuUI.close();
   });
   $('gpuNode').addEventListener('change',()=>{state.gpuNode=$('gpuNode').value;gpuUI.reset();gpuUI.open();});
+  $('toggleDisk').addEventListener('click',()=>{
+    state.diskOpen=!state.diskOpen;$('diskPanel').hidden=!state.diskOpen;$('toggleDisk').setAttribute('aria-expanded',String(state.diskOpen));
+    $('toggleDisk').innerHTML=state.diskOpen?'收起磁盘空间用量 <span aria-hidden="true">↑</span>':'查看磁盘空间用量 <span aria-hidden="true">→</span>';
+    if(state.diskOpen){$('diskTitle').focus({preventScroll:true});diskUI.open();}else diskUI.close();
+  });
+  $('diskNode').addEventListener('change',()=>{state.diskNode=$('diskNode').value;diskUI.reset();diskUI.open();});
   $('copySSHConfig').addEventListener('click',async()=>{
     const epoch=state.epoch;
     try{await AlphaClipboard.writeText($('sshConfig').textContent);if(epoch===state.epoch)$('sshCopyStatus').textContent='SSH 配置已复制，请追加保存到本机 ~/.ssh/config；仅使用自定义私钥路径时需要修改注释项。';}
@@ -212,9 +237,9 @@
     fetch(endpoint+'/logout',{method:'POST',credentials:'omit',headers:{Authorization:'Bearer '+token}}).catch(()=>{});
   });
   $('statusNodes').addEventListener('click',event=>{const button=event.target.closest('[data-apply]');if(button&&!button.disabled)apply(button.dataset.apply);});
-  document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(state.timer);gpuUI.close();}else{refresh();if(state.gpuOpen)gpuUI.open();}});
-  window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);gpuUI.close();state.request?.abort();});
-  window.addEventListener('pageshow',event=>{if(event.persisted){state.busy=false;state.applying=null;refresh();if(state.gpuOpen)gpuUI.open();}});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(state.timer);gpuUI.close();diskUI.close();}else{refresh();if(state.gpuOpen)gpuUI.open();if(state.diskOpen)diskUI.open();}});
+  window.addEventListener('pagehide',()=>{state.epoch++;clearTimeout(state.timer);gpuUI.close();diskUI.close();state.request?.abort();});
+  window.addEventListener('pageshow',event=>{if(event.persisted){state.busy=false;state.applying=null;refresh();if(state.gpuOpen)gpuUI.open();if(state.diskOpen)diskUI.open();}});
   $('memberIdentity').textContent='使用者 · '+username;
   state.token=stored();if(state.token)refresh();
 })();

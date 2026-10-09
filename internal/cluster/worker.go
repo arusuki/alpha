@@ -90,7 +90,7 @@ func operational(path string) bool {
 			return true
 		}
 	}
-	return path == "/api/snapshot"
+	return path == "/api/snapshot" || path == "/api/member-disk"
 }
 
 func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {

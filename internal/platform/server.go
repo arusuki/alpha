@@ -84,6 +84,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		assetPath = "/"
 	}
 	assets["/status.js"] = "status.js"
+	assets["/member-disk.js"] = "member-disk.js"
 	assets["/status.css"] = "status.css"
 	if statusPageRoute.MatchString(assetPath) {
 		assets[assetPath] = "status.html"
