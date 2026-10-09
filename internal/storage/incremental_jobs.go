@@ -35,8 +35,8 @@ func (d *Store) readSnapshot(id string) (*Snapshot, error) {
 	if json.Unmarshal(raw, &result) != nil || result.Tree == nil {
 		return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
 	}
-	if result.SchemaVersion != snapshotVersion {
-		return nil, httpapi.NewError(503, fmt.Sprintf("不支持的扫描结果版本：%d，需要版本 %d；请使用新的数据目录重新扫描", result.SchemaVersion, snapshotVersion))
+	if err := ValidateSnapshotVersion(result.SchemaVersion); err != nil {
+		return nil, httpapi.NewError(503, err.Error())
 	}
 	if err := validateSnapshotDocker(result.Docker); err != nil {
 		return nil, httpapi.NewError(503, err.Error())
@@ -75,8 +75,8 @@ func (d *Store) validateIncrementalRequest(id, path string, revision int64) erro
 	if err != nil {
 		return err
 	}
-	if version != snapshotVersion {
-		return fmt.Errorf("不支持的扫描结果版本：%d，需要版本 %d；请使用新的数据目录重新扫描", version, snapshotVersion)
+	if err := ValidateSnapshotVersion(version); err != nil {
+		return err
 	}
 	if current != revision {
 		return httpapi.NewError(409, "扫描记录已更新，请刷新结果后重试")

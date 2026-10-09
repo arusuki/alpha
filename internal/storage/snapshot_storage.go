@@ -8,6 +8,14 @@ import (
 	"slices"
 )
 
+// ValidateSnapshotVersion also applies to projections that read only metadata.
+func ValidateSnapshotVersion(version int) error {
+	if version != snapshotVersion {
+		return fmt.Errorf("不支持的扫描结果版本：%d，需要版本 %d；请使用新的数据目录重新扫描", version, snapshotVersion)
+	}
+	return nil
+}
+
 func validateSnapshotDocker(docker object) error {
 	if len(docker) == 0 {
 		return nil
@@ -89,8 +97,8 @@ func (d *Store) storedSnapshot(id string) (*Snapshot, error) {
 	if err := json.Unmarshal([]byte(metadata), &result); err != nil {
 		return nil, err
 	}
-	if result.SchemaVersion != snapshotVersion {
-		return nil, fmt.Errorf("不支持的扫描结果版本：%d，需要版本 %d；请使用新的数据目录重新扫描", result.SchemaVersion, snapshotVersion)
+	if err := ValidateSnapshotVersion(result.SchemaVersion); err != nil {
+		return nil, err
 	}
 	if err := validateSnapshotDocker(result.Docker); err != nil {
 		return nil, err

@@ -4,14 +4,16 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 
 	"project-alpha/internal/cluster"
+	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/storage"
 )
 
-// inventory reads only small persisted metadata, never the snapshot file tree.
+// inventory decodes only summary fields, without materializing the snapshot tree.
 // A single transaction keeps ownership and managed records at the same revision.
 func inventory(db *platform.Database) (cluster.Inventory, error) {
 	out := cluster.Inventory{Containers: []cluster.Container{}, Filesystems: []cluster.Filesystem{}}
@@ -22,20 +24,35 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 	}
 	defer tx.Rollback()
 	byID := map[string]cluster.Container{}
-	var raw string
-	err = tx.QueryRow(`SELECT r.job_id,r.metadata FROM snapshot_records r JOIN jobs j ON j.id=r.job_id
- WHERE j.status='completed' AND j.trigger<>'incremental' ORDER BY j.finished_at DESC LIMIT 1`).Scan(&out.SnapshotID, &raw)
+	var raw sql.NullString
+	err = tx.QueryRow(`SELECT j.id,r.metadata FROM jobs j LEFT JOIN snapshot_records r ON r.job_id=j.id
+ WHERE j.status='completed' AND j.trigger<>'incremental'
+ ORDER BY j.finished_at DESC,j.created_at DESC,j.id DESC LIMIT 1`).Scan(&out.SnapshotID, &raw)
 	if err != nil && err != sql.ErrNoRows {
 		return out, err
 	}
 	if err == nil {
-		var snapshot struct {
-			Containers  []storage.Container  `json:"containers"`
-			FinishedAt  string               `json:"finished_at"`
-			Filesystems []cluster.Filesystem `json:"filesystems"`
+		data := []byte(raw.String)
+		if !raw.Valid {
+			// Full scans persist an immutable file; the indexed record exists
+			// only after directory exploration publishes its first revision.
+			data, err = os.ReadFile(filepath.Join(db.Directory, "results", out.SnapshotID, "snapshot.json"))
+			if err != nil {
+				return out, httpapi.NewError(503, "该扫描结果文件无法读取")
+			}
 		}
-		if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
-			return out, err
+		var snapshot struct {
+			SchemaVersion int                  `json:"schema_version"`
+			Tree          *struct{}            `json:"tree"`
+			Containers    []storage.Container  `json:"containers"`
+			FinishedAt    string               `json:"finished_at"`
+			Filesystems   []cluster.Filesystem `json:"filesystems"`
+		}
+		if err = json.Unmarshal(data, &snapshot); err != nil || !raw.Valid && snapshot.Tree == nil {
+			return out, httpapi.NewError(503, "该扫描结果文件无法读取")
+		}
+		if err = storage.ValidateSnapshotVersion(snapshot.SchemaVersion); err != nil {
+			return out, httpapi.NewError(503, err.Error())
 		}
 		out.ObservedAt = snapshot.FinishedAt
 		out.Filesystems = append(out.Filesystems, snapshot.Filesystems...)

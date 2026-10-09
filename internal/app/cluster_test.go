@@ -4,13 +4,114 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"project-alpha/internal/platform"
 )
 
+func writeInventorySnapshot(t *testing.T, db *platform.Database, id, metadata string, indexed bool) {
+	t.Helper()
+	if indexed {
+		if _, err := db.SQL.Exec(`INSERT INTO snapshot_records VALUES(?,1,'/srv',?)
+ ON CONFLICT(job_id) DO UPDATE SET metadata=excluded.metadata`, id, metadata); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	dir := filepath.Join(db.Directory, "results", id)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "snapshot.json"), []byte(metadata), 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNodeInventorySelectsLatestCompletedScan(t *testing.T) {
+	db, err := platform.OpenDatabase(t.TempDir(), Initialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	const metadata = `{"schema_version":5,"tree":{},"finished_at":"2026-09-30T10:00:00Z","containers":[{"id":"latest","name":"latest","owner":"alice","state":"running"}],"filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750}]}`
+	old, latest := strings.Repeat("a", 32), strings.Repeat("b", 32)
+	for _, job := range []struct {
+		id, status, trigger string
+		created, finished   int
+	}{
+		{old, "completed", "manual", 1, 2},
+		{latest, "completed", "scheduled", 3, 4},
+		{strings.Repeat("c", 32), "completed", "incremental", 5, 6},
+		{strings.Repeat("d", 32), "failed", "manual", 7, 8},
+		{strings.Repeat("e", 32), "running", "manual", 9, 0},
+	} {
+		if _, err := db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,?,?,'admin',?,?,'{}')", job.id, job.status, job.trigger, job.created, job.finished); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeInventorySnapshot(t, db, old, `{"schema_version":5,"containers":[{"id":"stale"}]}`, true)
+	writeInventorySnapshot(t, db, latest, metadata, false)
+	for _, indexed := range []bool{false, true} {
+		if indexed {
+			writeInventorySnapshot(t, db, latest, metadata, true)
+			// The indexed revision is authoritative, even if its baseline is absent.
+			if err := os.Remove(filepath.Join(db.Directory, "results", latest, "snapshot.json")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		inv, err := inventory(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if inv.SnapshotID != latest || inv.ObservedAt != "2026-09-30T10:00:00Z" || len(inv.Containers) != 1 || inv.Containers[0].ID != "latest" || inv.Containers[0].State != "running" || len(inv.Filesystems) != 1 || *inv.Filesystems[0].Used != 750 || *inv.Filesystems[0].Total != 1000 {
+			t.Fatalf("indexed=%t: wrong latest scan: %+v", indexed, inv)
+		}
+		if inv.Active == nil {
+			t.Fatal("lost active scan")
+		}
+	}
+}
+
+func TestNodeInventoryRejectsUnreadableLatestSnapshot(t *testing.T) {
+	for _, tc := range []struct{ name, raw, message string }{
+		{"missing", "", "该扫描结果文件无法读取"},
+		{"malformed", "{", "该扫描结果文件无法读取"},
+		{"missing tree", `{"schema_version":5}`, "该扫描结果文件无法读取"},
+		{"unsupported version", `{"schema_version":4,"tree":{}}`, "不支持的扫描结果版本"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := platform.OpenDatabase(t.TempDir(), Initialize)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.SQL.Close()
+			old, latest := strings.Repeat("a", 32), strings.Repeat("b", 32)
+			for i, id := range []string{old, latest} {
+				if _, err := db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',?,?, '{}')", id, i, i+1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeInventorySnapshot(t, db, old, `{"schema_version":5}`, true)
+			if tc.raw != "" {
+				writeInventorySnapshot(t, db, latest, tc.raw, false)
+			}
+			if _, err := inventory(db); err == nil || !strings.Contains(err.Error(), tc.message) {
+				t.Fatalf("expected %s, got %v", tc.message, err)
+			}
+		})
+	}
+}
+
 func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
+	for _, source := range []string{"file", "indexed"} {
+		t.Run(source, func(t *testing.T) { testNodeInventoryOwnership(t, source == "indexed") })
+	}
+}
+
+func testNodeInventoryOwnership(t *testing.T, indexed bool) {
 	db, err := platform.OpenDatabase(t.TempDir(), Initialize)
 	if err != nil {
 		t.Fatal(err)
@@ -30,13 +131,11 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 		t.Fatalf("empty inventory: %+v %v", initial, err)
 	}
 	id := strings.Repeat("a", 32)
-	metadata := `{"finished_at":"2026-09-30T10:00:00Z","filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750},{"mount":"/data","fs":"xfs","total":2000,"used":0},{"mount":"/unknown","fs":"xfs","total":null,"used":null}],"containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
+	metadata := `{"schema_version":5,"tree":{},"finished_at":"2026-09-30T10:00:00Z","filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750},{"mount":"/data","fs":"xfs","total":2000,"used":0},{"mount":"/unknown","fs":"xfs","total":null,"used":null}],"containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
 	if _, err = db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',1,2,'{}')", id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.SQL.Exec("INSERT INTO snapshot_records VALUES(?,1,'/srv',?)", id, metadata); err != nil {
-		t.Fatal(err)
-	}
+	writeInventorySnapshot(t, db, id, metadata, indexed)
 	for _, c := range []struct{ id, name, owner string }{{"one", "managed-name", "managed-owner"}, {"three", "new-container", "charlie"}} {
 		if _, err = db.SQL.Exec("INSERT INTO managed_containers VALUES(?,'unix:///test.sock','daemon',?,?, '{}','fingerprint','create','',1,3)", c.id, c.name, c.owner); err != nil {
 			t.Fatal(err)
@@ -96,9 +195,7 @@ func TestNodeInventoryMergesManagedAndScannedOwnership(t *testing.T) {
 			}
 		}
 		// A later scan still contains the immutable original owner labels.
-		if _, err = db.SQL.Exec("UPDATE snapshot_records SET metadata=?", `{"containers":[{"id":"one","owner":"alice"},{"id":"two","owner":"bob"},{"id":"three","owner":"alice"}]}`); err != nil {
-			t.Fatal(err)
-		}
+		writeInventorySnapshot(t, db, id, `{"schema_version":5,"tree":{},"containers":[{"id":"one","owner":"alice"},{"id":"two","owner":"bob"},{"id":"three","owner":"alice"}]}`, indexed)
 	}
 }
 
