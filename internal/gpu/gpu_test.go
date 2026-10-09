@@ -117,6 +117,42 @@ func TestBucketSplitsAndUnknownUtilization(t *testing.T) {
 		t.Fatalf("bad bucket split: %+v", h)
 	}
 }
+
+func TestHistoryPreservesUnownedContainerNames(t *testing.T) {
+	m := testMonitor(t)
+	m.previous = sample(105)
+	m.previous.Devices[0].Processes = []Process{
+		{Owner: "未归属容器", Container: "training-a"},
+		{Owner: "未归属容器", Container: "training-a"},
+		{Owner: "未归属容器", Container: "training-b"},
+		{Owner: "未归属容器", Container: strings.Repeat("c", 12)},
+		{Owner: "alice", Container: "owned-a"},
+		{Owner: "alice", Container: "owned-b"},
+	}
+	// Processes have exited by the next sample; labels must come from history.
+	if err := m.persist(sample(120)); err != nil {
+		t.Fatal(err)
+	}
+	h, err := m.history(120, 100, 120, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"未归属容器 · training-a":                 true,
+		"未归属容器 · training-b":                 true,
+		"未归属容器 · " + strings.Repeat("c", 12): true,
+		"alice": true,
+	}
+	if len(h.Users) != len(want) || len(h.Series) != 1 || len(h.Series[0].Points) != 1 {
+		t.Fatalf("unexpected history: %+v", h)
+	}
+	for _, u := range h.Users {
+		if !want[u.Owner] || u.Seconds != 15 || h.Series[0].Points[0].Owners[u.Owner] != 15 {
+			t.Fatalf("container names or process deduplication lost: %+v", h)
+		}
+	}
+}
+
 func TestCollectionFailureAndRecovery(t *testing.T) {
 	m := testMonitor(t)
 	old := sample(platform.Now()-15, "a")

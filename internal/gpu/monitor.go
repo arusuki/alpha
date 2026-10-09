@@ -112,6 +112,11 @@ func deviceOwners(d Device) []string {
 		if owner == "" {
 			owner = "未识别"
 		}
+		// Keep unnamed ownership distinct by container in both live summaries
+		// and persisted chart labels, even after the process has exited.
+		if owner == "未归属容器" && p.Container != "" {
+			owner += " · " + p.Container
+		}
 		set[owner] = true
 	}
 	out := []string{}
