@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,6 +49,24 @@ func TestMismatchedBusinessProtocolKeepsHealthAndUpdates(t *testing.T) {
 	}
 	requireStatus(t, f.request(t, "GET", "/api/cluster/nodes/"+id+"/api/state", nil), 409)
 	requireStatus(t, f.request(t, "GET", "/api/updates/"+id+"/settings", nil), 200)
+	const githubToken = "remote-github-test-token"
+	r = f.request(t, "PUT", "/api/updates/github-token", map[string]any{
+		"revision": 1,
+		"token":    githubToken,
+	})
+	requireStatus(t, r, 200)
+	if strings.Contains(r.Body.String(), githubToken) || !strings.Contains(r.Body.String(), `"has_token":true`) || m.GitHubToken() != githubToken {
+		t.Fatal("remote token status missing or token exposed")
+	}
+	requireStatus(t, f.request(t, "PUT", "/api/updates/"+id+"/settings", map[string]any{
+		"revision": 1,
+		"config":   updates.Config{Command: "/opt/bin/alpha-updater", Repo: "arusuki/alpha", GitHubToken: "independent-token"},
+	}), 400)
+	r = f.request(t, "GET", "/api/updates/"+id+"/settings", nil)
+	requireStatus(t, r, 200)
+	if strings.Contains(r.Body.String(), githubToken) || !strings.Contains(r.Body.String(), `"has_github_token":true`) {
+		t.Fatal("remote token status not retained or token exposed")
+	}
 	req := httptest.NewRequest("GET", "http://127.0.0.1"+updates.Path+"/settings", nil)
 	authenticate(req, Node{ID: id, Token: w.Token}, platform.User{ID: f.user.ID, Username: "viewer", Role: "viewer"})
 	out := httptest.NewRecorder()
@@ -79,8 +98,73 @@ func TestUpdateEndpointsRequireAdminAndCSRF(t *testing.T) {
 	}
 }
 
+func TestSharedGitHubTokenRotationAndOfflineDelivery(t *testing.T) {
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	f := setup(t)
+	id := strings.Repeat("d", 32)
+	m, err := updates.New(t.TempDir(), "worker", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	w := &Worker{ID: id, Token: strings.Repeat("s", 32), Updates: m}
+	var offline atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		if offline.Load() {
+			rw.WriteHeader(503)
+			return
+		}
+		w.ServeHTTP(rw, r)
+	}))
+	defer server.Close()
+	// A newly added node receives the already configured central token.
+	requireStatus(t, f.request(t, "PUT", "/api/updates/github-token", map[string]any{"revision": 1, "token": "first-token"}), 200)
+	add(t, f, w, server, "worker")
+	if m.GitHubToken() != "first-token" {
+		t.Fatal("new node missed shared token")
+	}
+	offline.Store(true)
+	r := f.request(t, "PUT", "/api/updates/github-token", map[string]any{"revision": 2, "token": "rotated-token"})
+	requireStatus(t, r, 200)
+	if !strings.Contains(r.Body.String(), id) || strings.Contains(r.Body.String(), "rotated-token") || m.GitHubToken() != "first-token" {
+		t.Fatal("offline delivery was not reported correctly")
+	}
+	offline.Store(false)
+	n, err := f.control.node(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.control.probe(context.Background(), n); err != nil {
+		t.Fatal(err)
+	}
+	if m.GitHubToken() != "rotated-token" {
+		t.Fatal("reconnected node missed token rotation")
+	}
+	// Clearing is also delivered, and stale form saves cannot undo it.
+	requireStatus(t, f.request(t, "PUT", "/api/updates/github-token", map[string]any{"revision": 3, "clear": true}), 200)
+	if m.GitHubToken() != "" {
+		t.Fatal("node retained cleared token")
+	}
+	requireStatus(t, f.request(t, "PUT", "/api/updates/github-token", map[string]any{"revision": 3, "token": "stale-token"}), 409)
+	if m.GitHubToken() != "" {
+		t.Fatal("stale save changed node token")
+	}
+	// Even without a webhook, manual update first repairs a stale local copy.
+	if err := m.ApplyGitHubToken("stale-copy"); err != nil {
+		t.Fatal(err)
+	}
+	f.request(t, "POST", "/api/updates/"+id+"/update", map[string]any{})
+	if m.GitHubToken() != "" {
+		t.Fatal("manual update did not synchronize token first")
+	}
+}
+
 func TestWebhookQueuedOfflineReachesControlAndWorker(t *testing.T) {
 	f := setup(t)
+	if err := f.control.Updates.SaveGitHubToken(1, "shared-webhook-token", false); err != nil {
+		t.Fatal(err)
+	}
 	id := strings.Repeat("c", 32)
 	m, err := updates.New(t.TempDir(), "worker", id)
 	if err != nil {
@@ -131,6 +215,11 @@ func TestWebhookQueuedOfflineReachesControlAndWorker(t *testing.T) {
 	}
 	if regUpdates.Pending() != nil {
 		t.Fatal("queued notification not acknowledged")
+	}
+	for _, manager := range []*updates.Manager{m, regUpdates} {
+		if manager.GitHubToken() != "shared-webhook-token" {
+			t.Fatal("release forwarding did not first distribute the shared token")
+		}
 	}
 	for _, manager := range []*updates.Manager{m, f.control.Updates} {
 		raw, _ := json.Marshal(manager.Health())

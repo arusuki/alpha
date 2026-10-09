@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"project-alpha/internal/buildinfo"
+	"project-alpha/internal/credentials"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/updater"
 )
@@ -27,15 +28,20 @@ const Path = "/api/management/v1"
 const WebhookPath = "/api/webhooks/github"
 const Protocol = 1
 
+const githubTokenKeyFile = "update-credentials.key"
+
 type Config struct {
-	Command       string `json:"command"`
-	Proxy         string `json:"http_proxy"`
-	Repo          string `json:"repo"`
-	Prerelease    bool   `json:"prerelease"`
-	Automatic     bool   `json:"automatic"`
-	WebhookSecret string `json:"webhook_secret,omitempty"`
-	HasSecret     bool   `json:"has_webhook_secret,omitempty"`
-	ClearSecret   bool   `json:"clear_webhook_secret,omitempty"`
+	Command          string `json:"command"`
+	Proxy            string `json:"http_proxy"`
+	Repo             string `json:"repo"`
+	Prerelease       bool   `json:"prerelease"`
+	Automatic        bool   `json:"automatic"`
+	WebhookSecret    string `json:"webhook_secret,omitempty"`
+	HasSecret        bool   `json:"has_webhook_secret,omitempty"`
+	ClearSecret      bool   `json:"clear_webhook_secret,omitempty"`
+	GitHubToken      string `json:"github_token,omitempty"`
+	HasGitHubToken   bool   `json:"has_github_token,omitempty"`
+	ClearGitHubToken bool   `json:"clear_github_token,omitempty"`
 }
 type Release struct {
 	Delivery   string    `json:"delivery"`
@@ -45,16 +51,17 @@ type Release struct {
 	Prerelease bool      `json:"prerelease"`
 }
 type state struct {
-	DeliveryError string    `json:"delivery_error,omitempty"`
-	Format        int       `json:"format"`
-	Revision      int       `json:"revision"`
-	Config        Config    `json:"config"`
-	Release       *Release  `json:"release,omitempty"`
-	Forwarded     bool      `json:"forwarded"`
-	Outbox        []Release `json:"outbox,omitempty"`
-	Seen          []string  `json:"seen,omitempty"`
-	Attempted     string    `json:"attempted,omitempty"`
-	Error         string    `json:"error,omitempty"`
+	GitHubTokenCiphertext string    `json:"github_token_ciphertext,omitempty"`
+	DeliveryError         string    `json:"delivery_error,omitempty"`
+	Format                int       `json:"format"`
+	Revision              int       `json:"revision"`
+	Config                Config    `json:"config"`
+	Release               *Release  `json:"release,omitempty"`
+	Forwarded             bool      `json:"forwarded"`
+	Outbox                []Release `json:"outbox,omitempty"`
+	Seen                  []string  `json:"seen,omitempty"`
+	Attempted             string    `json:"attempted,omitempty"`
+	Error                 string    `json:"error,omitempty"`
 }
 type Manager struct {
 	mu                              sync.Mutex
@@ -87,6 +94,15 @@ func New(directory, role, id string) (*Manager, error) {
 		if m.state.Format != 1 || m.state.Revision < 1 {
 			return nil, fmt.Errorf("unsupported update settings format; use a new data directory")
 		}
+		if m.state.Config.GitHubToken != "" {
+			return nil, fmt.Errorf("unsupported plaintext GitHub token in update settings; use a new data directory")
+		}
+		if m.state.GitHubTokenCiphertext != "" {
+			m.state.Config.GitHubToken, err = credentials.Decrypt(directory, githubTokenKeyFile, m.githubTokenPurpose(), m.state.GitHubTokenCiphertext)
+			if err != nil {
+				return nil, fmt.Errorf("decrypt update GitHub token: %w", err)
+			}
+		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
@@ -95,9 +111,45 @@ func New(directory, role, id string) (*Manager, error) {
 	}
 	return m, nil
 }
-func (m *Manager) filename() string { return filepath.Join(m.directory, "update-settings.json") }
+func (m *Manager) filename() string           { return filepath.Join(m.directory, "update-settings.json") }
+func (m *Manager) githubTokenPurpose() string { return "updates.github-token/" + m.role + "/" + m.id }
+
+func (m *Manager) verifyGitHubTokenKey() error {
+	if m.state.GitHubTokenCiphertext == "" {
+		return nil
+	}
+	token, err := credentials.Decrypt(m.directory, githubTokenKeyFile, m.githubTokenPurpose(), m.state.GitHubTokenCiphertext)
+	if err != nil {
+		return fmt.Errorf("decrypt update GitHub token: %w", err)
+	}
+	if token != m.state.Config.GitHubToken {
+		return fmt.Errorf("update GitHub token does not match stored ciphertext")
+	}
+	return nil
+}
+
 func (m *Manager) commit(s state) error {
-	if err := updater.WriteJSON(m.filename(), s); err != nil {
+	// Verify the original key before any write, including a clear or rotation.
+	// Never replace a missing key while there is still encrypted data.
+	if err := m.verifyGitHubTokenKey(); err != nil {
+		return err
+	}
+	if s.Config.GitHubToken == "" {
+		s.GitHubTokenCiphertext = ""
+	} else if s.Config.GitHubToken != m.state.Config.GitHubToken || m.state.GitHubTokenCiphertext == "" {
+		encrypt := credentials.Encrypt
+		if m.state.GitHubTokenCiphertext != "" {
+			encrypt = credentials.EncryptExisting
+		}
+		var err error
+		s.GitHubTokenCiphertext, err = encrypt(m.directory, githubTokenKeyFile, m.githubTokenPurpose(), s.Config.GitHubToken)
+		if err != nil {
+			return fmt.Errorf("encrypt update GitHub token: %w", err)
+		}
+	}
+	persisted := s
+	persisted.Config.GitHubToken = ""
+	if err := updater.WriteJSON(m.filename(), persisted); err != nil {
 		return err
 	}
 	m.state = s
@@ -116,6 +168,9 @@ func (c Config) validate(role string) error {
 	if c.WebhookSecret != "" && (role != "registry" || len(c.WebhookSecret) < 32 || len(c.WebhookSecret) > 256) {
 		return httpapi.NewError(400, "只有 registry 可设置 webhook secret，长度须为 32–256 字节")
 	}
+	if len(c.GitHubToken) > 4096 || strings.IndexFunc(c.GitHubToken, func(r rune) bool { return r < 33 || r > 126 }) >= 0 {
+		return httpapi.NewError(400, "GitHub token 必须为不含空白的 ASCII 字符，且不超过 4096 字节")
+	}
 	return nil
 }
 func (m *Manager) Settings() any {
@@ -124,11 +179,16 @@ func (m *Manager) Settings() any {
 	c := m.state.Config
 	c.HasSecret = c.WebhookSecret != ""
 	c.WebhookSecret = ""
+	c.HasGitHubToken = c.GitHubToken != ""
+	c.GitHubToken = ""
 	return map[string]any{"revision": m.state.Revision, "config": c, "health": m.health(), "webhook_path": WebhookPath}
 }
 func (m *Manager) Save(revision int, c Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.save(revision, c)
+}
+func (m *Manager) save(revision int, c Config) error {
 	if m.plan != nil {
 		return httpapi.NewError(409, "正在更新，请稍后修改设置")
 	}
@@ -142,6 +202,16 @@ func (m *Manager) Save(revision int, c Config) error {
 	}
 	c.HasSecret = false
 	c.ClearSecret = false
+	if m.role != "control" && (c.GitHubToken != "" || c.ClearGitHubToken) {
+		return httpapi.NewError(400, "GitHub Token 由总控统一配置，不能为节点独立设置")
+	}
+	if c.ClearGitHubToken {
+		c.GitHubToken = ""
+	} else if c.GitHubToken == "" {
+		c.GitHubToken = m.state.Config.GitHubToken
+	}
+	c.HasGitHubToken = false
+	c.ClearGitHubToken = false
 	if err := c.validate(m.role); err != nil {
 		return err
 	}
@@ -156,6 +226,59 @@ func (m *Manager) Save(revision int, c Config) error {
 		s.Attempted = ""
 		s.Error = ""
 	}
+	return m.commit(s)
+}
+
+// GitHubToken returns the control's shared credential or a node's received copy.
+// Only control may source the shared token from its service environment.
+func (m *Manager) GitHubToken() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.githubToken()
+}
+func (m *Manager) githubToken() string {
+	if m.state.Config.GitHubToken != "" || m.role != "control" {
+		return m.state.Config.GitHubToken
+	}
+	if token := os.Getenv("GH_TOKEN"); token != "" {
+		return token
+	}
+	return os.Getenv("GITHUB_TOKEN")
+}
+func (m *Manager) GitHubTokenSettings() any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return map[string]any{"revision": m.state.Revision, "has_token": m.state.Config.GitHubToken != "", "has_environment_token": m.state.Config.GitHubToken == "" && m.githubToken() != ""}
+}
+func (m *Manager) SaveGitHubToken(revision int, token string, clear bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.role != "control" {
+		return httpapi.NewError(403, "GitHub Token 只能在总控配置")
+	}
+	c := m.state.Config
+	c.GitHubToken, c.ClearGitHubToken = token, clear
+	return m.save(revision, c)
+}
+
+// ApplyGitHubToken is called only through the authenticated node management API.
+// Repeated delivery does not rewrite settings or invalidate local form revisions.
+func (m *Manager) ApplyGitHubToken(token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.role == "control" {
+		return httpapi.NewError(403, "总控不接受下发的 GitHub Token")
+	}
+	c := m.state.Config
+	c.GitHubToken = token
+	if err := c.validate(m.role); err != nil {
+		return err
+	}
+	if token == m.state.Config.GitHubToken {
+		return m.verifyGitHubTokenKey()
+	}
+	s := m.state
+	s.Config = c
 	return m.commit(s)
 }
 func (m *Manager) health() map[string]any {
@@ -317,7 +440,7 @@ func (m *Manager) trigger(tag string) error {
 	prepareCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	m.prepareCancel = cancel
 	m.prepareDone = make(chan struct{})
-	go m.prepare(prepareCtx, cancel, m.prepareDone, p)
+	go m.prepare(prepareCtx, cancel, m.prepareDone, p, m.githubToken())
 	return nil
 }
 func (m *Manager) Automatic() error {
@@ -381,18 +504,25 @@ func (m *Manager) Close() {
 		<-done
 	}
 }
-func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done chan struct{}, p updater.ServicePlan) {
+func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done chan struct{}, p updater.ServicePlan, token string) {
 	defer close(done)
 	defer cancel()
 	path := filepath.Join(m.directory, "update-service.json")
 	cmd := exec.CommandContext(ctx, p.Command, "_prepare", path)
+	// All managed updates use the control's token, including an explicit clear.
+	// Keep it out of command arguments and the persisted handoff plan.
+	cmd.Env = append(os.Environ(), "GH_TOKEN="+token, "GITHUB_TOKEN=")
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 5 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err != nil {
-		err = fmt.Errorf("准备更新失败: %w: %s", err, strings.TrimSpace(stderr.String()))
+		message := strings.TrimSpace(stderr.String())
+		if token != "" {
+			message = strings.ReplaceAll(message, token, "[redacted]")
+		}
+		err = fmt.Errorf("准备更新失败: %w: %s", err, message)
 	}
 	var prepared *updater.ServicePlan
 	if err == nil {

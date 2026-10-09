@@ -30,6 +30,7 @@ type Control struct {
 	Mihomo          *mihomo.Control
 	mihomoLocal     *mihomo.Manager
 	Updates         *updates.Manager
+	updateTokenMu   sync.Mutex
 	identity        string
 	nodeMu          sync.Mutex
 	nodesClosed     bool
@@ -154,6 +155,10 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 	err := h.call(ctx, n, "GET", path, nil, platform.User{}, &info)
 	if err == nil && (info.Mode != n.Kind || (info.Protocol != protocol && info.ManagementProtocol != updates.Protocol) || !identifier.MatchString(info.ID)) {
 		err = httpapi.NewError(409, "目标不是支持当前协议的 "+n.Kind)
+	}
+	if err == nil && n.ID != "" && info.ID == n.ID && info.ManagementProtocol == updates.Protocol {
+		// Existing probes deliver rotations when a worker becomes reachable again.
+		_ = h.syncGitHubToken(ctx, n)
 	}
 	return info, err
 }
@@ -371,6 +376,9 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 		return 0, nil, err
 	}
 	n, err = h.node(n.ID)
+	if err == nil && n.Kind == "worker" {
+		_ = h.syncGitHubToken(r.Context(), n)
+	}
 	if err == nil && n.Kind == "registry" && (id == "" || n.URL != previous.URL || n.Token != previous.Token) {
 		h.startRegistry(n)
 	}

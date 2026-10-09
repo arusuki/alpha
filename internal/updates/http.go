@@ -15,6 +15,17 @@ import (
 
 func (m *Manager) Dispatch(w http.ResponseWriter, r *http.Request) (int, any, error) {
 	switch {
+	case r.URL.Path == Path+"/github-token" && r.Method == "PUT":
+		var input struct {
+			Token string `json:"token"`
+		}
+		if err := decodeMessage(w, r, &input); err != nil {
+			return 0, nil, err
+		}
+		if err := m.ApplyGitHubToken(input.Token); err != nil {
+			return 0, nil, err
+		}
+		return 200, map[string]bool{"ok": true}, nil
 	case r.URL.Path == Path+"/health" && r.Method == "GET":
 		return 200, m.Health(), nil
 	case r.URL.Path == Path+"/settings" && r.Method == "GET":

@@ -116,7 +116,7 @@ func (g github) responseError(path string, res *http.Response, api bool) error {
 	}
 	if api {
 		if g.token == "" {
-			details = append(details, "authentication=none; set GH_TOKEN or GITHUB_TOKEN in the service environment")
+			details = append(details, "authentication=none; configure GitHub Token in update settings or set GH_TOKEN or GITHUB_TOKEN in the service environment")
 		} else {
 			details = append(details, "authentication=token")
 		}

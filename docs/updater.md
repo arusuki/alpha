@@ -45,7 +45,7 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 
 ## Release 选择与校验
 
-默认查询 `arusuki/alpha` 的最新正式 GitHub release。`--prerelease` 同时查询预发布，选择发布时间最新的非草稿 release；`--repo owner/repo` 可指定测试仓库。 Webhook 自动更新已从认证通知获得目标 tag 和频道，未配置 GitHub token 时直接下载 `https://github.com/<owner>/<repo>/releases/download/<tag>/project-alpha_<tag>_linux_<arch>.tar.gz` 和同目录的 `SHA256SUMS`，不查询 GitHub API。手动“更新到最新版本”和 CLI 查询仍需通过 API 确定 release；公开附件使用 `browser_download_url`。配置 token 时保留通过 release/asset API 访问私有仓库的能力。GitHub API 的行为见 [官方 release 文档](https://docs.github.com/en/rest/releases/releases)。私有仓库或需要更高 API 配额时设置 `GH_TOKEN` 或 `GITHUB_TOKEN`；令牌只发送给 GitHub API，不传给下载重定向的其他主机。
+默认查询 `arusuki/alpha` 的最新正式 GitHub release。`--prerelease` 同时查询预发布，选择发布时间最新的非草稿 release；`--repo owner/repo` 可指定测试仓库。 Webhook 自动更新已从认证通知获得目标 tag 和频道，未配置 GitHub token 时直接下载 `https://github.com/<owner>/<repo>/releases/download/<tag>/project-alpha_<tag>_linux_<arch>.tar.gz` 和同目录的 `SHA256SUMS`，不查询 GitHub API。手动“更新到最新版本”和 CLI 查询仍需通过 API 确定 release；公开附件使用 `browser_download_url`。配置 token 时保留通过 release/asset API 访问私有仓库的能力。GitHub API 的行为见 [官方 release 文档](https://docs.github.com/en/rest/releases/releases)。私有仓库或需要更高 API 配额时，可在 Web 更新设置中保存 GitHub Token，或在总控服务环境中设置 `GH_TOKEN` 或 `GITHUB_TOKEN`（独立 CLI 读取自身环境）；令牌只发送给 GitHub API，不传给下载重定向的其他主机。
 
 更新器拒绝降级、v0.3.1 之前的版本、1.0 及以上版本和无正式版本标记的本机程序。相同版本不重复更新。源码构建的更新器自身可以是 `dev`，被更新的主程序必须带 release 版本。目标包必须包含与 tag 同版本的 `project-alpha` 和 `alpha-updater`，以及根 release 附件 `SHA256SUMS`。缺少附件或角色所需程序、架构不匹配、校验失败时退出，不安装文件。
 
@@ -88,7 +88,11 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 
 ## Web 更新设置与 GitHub webhook
 
-总控管理员打开侧栏 **更新设置**，选择本机 control、任一 registry 或 worker。每个目标分别保存更新器命令的绝对路径、GitHub 仓库、HTTP/HTTPS 代理、预发布开关和自动更新开关。自动更新默认关闭。**立即更新到最新版本**使用已保存的设置查询 GitHub，并对所选目标执行更新；未保存的输入不会用于这次更新。
+总控管理员打开侧栏 **更新设置**，选择本机 control、任一 registry 或 worker。每个目标分别保存更新器命令的绝对路径、GitHub 仓库、HTTP/HTTPS 代理、预发布开关和自动更新开关。GitHub Token 在页面顶部统一配置，由总控下发给所有已登记的 registry 和 worker，不按目标独立配置。自动更新默认关闭。**立即更新到最新版本**使用已保存的设置查询 GitHub，并对所选目标执行更新；未保存的输入不会用于这次更新。
+
+统一 GitHub Token 用于全体目标的手动和自动更新，优先于总控服务环境中的 `GH_TOKEN` / `GITHUB_TOKEN`。保存后立即向已登记节点下发，无需重启服务；新加入的节点也会收到。输入留空保留已有值，勾选清除会向节点同步清除；如果总控环境中仍有 token，则改为统一下发该值。节点的服务环境不再作为 Web 更新的独立 token 来源。下发失败时页面显示待同步节点数，通过现有 registry 连接心跳、节点后续通信和更新前补发，不增加独立定时检查；更新前下发失败会明确报错，不使用旧 token 继续启动更新。
+
+Token 与 webhook secret 独立，仅返回是否已配置，不回显内容。总控和各节点复用项目凭据模块，以 AES-256-GCM 加密 Token；`update-settings.json` 只保存 `github_token_ciphertext`，不保存明文 Token。每个数据目录使用独立的 `update-credentials.key`，密钥文件与配置文件权限均为 `0600`，密文绑定节点角色与实例 ID。备份和恢复时须一并保留密钥；密钥缺失、权限异常或密文损坏时明确报错并保留原配置，不生成替代密钥覆盖已有密文。旧明文 Token 配置被明确拒绝，按项目约定要求使用新数据目录，不添加兼容迁移。下载时只在进程内解密并通过子进程环境传递，不写入命令参数或 `update-service.json`。磁盘加密存储不能防止同时读取密钥与配置的服务账号或 root 获取 Token。手动更新仍实时查询最新 release，不依赖通知送达；token 无效或权限不足时明确报错，不降级为匿名重试。可使用有目标仓库访问权限的 fine-grained personal access token，授予 `Contents: read`，权限要求见 [GitHub release API 文档](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)。
 
 命令字段是一个可执行文件路径，不是 shell 命令，不接受拼接参数。所有角色都以原服务账号运行更新器，不使用 sudo；账号须有数据目录及程序安装目录的写权限。服务主程序必须以 `project-alpha` 名称安装，更新文件仍写入当前主程序所在目录。HTTP 代理只用于目标主机上的 updater 下载，不改变 control/worker/registry 的通信路由。代理留空时沿用服务进程的代理环境变量。也可从命令行使用：
 
@@ -116,13 +120,13 @@ Web 更新通过本地服务交接实现，要求主程序和 updater 同时更�
 
 只有准备成功才停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为 updater。安装阶段完全离线，重新获取安装锁和服务锁，校验本机版本、数据库版本和暂存程序哈希，然后备份数据库、替换程序并原地升级；备份包含下载期间提交的新数据。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停服务，不自行管理服务。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
 
-GitHub 的 403 不一定是限流。错误现在保留 GitHub 返回的 message、可用的 `X-RateLimit-*` / `Retry-After` 信息和是否携带认证的状态，不输出 token。只有响应提供限流证据时才标为限流，不会立即循环重试。未认证 REST API 请求按出口 IP 共享每小时 60 次额度，多台节点共用代理或 NAT 时会共用额度；如果仍需 API 查询，可在实际运行服务的环境中配置 `GH_TOKEN` 或 `GITHUB_TOKEN`，仅在交互 shell 中设置不会修改已运行的服务环境。详见 [GitHub 限流说明](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。公开仓库的 webhook 自动更新下载路径不使用这项 REST API 额度。
+GitHub 的 403 不一定是限流。错误现在保留 GitHub 返回的 message、可用的 `X-RateLimit-*` / `Retry-After` 信息和是否携带认证的状态，不输出 token。只有响应提供限流证据时才标为限流，不会立即循环重试。未认证 REST API 请求按出口 IP 共享每小时 60 次额度，多台节点共用代理或 NAT 时会共用额度；如果仍需 API 查询，可在 Web 更新设置中保存统一 GitHub Token，或在总控服务环境中配置 `GH_TOKEN` 或 `GITHUB_TOKEN`，仅在交互 shell 中设置不会修改已运行的服务环境。详见 [GitHub 限流说明](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。公开仓库的 webhook 自动更新下载路径不使用这项 REST API 额度。
 
 设置及通知保存在数据目录的 `update-settings.json`，交接参数为 `update-service.json`，最近结果为 `update-result.json`，完整输出追加到 `update.log`，均由原服务账号持有，新建文件权限为 0600。设置格式错误会明确报错并保留原文件。本功能没有新增数据库表，已有数据库继续使用 updater 的原地升级流程。
 
 ## 跨版本的健康与更新约定
 
-从支持本功能的首个版本起，`/api/management/v1/{health,settings,update,release}` 和 `alpha-management-v1` WebSocket 信封是稳定的管理协议；后续业务 API 和快照版本变化不应改变它。JSON 接收端容忍附加字段，身份与认证字段保持不变。worker 使用既有 Bearer token、`X-Alpha-Node` 与 `X-Alpha-User`（id/username/role）；registry 管理接口额外校验已绑定的 `X-Alpha-Control`。浏览器仅由总控的管理员会话及 CSRF 校验进入 `/api/updates/`，节点令牌不会发给浏览器。
+从支持本功能的首个版本起，`/api/management/v1/{health,settings,update,release}` 和 `alpha-management-v1` WebSocket 信封是稳定的管理协议；后续业务 API 和快照版本变化不应改变它。JSON 接收端容忍附加字段，身份与认证字段保持不变。worker 使用既有 Bearer token、`X-Alpha-Node` 与 `X-Alpha-User`（id/username/role）；registry 管理接口额外校验已绑定的 `X-Alpha-Control`。浏览器仅由总控的管理员会话及 CSRF 校验进入 `/api/updates/`，节点令牌不会发给浏览器。统一 token 的管理员配置入口为 `/api/updates/github-token`，节点下发入口为 `PUT /api/management/v1/github-token`，沿用同一身份校验；需要总控及节点程序均支持该入口。
 
 `/api/worker/info`、`/api/registry/info` 的身份、`protocol`、`management_protocol` 和 `version` 字段作为稳定发现信息保留。业务协议不同的节点可登记、显示在线并更新；详情接口返回明确的 409，容器汇总标记不完整。registry 的 `ping` 和 `release.v1` 不受注册业务协议版本限制，业务请求仍校验自己的 protocol。
 

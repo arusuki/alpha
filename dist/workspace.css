@@ -368,7 +368,8 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 
 .pool-public-key{display:block;white-space:normal;overflow-wrap:anywhere;margin-top:8px}
 
-#updateFields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:20px}
+#updateFields,#updateTokenFields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:20px}
+#updateTokenForm{border-bottom:1px solid var(--line);padding-bottom:20px;margin-bottom:20px}
 #updateFields .form-grid{margin-bottom:0}
 #page-mihomo>section{min-width:0}
 #page-mihomo fieldset{border:0;padding:0;margin:0;min-width:0}
@@ -394,4 +395,4 @@ footer { margin-top:32px; color:#74776b; font-size:.61rem; padding-top:20px; }
 #updateWebhook[hidden]{display:none}
 #updateHealth{margin-top:14px}
 #updateStatus,#updateError{margin-top:12px;overflow-wrap:anywhere}
-#updateFields>button{justify-self:start}
+#updateFields>button,#updateTokenFields>button{justify-self:start}

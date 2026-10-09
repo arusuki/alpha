@@ -45,6 +45,10 @@ func (h *Control) startRegistry(n Node) {
 			link.mu.Lock()
 			link.status = status
 			link.mu.Unlock()
+			if status.State == "connected" {
+				// Reuse the existing link heartbeat to retry offline token delivery.
+				h.syncGitHubTokens(ctx)
+			}
 		})
 	}()
 }

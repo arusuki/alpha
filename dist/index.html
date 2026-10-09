@@ -300,6 +300,11 @@ proxy-groups:
 </section>
 <section id="page-update-settings" class="platform-page management-panel" hidden>
  <div class="section-heading"><div><h2>更新设置</h2><p>管理总控、registry 和 worker 的更新。新版本经 registry 通知总控，再通知计算节点。</p></div><button id="updateReload">刷新设置与状态</button></div>
+ <form id="updateTokenForm" class="settings-form"><fieldset id="updateTokenFields" disabled>
+  <label>统一 GitHub Token<input id="updateToken" type="password" maxlength="4096" autocomplete="new-password"><small id="updateTokenState"></small><small>在总控配置一次，统一下发给 registry 和 worker，用于手动和自动更新。各节点加密保存，页面不回显；留空保留已有 Token。未保存时使用总控服务的 GH_TOKEN 或 GITHUB_TOKEN。</small></label>
+  <label class="checkbox-label"><input id="updateClearToken" type="checkbox">清除已保存的统一 Token（若总控环境中有 Token，将下发该值）</label>
+  <button class="primary" type="submit">保存统一 Token</button>
+ </fieldset></form><p id="updateTokenStatus" role="status"></p><p id="updateTokenError" class="error-text" role="alert"></p>
  <label>更新目标<select id="updateTarget"><option value="control">control · 本机总控</option></select></label>
  <p id="updateHealth" role="status"></p><p id="updateRelease" class="form-note"></p>
  <form id="updateSettingsForm" class="settings-form"><fieldset id="updateFields" disabled>
