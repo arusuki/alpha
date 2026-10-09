@@ -16,7 +16,7 @@ class TestAbortController {
 }
 const sandbox={console,EventSource:class {addEventListener(){} close(){}},document,window:{location:{pathname:'/nodes/'+ 'e'.repeat(32)+'/'},addEventListener(){},SettingsUI:{reset(){},open(){}}},AbortController:TestAbortController,requestAnimationFrame:fn=>setImmediate(fn),setTimeout:()=>1,clearTimeout(){},fetch:()=>new Promise(()=>{})};
 vm.createContext(sandbox);
-for(const path of ['dist/usage.js','dist/snapshot.js','dist/app.js','dist/snapshot-loader.js','dist/platform.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
+for(const path of ['dist/usage.js','dist/snapshot.js','dist/disk-capacity.js','dist/app.js','dist/snapshot-loader.js','dist/platform.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
 assert.equal(vm.runInContext("apiURL('/api/gpu/overview?hours=6&step=60')",sandbox),
   '/api/cluster/nodes/'+'e'.repeat(32)+'/api/gpu/overview?hours=6&step=60',
   'GPU requests must use the selected node proxy and preserve time parameters');

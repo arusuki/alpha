@@ -103,7 +103,7 @@ func TestShareProxyBlocksManagementBeforeUpstream(t *testing.T) {
 	if calls != 0 {
 		t.Fatal("blocked request reached control", calls)
 	}
-	for _, path := range []string{"/status/alice", "/status/alice/", "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/member-disk.js", "/usage.js", "/clipboard.js", "/api/status/alice", "/api/status/alice/gpu", "/api/status/alice/disk"} {
+	for _, path := range []string{"/status/alice", "/status/alice/", "/status.js", "/status.css", "/disk-capacity.js", "/disk-capacity.css", "/gpu.js", "/gpu.css", "/member-disk.js", "/usage.js", "/clipboard.js", "/api/status/alice", "/api/status/alice/gpu", "/api/status/alice/disk"} {
 		r := httptest.NewRequest("GET", path, nil)
 		r.Host = "100.64.0.2:9765"
 		w := httptest.NewRecorder()

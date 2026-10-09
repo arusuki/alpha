@@ -18,7 +18,7 @@ func MemberEntranceAllowed(r *http.Request) bool {
 			return true
 		}
 		switch r.URL.Path {
-		case "/status.js", "/status.css", "/gpu.js", "/gpu.css", "/usage.js", "/member-disk.js", "/clipboard.js", "/api/members/registration-schema", "/api/members/me/resources":
+		case "/status.js", "/status.css", "/disk-capacity.js", "/disk-capacity.css", "/gpu.js", "/gpu.css", "/usage.js", "/member-disk.js", "/clipboard.js", "/api/members/registration-schema", "/api/members/me/resources":
 			return true
 		}
 	}

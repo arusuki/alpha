@@ -9,7 +9,7 @@ const MemberDiskUI=(()=>{
   };
   const size=row=>row.known?bytes(row.allocated)+(row.partial?'（部分统计）':''):'尚未统计';
   function create(root,{active,request}){
-    root.innerHTML='<div class="disk-toolbar"><p id="diskObserved" class="muted"></p><button id="diskRefresh" type="button">刷新磁盘用量</button></div><p id="diskStatus" class="error" role="status" aria-live="polite"></p><div id="diskFilesystems" class="disk-filesystems"></div><div id="diskTotals" class="disk-totals"></div><p class="muted disk-note">独占与共享按实际磁盘占用统计，共享空间不能跨容器重复相加。可写层包含在容器用量中。目录仅展示已采集的数据。</p><div id="diskContainers" class="disk-containers"></div>';
+    root.innerHTML='<div class="disk-toolbar"><p id="diskObserved" class="muted"></p><button id="diskRefresh" type="button">刷新磁盘用量</button></div><p id="diskStatus" class="error" role="status" aria-live="polite"></p><div id="diskCapacitySummary" class="disk-capacity-summary"></div><div id="diskFilesystems" class="filesystem-grid"></div><section id="diskDistribution" class="disk-distribution" aria-label="节点空间归属分布"></section><div class="disk-containers-heading"><h3>我的容器</h3><span class="muted">点击展开目录用量</span></div><p class="muted disk-note">按已统计用量从大到小排列；实色为独占，斜纹为共享引用。共享空间不能跨容器重复相加，可写层已包含在内。</p><div id="diskContainers" class="disk-containers"></div>';
     const $=id=>root.querySelector('#'+id);
     let epoch=0,controllers=new Set(),loaded=false;
     const explorers=new WeakMap();
@@ -19,7 +19,7 @@ const MemberDiskUI=(()=>{
       try{return await request(query,{signal:controller.signal});}
       finally{controllers.delete(controller);}
     }
-    function reset(){abort();loaded=false;for(const id of ['diskObserved','diskStatus','diskFilesystems','diskTotals','diskContainers'])$(id).replaceChildren();}
+    function reset(){abort();loaded=false;for(const id of ['diskObserved','diskStatus','diskFilesystems','diskCapacitySummary','diskDistribution','diskContainers'])$(id).replaceChildren();}
     async function refresh(){
       if(!active())return;
       // A refresh replaces the overview and collapses all details, including any
@@ -30,15 +30,16 @@ const MemberDiskUI=(()=>{
         if(version!==epoch||!active())return;
         loaded=true;$('diskStatus').textContent='';
         $('diskObserved').textContent='扫描时间 · '+(data.observed_at||'未知')+(data.updated_at?' · 明细更新 '+data.updated_at:'');
-        $('diskFilesystems').innerHTML=data.filesystems.map(fs=>{
-          const percent=fs.total>0&&fs.used!=null?Math.min(100,Math.max(0,fs.used/fs.total*100)):null;
-          return `<article class="disk-filesystem"><strong>${esc(fs.mount)}</strong><span class="muted">${esc(fs.fs)}</span><p>已用 ${bytes(fs.used)} / 总计 ${bytes(fs.total)}</p><progress max="100" value="${percent??0}" aria-label="${esc(fs.mount)} 已用比例"></progress><small>${percent==null?'容量未知':percent.toFixed(1)+'% 已用'} · 可用 ${bytes(fs.available)}</small></article>`;
-        }).join('')||'<p class="muted">暂无分区容量数据</p>';
-        $('diskTotals').innerHTML=`<span>容器独占 <b>${bytes(data.exclusive)}</b></span><span>容器共享 <b>${bytes(data.shared)}</b></span><span>未关联容器 <b>${bytes(data.unrelated)}</b></span>`;
-        $('diskContainers').innerHTML=data.containers.map(c=>{
-          const title=`<span class="disk-container-name">${esc(c.name)} <small>${esc(c.owner||'未标注')}${c.expandable?' · 我的容器':''}</small></span><span class="disk-container-size">独占 ${c.known?bytes(c.exclusive):'未知'} · 共享 ${c.known?bytes(c.shared):'未知'}${c.partial?' · 部分统计':''}</span>`;
-          return c.expandable?`<details class="disk-container" data-disk-container="${esc(c.id)}"><summary>${title}</summary><div class="disk-detail"></div></details>`:`<div class="disk-container disk-container-locked">${title}<small class="muted">仅本人可展开</small></div>`;
-        }).join('')||'<p class="muted">本次扫描没有容器用量记录</p>';
+        const disks=DiskCapacity.filesystems(data.filesystems);
+        $('diskCapacitySummary').innerHTML=DiskCapacity.summary(disks,bytes);
+        $('diskFilesystems').innerHTML=DiskCapacity.cards(disks,{esc,fmt:bytes});
+        renderDistribution(data);
+        const containers=data.containers.filter(c=>c.expandable).sort((a,b)=>Number(b.known)-Number(a.known)||(b.exclusive+b.shared)-(a.exclusive+a.shared));
+        const max=containers.reduce((value,c)=>c.known?Math.max(value,c.exclusive+c.shared):value,1);
+        $('diskContainers').innerHTML=containers.map(c=>{
+          const title=`<span class="disk-container-heading"><span class="disk-container-name">${esc(c.name)}</span><strong>${c.known?bytes(c.exclusive+c.shared):'尚未统计'}</strong></span><span class="disk-container-track" aria-hidden="true"><i style="width:${c.known?c.exclusive/max*100:0}%"></i><i class="disk-shared-fill" style="width:${c.known?c.shared/max*100:0}%"></i></span><span class="disk-container-size">独占 ${c.known?bytes(c.exclusive):'未知'} · 共享 ${c.known?bytes(c.shared):'未知'}${c.partial?' · 部分统计':''}</span>`;
+          return `<details class="disk-container" data-disk-container="${esc(c.id)}"><summary>${title}</summary><div class="disk-detail"></div></details>`;
+        }).join('')||'<p class="muted">本次扫描中暂无属于你的容器用量记录</p>';
         root.querySelectorAll('[data-disk-container]').forEach(details=>{
           let generation=0;
           details.addEventListener('toggle',()=>{
@@ -49,6 +50,25 @@ const MemberDiskUI=(()=>{
         });
       }catch(error){if(version===epoch&&error.name!=='AbortError')$('diskStatus').textContent=error.message;}
       finally{if(version===epoch)$('diskRefresh').disabled=false;}
+    }
+    function renderDistribution(data){
+      const colors=['#4361d8','#168c8a','#b57932','#9670ca','#518c4a','#ca6386','#487fac','#9d745d'];
+      const containerColors=new Map(data.containers.map(c=>c.id).sort().map((id,i)=>[id,colors[i%colors.length]]));
+      const total=data.exclusive+data.shared+data.unrelated;
+      const segments=[...data.containers].sort((a,b)=>b.exclusive-a.exclusive).map(c=>({
+        name:`${c.owner||'未标注'} · ${c.name}${c.expandable?'（我）':''}`,
+        bytes:c.exclusive,known:c.known,partial:c.partial,color:containerColors.get(c.id),
+        id:c.expandable?c.id:null,container:true
+      }));
+      segments.push({name:'容器共享',bytes:data.shared,known:true,color:'#9472cd',className:'shared-fill'},
+        {name:'Host · 未关联容器',bytes:data.unrelated,known:true,color:'#72849f'});
+      const amount=s=>s.known||s.bytes>0?bytes(s.bytes):'尚未统计';
+      const title=s=>`${s.name}${s.container?' · 独占':''}：${amount(s)}${s.partial?' · 部分统计':''}${s.id?' · 点击展开我的容器':''}`;
+      const attributes=s=>`class="${s.className||''}" title="${esc(title(s))}" aria-label="${esc(title(s))}"`;
+      const item=(s,content,style='')=>s.id
+        ?`<button type="button" data-disk-open="${esc(s.id)}" ${attributes(s)} style="${style}">${content}</button>`
+        :`<span ${attributes(s)} style="${style}">${content}</span>`;
+      $('diskDistribution').innerHTML=`<div class="attribution-heading"><h3>已扫描空间 · 按用户 / 容器归属</h3><strong>${bytes(total)}</strong></div><div class="attribution-bar" aria-label="已扫描空间分布">${segments.filter(s=>s.bytes>0).map(s=>item(s,'',`width:${total>0?s.bytes/total*100:0}%;--swatch:${s.color}`)).join('')}</div><div class="storage-legend">${segments.filter(s=>s.container||s.bytes>0).map(s=>item({...s,className:''},`<i class="${s.className||''}" style="--swatch:${s.color}"></i><span>${esc(s.name)}</span><b>${amount(s)}${s.partial?' · 部分统计':''}</b>`)).join('')||'<span>尚无已统计的空间</span>'}</div><p class="storage-note">彩色容器段表示独占空间，共享数据在全节点只计一次；这里仅展示已扫描空间。点击自己的色块或图例展开目录明细。</p>`;
     }
     async function loadDetail(details,container,path,offset,trail,generation,currentGeneration,initial=false){
       if(!active())return;
@@ -104,6 +124,12 @@ const MemberDiskUI=(()=>{
         body.querySelector('button').addEventListener('click',()=>navigate(path,offset,trail));
       }
     }
+    root.addEventListener('click',event=>{
+      const button=event.target.closest('[data-disk-open]');
+      if(!button||!active())return;
+      const details=[...root.querySelectorAll('[data-disk-container]')].find(d=>d.dataset.diskContainer===button.dataset.diskOpen);
+      if(details){details.open=true;details.querySelector('summary').focus({preventScroll:true});details.scrollIntoView({block:'nearest'});}
+    });
     $('diskRefresh').addEventListener('click',refresh);
     return {reset,open:()=>{if(!loaded)refresh();},close:reset};
   }

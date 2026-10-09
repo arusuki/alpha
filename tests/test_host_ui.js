@@ -10,7 +10,7 @@ const sandbox={console,setTimeout,clearTimeout,window:{addEventListener(){},plat
 sandbox.renderTask=()=>{};
 sandbox.platform=sandbox.window.platform || {user:null,jobs:[]};
 vm.createContext(sandbox);
-for(const path of ['dist/usage.js','dist/snapshot.js','dist/app.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
+for(const path of ['dist/usage.js','dist/snapshot.js','dist/disk-capacity.js','dist/app.js'])vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
 const run=code=>vm.runInContext(code,sandbox);
 const click=dataset=>listeners.click({target:{closest:()=>({dataset})}});
 sandbox.sampleText=fs.readFileSync('tests/fixtures/snapshot.json','utf8');

@@ -11,7 +11,7 @@ const sandbox = {console,setTimeout,clearTimeout,document:{getElementById:elemen
 sandbox.renderTask=()=>{};
 sandbox.platform=sandbox.window.platform || {user:null,jobs:[]};
 vm.createContext(sandbox);
-for (const path of ['dist/usage.js','dist/snapshot.js','dist/app.js']) vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
+for (const path of ['dist/usage.js','dist/snapshot.js','dist/disk-capacity.js','dist/app.js']) vm.runInContext(fs.readFileSync(path,'utf8'),sandbox);
 sandbox.sampleText = fs.readFileSync('tests/fixtures/snapshot.json','utf8');
 const run = code => vm.runInContext(code,sandbox);
 run('var sample=JSON.parse(sampleText);load(sample,"test")');

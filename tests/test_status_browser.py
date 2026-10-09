@@ -163,7 +163,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.send(200, dict(member_id=member, username='alice', ssh_public_key=member_keys, control=dict(status_url='http://100.64.0.2:9765/status/alice'), access=dict(key_state='ready', invite_state='invited', share_host='100.64.0.2', share_ssh_port=2222, status_port=9765), nodes=copy.deepcopy(nodes), checked_at=1800000000))
             return
         filename = 'status.html' if self.path.startswith('/status/') else self.path.lstrip('/')
-        if filename not in ('status.html', 'status.js', 'status.css', 'clipboard.js', 'gpu.js', 'gpu.css', 'usage.js', 'member-disk.js'):
+        if filename not in ('status.html', 'status.js', 'status.css', 'disk-capacity.js', 'disk-capacity.css', 'clipboard.js', 'gpu.js', 'gpu.css', 'usage.js', 'member-disk.js'):
             self.send(404, {})
             return
         mime = {'html': 'text/html', 'js': 'application/javascript', 'css': 'text/css'}[filename.split('.')[-1]]
@@ -252,11 +252,20 @@ try:
         page.locator('#toggleDisk').click()
         expect(page.locator('#diskPanel')).to_be_visible()
         expect(page.locator('#gpuPanel')).to_be_visible()
-        expect(page.locator('#diskFilesystems')).to_contain_text('50.0% 已用')
-        expect(page.locator('#diskContainers')).to_contain_text('bob-workspace')
+        expect(page.locator('#diskFilesystems')).to_contain_text('50%已用')
+        expect(page.locator('#diskContainers')).not_to_contain_text('bob-workspace')
+        expect(page.locator('#diskContainers')).to_contain_text('alice-workspace')
         expect(page.locator('#diskContainers details')).to_have_count(1)
         expect(page.locator('#diskContainers details[open]')).to_have_count(0)
-        page.locator('#diskContainers summary').click()
+        expect(page.locator('#diskDistribution')).to_contain_text('alice · alice-workspace（我）')
+        expect(page.locator('#diskDistribution')).to_contain_text('bob · bob-workspace')
+        expect(page.locator('#diskDistribution')).to_contain_text('容器共享')
+        expect(page.locator('#diskDistribution .attribution-heading strong')).to_have_text('4 KiB')
+        widths = page.locator('#diskDistribution .attribution-bar > *').evaluate_all('items => items.map(item => parseFloat(item.style.width))')
+        assert widths == [25, 25, 25, 25], widths  # Shared bytes count once across containers.
+        expect(page.locator('#diskDistribution .attribution-bar button')).to_have_count(1)
+        expect(page.locator('#diskDistribution .storage-legend button')).to_have_count(1)
+        page.locator('#diskDistribution .attribution-bar button').click()
         expect(page.locator('.disk-map')).to_be_visible()
         expect(page.locator('.disk-source-picker')).to_contain_text('可写层')
         expect(page.locator('.disk-map-tile')).to_have_count(4)
@@ -293,10 +302,15 @@ try:
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         page.locator('#diskPanel').screenshot(path='/tmp/alpha-status-disk-mobile.png')
         page.set_viewport_size(dict(width=1440, height=1080))
+        page.locator('#diskContainers summary').click()
+        expect(page.locator('#diskContainers details[open]')).to_have_count(0)
+        page.locator('#diskDistribution .storage-legend button').click()
+        expect(page.locator('.disk-map')).to_be_visible()
         disk_fail = True
         page.locator('#diskRefresh').click()
         expect(page.locator('#diskStatus')).to_contain_text('磁盘查询失败')
         expect(page.locator('#diskContainers')).to_have_text('')
+        expect(page.locator('#diskDistribution')).to_have_text('')
         disk_fail = False
         page.locator('#diskRefresh').click()
         expect(page.locator('#diskContainers')).to_contain_text('alice-workspace')
@@ -462,6 +476,7 @@ try:
         expect(page.locator('#gpuPanel')).to_be_hidden()
         expect(page.locator('#diskPanel')).to_be_hidden()
         expect(page.locator('#diskContainers')).to_have_text('')
+        expect(page.locator('#diskDistribution')).to_have_text('')
         expect(page.locator('#diskFilesystems')).to_have_text('')
         assert page.locator('#sshConfig').inner_text() == ''
         assert page.locator('#memberKeys').input_value() == ''
