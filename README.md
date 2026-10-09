@@ -68,7 +68,7 @@ For a persistent deployment, see the included [systemd and nginx configuration](
 
 ## Linux releases and CI
 
-The [Linux CI and Release workflow](.github/workflows/release.yml) runs Go race tests, `go vet`, and frontend JavaScript tests on pushes to `master`, pull requests targeting `master`, and manual runs, then builds Linux amd64 and arm64 packages. These builds are available as Artifacts on the Actions page for 14 days.
+The [Linux CI and Release workflow](.github/workflows/release.yml) runs Go race tests, `go vet`, frontend JavaScript tests, and C tool tests with the mock backend on pushes to `master`, pull requests targeting `master`, and manual runs, then builds Linux amd64 and arm64 packages. These builds are available as Artifacts on the Actions page for 14 days.
 
 To publish a release, create and push a new version tag on a commit containing the workflow. For example, when releasing version 0.7.1:
 
@@ -81,11 +81,14 @@ After all checks and both architecture builds pass, a `v*` tag push creates a Gi
 
 - `project-alpha_<tag>_linux_amd64.tar.gz`
 - `project-alpha_<tag>_linux_arm64.tar.gz`
+- `ctools-<tool>_<tag>_linux_amd64.tar.gz` and `ctools-<tool>_<tag>_linux_arm64.tar.gz` for each C tool
 - `SHA256SUMS`
 
 Tags containing a hyphen, such as `v0.7.0-rc2`, are marked as prereleases. Failed runs can be rerun from Actions; assets with matching names are replaced if the Release already exists. Branch, pull request, and manual runs only produce Artifacts. The workflow uses the repository's built-in `GITHUB_TOKEN` and needs no additional Secret.
 
-Each archive contains `bin/project-alpha`, `bin/rootless-docker`, `bin/alpha-updater`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
+Each `project-alpha_*.tar.gz` archive contains `bin/project-alpha`, `bin/rootless-docker`, `bin/alpha-updater`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
+
+The workflow runs `make release` for each `ctools/*/Makefile` and uploads its archive separately. For example, `ctools-dram-bw_<tag>_linux_amd64.tar.gz` includes the daemon, server script, command-line client, static/shared libraries, and public header. All archives are included in `SHA256SUMS` and the per-architecture Actions artifacts.
 
 Run `project-alpha --version` to check the binary's version and build information. Use `project-alpha --help` for a short command overview, and `<subcommand> --help` (such as `serve --help` or `share-node --help`) for detailed options and examples.
 
@@ -121,6 +124,7 @@ The detailed guides are currently available in Chinese.
 | Agent reports and cleanup | [Agent API](docs/agent.md) |
 | Public registration, backups, and deployment | [Running and configuration](docs/operations.md) |
 | The standalone rootless Docker tool | [Rootless Docker](docs/rootless-docker.md) |
+| The standalone C DRAM bandwidth sampler | [dram-bw](ctools/dram-bw/README.md) |
 | Tests, benchmarks, and code structure | [Development and verification](docs/development.md) |
 
 ## Development
@@ -131,6 +135,7 @@ The backend uses Go and SQLite. Web assets are embedded in the binary. Common ch
 go test -race ./...
 go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
+make -C ctools/dram-bw -j test
 ```
 
 Frontend tests require Node.js 20+ and have no npm dependencies. See [development and verification](docs/development.md#验证) for browser regression tests and Docker integration tests.

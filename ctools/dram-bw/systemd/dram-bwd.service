@@ -1,0 +1,28 @@
+[Unit]
+Description=DRAM bandwidth sampler and shared memory service
+After=local-fs.target
+
+[Service]
+Type=simple
+User=dram-bw
+Group=dram-bw
+RuntimeDirectory=dram-bw
+RuntimeDirectoryMode=0750
+EnvironmentFile=-/etc/default/dram-bw
+ExecStart=/usr/local/bin/dram-bwd $DRAM_BW_ARGS
+Restart=on-failure
+RestartSec=2
+KillSignal=SIGTERM
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_PERFMON
+AmbientCapabilities=CAP_PERFMON
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+RestrictAddressFamilies=AF_UNIX
+ReadWritePaths=/run/dram-bw
+LimitNOFILE=4096
+MemoryMax=384M
+
+[Install]
+WantedBy=multi-user.target

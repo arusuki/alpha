@@ -59,6 +59,8 @@ jobs:
           for test in tests/test_*.js; do
             node "$test"
           done
+      - name: C tool tests (mock backend)
+        run: make -C ctools/dram-bw -j2 test
 
   build:
     name: Build linux/${{ matrix.arch }}
@@ -126,12 +128,16 @@ jobs:
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/project-alpha" ./cmd/project-alpha
           go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/alpha-updater" ./cmd/alpha-updater
-          for binary in "$stage"/bin/*; do
+          check_glibc() {
+            local binary="$1" required
             required="$(readelf --version-info "$binary" | sed -nE 's/.*Name: GLIBC_([0-9.]+).*/\1/p' | sort -V | tail -n1)"
             if [[ -n "$required" && "$(printf '%s\n' "$required" 2.31 | sort -V | tail -n1)" != 2.31 ]]; then
               echo "::error::$binary requires glibc $required (maximum supported: 2.31)"
               exit 1
             fi
+          }
+          for binary in "$stage"/bin/*; do
+            check_glibc "$binary"
           done
           cp README.md "$stage/"
           cp -R docs deploy "$stage/"
@@ -151,10 +157,37 @@ jobs:
           "$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --help
           updater_version="$("$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --version)"
           [[ "$updater_version" == "alpha-updater $version (commit ${GITHUB_SHA:0:12}, "* ]]
+          # Each C tool owns its release layout; keep native builds isolated.
+          for tool_dir in ctools/*/; do
+            [[ -f "$tool_dir/Makefile" ]] || continue
+            tool_name="${tool_dir%/}"
+            tool_name="${tool_name##*/}"
+            if [[ ! "$tool_name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+              echo "::error::Unsupported C tool name: $tool_name"
+              exit 1
+            fi
+            tool_package="ctools-${tool_name}_${version}_linux_${GOARCH}"
+            make -C "$tool_dir" -j2 release \
+              BUILD="$RUNNER_TEMP/ctools-build/$tool_name" \
+              RELEASE_DIR="$GITHUB_WORKSPACE/release" RELEASE_NAME="$tool_package"
+            tar -xzf "release/$tool_package.tar.gz" -C "$RUNNER_TEMP/package-check"
+            tool_check="$RUNNER_TEMP/package-check/$tool_package"
+            test -d "$tool_check"
+            for binary in "$tool_check"/bin/* "$tool_check"/lib/*.so*; do
+              [[ -f "$binary" ]] || continue
+              check_glibc "$binary"
+            done
+            for binary in "$tool_check"/bin/*; do
+              [[ -f "$binary" && -x "$binary" ]] || continue
+              LD_LIBRARY_PATH="$tool_check/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" "$binary" --help
+            done
+          done
           cd release
-          sha256sum "$package.tar.gz" > "$package.tar.gz.sha256"
-          sha256sum --check "$package.tar.gz.sha256"
-      - name: Upload Linux package
+          for archive in *.tar.gz; do
+            sha256sum "$archive" > "$archive.sha256"
+            sha256sum --check "$archive.sha256"
+          done
+      - name: Upload Linux packages
         uses: actions/upload-artifact@v7.0.1
         with:
           name: linux-${{ matrix.arch }}

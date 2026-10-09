@@ -8,6 +8,8 @@
 
 构建 updater 或发布包前，在拥有完整 Git 历史与 tags 的检出中运行 `go generate ./internal/platform`，生成最近 3 次有数据库变更的 tag 升级窗口。无数据库变更的 tag 和未打 tag 的开发提交不占名额。新增迁移需登记版本步骤，见 [升级保留规则](updater.md#按-tag-保留最近-3-次数据库更新)。发布工作流自动生成并验证此窗口。
 
+发布工作流在两个架构的 Ubuntu 20.04 构建容器中，逐个为 `ctools/*/Makefile` 执行 `make release`。新增工具须提供该目标，接受 `BUILD`、`RELEASE_DIR`、`RELEASE_NAME`，生成 `$(RELEASE_DIR)/$(RELEASE_NAME).tar.gz`，包内顶层目录与 `RELEASE_NAME` 同名。工作流将包命名为 `ctools-<工具名>_<版本>_linux_<架构>.tar.gz`，检查 `bin/*` 和 `lib/*.so*` 的 glibc 要求，并执行包内可执行文件的 `--help`。分支构建和发布均包含独立工具包及其校验和。
+
 自定义构建版本示例：
 
 ```bash
@@ -25,7 +27,10 @@ go build -o bin/project-alpha \
 go test -race ./...
 go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
+make -C ctools/dram-bw -j test
 ```
+
+`ctools/dram-bw` 使用 C11 编译器、Linux 开发头文件、make 和 Python 3，独立构建和测试。上述测试使用 mock 后端与临时 Unix socket，无需 PMU 权限；CI 同样运行此检查。性能基准和可选硬件对照见 [dram-bw 验证说明](../ctools/dram-bw/docs/validation.md)。可从源码单独安装，或使用 Release 中独立的 `ctools-dram-bw_*.tar.gz`。
 
 浏览器回归需要 Playwright 和 Chromium：
 
@@ -57,6 +62,7 @@ Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_c
 - `cmd/project-alpha`：程序入口，处理进程信号并启动应用。
 - `cmd/alpha-updater`、`internal/updater`：独立测试环境更新器；按角色校验并安装 GitHub release，调用目标更新器原地升级数据库。用法见 [测试环境更新器](updater.md)。
 - `cmd/rootless-docker`、`internal/rootless`：独立 rootless Docker 管理命令、socket 热挂载和交互测试容器；不接入 Web。
+- `ctools/dram-bw`：独立 C DRAM 带宽采集服务、客户端库、命令行示例和 perf 对照脚本；用法见 [dram-bw](../ctools/dram-bw/README.md)。
 - `internal/app`：命令分发、模块装配和 HTTP 服务生命周期。
 - `internal/cluster`：节点注册与身份核验、总控代理、权限授权、跨节点容器统计和 API-only worker 入口。
 - `internal/registry`：公网注册入口、control 出站长连接、持久身份绑定、注册会话与实时进度。

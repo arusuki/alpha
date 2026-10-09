@@ -67,7 +67,7 @@ ssh -L 8765:127.0.0.1:8765 user@your-server
 
 ## Linux Release 与 CI
 
-[Linux CI and Release](../.github/workflows/release.yml) 在推送到 `master`、向 `master` 提交 PR 或手动运行时，执行 Go race 测试、`go vet` 和前端 JavaScript 测试，再构建 Linux amd64 / arm64 安装包。普通构建的安装包可在 Actions 页面的 Artifacts 下载，保留 14 天。
+[Linux CI and Release](../.github/workflows/release.yml) 在推送到 `master`、向 `master` 提交 PR 或手动运行时，执行 Go race 测试、`go vet`、前端 JavaScript 测试和 C 工具 mock 后端测试，再构建 Linux amd64 / arm64 安装包。普通构建的安装包可在 Actions 页面的 Artifacts 下载，保留 14 天。
 
 发布时，在包含此工作流的提交上创建并推送新的版本标签，例如发布 0.7.1 时：
 
@@ -80,11 +80,14 @@ git push origin v0.7.1
 
 - `project-alpha_<标签>_linux_amd64.tar.gz`
 - `project-alpha_<标签>_linux_arm64.tar.gz`
+- 每个 C 工具的 `ctools-<工具名>_<标签>_linux_amd64.tar.gz` 和 `ctools-<工具名>_<标签>_linux_arm64.tar.gz`
 - `SHA256SUMS`
 
 带连字符的标签（例如 `v0.7.0-rc2`）标记为预发布。失败后可在 Actions 重跑；已有 Release 的同名附件会被替换。分支推送、PR 和手动运行只生成 Artifacts，不发布 Release。使用仓库内置的 `GITHUB_TOKEN`，无需额外配置 Secret。
 
-压缩包包含 `bin/project-alpha`、`bin/rootless-docker`、`bin/alpha-updater`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
+`project-alpha_*.tar.gz` 包含 `bin/project-alpha`、`bin/rootless-docker`、`bin/alpha-updater`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
+
+工作流逐个发现 `ctools/*/Makefile` 并执行 `make release`，将每个工具的压缩包作为独立附件上传。例如 `ctools-dram-bw_<标签>_linux_amd64.tar.gz` 包含 daemon、server 脚本、命令行客户端、静态/动态库和公开头文件。所有压缩包均计入 `SHA256SUMS`，也包含在对应架构的 Actions Artifacts 中。
 
 二进制在 Ubuntu 20.04 容器内按对应架构原生编译，启用 CGO 以支持 SQLite；运行环境使用 glibc 2.31 或更新版本（例如 Ubuntu 20.04），不直接支持 Alpine/musl。使用发布包无需安装 Go 或 GCC；Docker 等功能仍需对应的运行时依赖。更旧的 Linux 发行版可按 [快速开始](#快速开始) 从源码构建。
 
@@ -115,6 +118,7 @@ cd project-alpha_v0.7.1_linux_amd64
 | Agent 报告与诊断清理 | [Agent API](agent.md) |
 | 公网注册、数据备份与服务部署 | [运行与配置](operations.md) |
 | 独立 rootless Docker 工具 | [rootless Docker](rootless-docker.md) |
+| 独立 C DRAM 带宽采集工具 | [dram-bw](../ctools/dram-bw/README.md) |
 | 测试、性能基准与代码结构 | [开发与验证](development.md) |
 
 ## 开发
@@ -125,6 +129,7 @@ cd project-alpha_v0.7.1_linux_amd64
 go test -race ./...
 go vet ./...
 for test in tests/test_*.js; do node "$test" || exit; done
+make -C ctools/dram-bw -j test
 ```
 
 前端测试需要 Node.js 20+，无需安装 npm 依赖。浏览器回归和 Docker 集成测试的运行方式见 [开发与验证](development.md#验证)。

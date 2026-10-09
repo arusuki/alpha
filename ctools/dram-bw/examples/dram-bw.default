@@ -1,0 +1,3 @@
+# Copy to /etc/default/dram-bw.
+# Optional --peak-gbps must match the measured channels and actual memory setup.
+DRAM_BW_ARGS="--backend amd-rome --interval-us 100000"

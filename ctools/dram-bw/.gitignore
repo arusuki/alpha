@@ -1,0 +1,10 @@
+# Build products and generated benchmark results.
+/build*/
+/results/
+
+# Python caches and local analysis/crash output.
+__pycache__/
+*.py[cod]
+/*.plist
+/core
+/core.[0-9]*
