@@ -13,6 +13,7 @@ import (
 type object = map[string]any
 
 type Config struct {
+	AutoAgentAnalyze  bool     `json:"auto_agent_analyze"`
 	Root              []string `json:"root"`
 	Exclude           []string `json:"exclude"`
 	NoDocker          bool     `json:"no_docker"`
@@ -41,10 +42,10 @@ var containerPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 func parseConfig(raw json.RawMessage) (Config, error) {
 	var fields map[string]json.RawMessage
 	var c Config
-	if json.Unmarshal(raw, &fields) != nil || len(fields) != 16 {
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 17 {
 		return c, httpapi.NewError(400, "扫描配置字段不完整或包含未知字段")
 	}
-	for _, key := range []string{"root", "exclude", "no_docker", "include_docker_root", "max_depth", "max_nodes", "owner_label", "docker_timeout", "interval_minutes", "scan_backend", "scan_mode", "schedule_mode", "schedule_times", "schedule_weekdays", "schedule_timezone", "retain_records"} {
+	for _, key := range []string{"auto_agent_analyze", "root", "exclude", "no_docker", "include_docker_root", "max_depth", "max_nodes", "owner_label", "docker_timeout", "interval_minutes", "scan_backend", "scan_mode", "schedule_mode", "schedule_times", "schedule_weekdays", "schedule_timezone", "retain_records"} {
 		if v, ok := fields[key]; !ok || string(v) == "null" {
 			return c, httpapi.NewError(400, "扫描配置字段不完整或包含未知字段")
 		}

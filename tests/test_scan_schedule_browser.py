@@ -75,11 +75,13 @@ with tempfile.TemporaryDirectory(prefix='alpha-scan-plan-') as temporary:
             page.locator('#planTimes').fill('03:15\n15:45')
             page.locator('#planTimezone').fill('Asia/Shanghai')
             page.locator('#planRetain').fill('5')
+            page.locator('#planAutoAgentAnalyze').check()
             page.locator('#scanPlanSubmit').click()
             expect(page.locator('#scanPlanStatus')).to_have_text('下发完成：成功 2 个，失败 0 个。')
-            schedule_keys = {'schedule_mode', 'interval_minutes', 'schedule_times', 'schedule_weekdays', 'schedule_timezone', 'retain_records'}
+            schedule_keys = {'schedule_mode', 'interval_minutes', 'schedule_times', 'schedule_weekdays', 'schedule_timezone', 'retain_records', 'auto_agent_analyze'}
             for node, before in [(first, saved), (second, untouched)]:
                 current = context.request.get(url + '/api/cluster/nodes/' + node['id'] + '/api/settings').json()['value']
+                assert current['auto_agent_analyze'] is True
                 assert current['schedule_times'] == ['03:15', '15:45'] and current['retain_records'] == 5
                 assert {k: v for k, v in current.items() if k not in schedule_keys} == {k: v for k, v in before.items() if k not in schedule_keys}
             # Partial failures expose a retry that sends only failed IDs.
@@ -97,6 +99,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-scan-plan-') as temporary:
             with page.expect_request('**/api/cluster/scan-schedule') as retry_request:
                 page.locator('#scanPlanRetry').click()
             assert retry_request.value.post_data_json['node_ids'] == [second['id']]
+            assert retry_request.value.post_data_json['schedule']['auto_agent_analyze'] is True
             expect(page.locator('#scanPlanStatus')).to_have_text('下发完成：成功 2 个，失败 0 个。')
             expect(page.locator('#scanPlanRetry')).not_to_be_visible()
             # Subset selection and disabled automatic scans work independently.

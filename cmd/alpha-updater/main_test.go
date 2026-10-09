@@ -113,8 +113,24 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 						t.Fatal(err)
 					}
 				}
-				if tc.version >= 35 && tc.version < platform.DatabaseVersion {
+				if tc.version >= 35 && tc.version < 38 {
 					if _, err = db.SQL.Exec("DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				if tc.version >= 35 && tc.version < 39 {
+					switch tc.role {
+					case "worker":
+						_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN analysis_user_id;
+ALTER TABLE jobs DROP COLUMN analysis_user_id;
+ALTER TABLE jobs DROP COLUMN analysis_status;
+ALTER TABLE jobs DROP COLUMN analysis_error;
+UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
+					case "control":
+						_, err = db.SQL.Exec("DROP INDEX idx_agent_scheduled; ALTER TABLE agent_sessions DROP COLUMN scheduled_job_id")
+					}
+					if err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -179,6 +195,12 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 				var version int
 				if err = db.SQL.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != wantVersion {
 					t.Fatalf("schema %d, want %d: %v", version, wantVersion, err)
+				}
+				if !tc.conflict && tc.role == "worker" {
+					for _, row := range before["jobs"] {
+						row["analysis_user_id"], row["analysis_status"], row["analysis_error"] = "", "", ""
+						row["config"] = `{"auto_agent_analyze":false}`
+					}
 				}
 				for _, table := range tables {
 					if !reflect.DeepEqual(before[table], read("SELECT * FROM "+table+" ORDER BY 1")) {

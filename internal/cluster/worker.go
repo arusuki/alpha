@@ -18,7 +18,7 @@ import (
 	"project-alpha/internal/updates"
 )
 
-const Protocol = 9
+const Protocol = 10
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -171,7 +171,7 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !operational(r.URL.Path) {
+	if !operational(r.URL.Path) && r.URL.Path != "/api/worker/scheduled-analysis" {
 		writeError(w, httpapi.NewError(404, "node 只提供节点操作 API，用户管理请使用总控"))
 		return
 	}

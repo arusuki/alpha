@@ -31,7 +31,7 @@ async function open(){
   finally{if(epoch===state.epoch){state.busy=false;controls();}}
 }
 function readPlan(){
-  return {schedule_mode:$('planMode').value,interval_minutes:$('planMode').value==='interval'?Number($('planInterval').value):0,
+  return {auto_agent_analyze:$('planAutoAgentAnalyze').checked,schedule_mode:$('planMode').value,interval_minutes:$('planMode').value==='interval'?Number($('planInterval').value):0,
     schedule_times:$('planTimes').value.split('\n').map(s=>s.trim()).filter(Boolean),
     schedule_weekdays:[0,1,2,3,4,5,6].filter(day=>$('planWeekday'+day).checked),
     schedule_timezone:$('planTimezone').value.trim(),retain_records:Number($('planRetain').value)};

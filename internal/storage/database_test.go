@@ -26,7 +26,7 @@ func TestDatabaseInitializationAndReopen(t *testing.T) {
 		t.Fatalf("initial settings: %+v, %v", settings, err)
 	}
 	settings.Value.ScanMode = "fast"
-	if _, err := db.saveConfig(settings.Value, settings.Revision, "test"); err != nil {
+	if _, err := db.saveConfig(settings.Value, settings.Revision, platform.User{ID: "test", Username: "test"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.SQL.Close(); err != nil {

@@ -87,7 +87,7 @@ func TestScheduledLaunchFailureCursorSurvivesDeletionAndRestart(t *testing.T) {
 	c := defaultConfig()
 	c.ScheduleMode = "interval"
 	c.IntervalMinutes = 5
-	if _, err = db.saveConfig(c, 1, "admin"); err != nil {
+	if _, err = db.saveConfig(c, 1, platform.User{ID: "admin", Username: "admin"}); err != nil {
 		t.Fatal(err)
 	}
 	m, err := NewManager(db)

@@ -82,9 +82,9 @@ func (m *Manager) pruneLocked(keep int) error {
 	if keep == 0 {
 		return nil
 	}
-	items, err := platform.Rows(m.db.SQL, `SELECT id FROM jobs
+	items, err := platform.Rows(m.db.SQL, `SELECT id FROM (SELECT id,status,analysis_status FROM jobs
  WHERE trigger<>'incremental' AND status NOT IN ('queued','running','cancelling')
- ORDER BY created_at DESC,id DESC LIMIT -1 OFFSET ?`, keep)
+ ORDER BY created_at DESC,id DESC LIMIT -1 OFFSET ?) WHERE NOT (status='completed' AND analysis_status='pending')`, keep)
 	if err != nil {
 		return err
 	}

@@ -52,10 +52,20 @@ func (h *Control) dispatchAgent(w http.ResponseWriter, r *http.Request, user pla
 			return 0, nil, httpapi.NewError(409, "此节点已有其他管理员的分析正在执行")
 		}
 	}
+	handler, err := h.agentHandler(node, user)
+	if err != nil {
+		return 0, nil, err
+	}
+	request := r.Clone(r.Context())
+	request.URL.Path = path
+	return handler.Dispatch(w, request, user)
+}
+
+func (h *Control) agentHandler(node Node, user platform.User) (*agent.Handler, error) {
 	h.agentMu.Lock()
 	if h.closed {
 		h.agentMu.Unlock()
-		return 0, nil, httpapi.NewError(503, "总控正在关闭")
+		return nil, httpapi.NewError(503, "总控正在关闭")
 	}
 	key := node.ID + ":" + user.ID
 	handler := h.agents[key]
@@ -68,15 +78,13 @@ func (h *Control) dispatchAgent(w http.ResponseWriter, r *http.Request, user pla
 		})
 		if err != nil {
 			h.agentMu.Unlock()
-			return 0, nil, err
+			return nil, err
 		}
 		handler = agent.NewHandler(store, manager)
 		h.agents[key] = handler
 	}
 	h.agentMu.Unlock()
-	request := r.Clone(r.Context())
-	request.URL.Path = path
-	return handler.Dispatch(w, request, user)
+	return handler, nil
 }
 
 func (h *Control) deleteRecord(r *http.Request, user platform.User, node Node, id string) (int, any, error) {

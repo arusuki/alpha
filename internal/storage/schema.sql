@@ -1,7 +1,8 @@
-CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, schedule_last_run REAL NOT NULL DEFAULT 0);
+CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, schedule_last_run REAL NOT NULL DEFAULT 0, analysis_user_id TEXT NOT NULL DEFAULT '');
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, status TEXT NOT NULL, trigger TEXT NOT NULL, created_by TEXT NOT NULL,
  created_at REAL NOT NULL, started_at REAL, finished_at REAL, config TEXT NOT NULL,
+ analysis_user_id TEXT NOT NULL DEFAULT '', analysis_status TEXT NOT NULL DEFAULT '', analysis_error TEXT NOT NULL DEFAULT '',
  progress TEXT NOT NULL DEFAULT '{}', error TEXT, allocated INTEGER, files INTEGER, warnings INTEGER
 );
 CREATE INDEX idx_jobs_created ON jobs(created_at DESC);

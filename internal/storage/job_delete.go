@@ -25,6 +25,13 @@ func (m *Manager) Delete(id, actor string) (object, error) {
 func (m *Manager) deleteLocked(id, actor string) (object, error) {
 	deleted := []string{}
 	err := m.db.Transaction(func(tx *sql.Tx) error {
+		var pending int
+		if err := tx.QueryRow("SELECT count(*) FROM jobs WHERE id=? AND status='completed' AND analysis_status='pending'", id).Scan(&pending); err != nil {
+			return err
+		}
+		if pending > 0 {
+			return httpapi.NewError(409, "该扫描正在等待或执行自动 Agent 分析，请等待完成后再删除")
+		}
 		var status string
 		if err := tx.QueryRow("SELECT status FROM jobs WHERE id=?", id).Scan(&status); err == sql.ErrNoRows {
 			return httpapi.NewError(404, "扫描任务不存在")

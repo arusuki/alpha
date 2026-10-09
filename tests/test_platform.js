@@ -26,7 +26,7 @@ apiURL=path=>path;
 var sample=JSON.parse(sampleText);sample.containers.forEach(c=>c.label_owner=c.owner);sample.job_id='a'.repeat(32);
 var calls=[];
 var job={id:'a'.repeat(32),created_at:100,status:'completed',trigger:'manual',created_by:'admin',snapshot_revision:0,allocated:123,progress:{phase:'completed',entries:12},finished_at:101};
-var config={revision:1,value:{root:['/srv'],exclude:[],no_docker:true,include_docker_root:false,max_depth:5,max_nodes:50000,docker_timeout:120,owner_label:'project-alpha.owner',interval_minutes:0,scan_backend:'auto',scan_mode:'normal',schedule_mode:'off',schedule_times:[],schedule_weekdays:[0,1,2,3,4,5,6],schedule_timezone:'UTC',retain_records:0}};
+var config={revision:1,value:{root:['/srv'],exclude:[],no_docker:true,include_docker_root:false,max_depth:5,max_nodes:50000,docker_timeout:120,owner_label:'project-alpha.owner',interval_minutes:0,scan_backend:'auto',scan_mode:'normal',schedule_mode:'off',schedule_times:[],schedule_weekdays:[0,1,2,3,4,5,6],schedule_timezone:'UTC',retain_records:0,auto_agent_analyze:false}};
 var responses={'/api/state':{jobs:[job],directory_jobs:[],directory_jobs:[],latest_id:job.id,active:null,interval_minutes:0},['/api/jobs/'+job.id+'/view']:sample};
 `,sandbox);
 vm.runInContext(`
@@ -78,9 +78,10 @@ snapshot.docker={root:'/var/lib/docker',root_canonical:'/var/lib/docker'};render
   element('cfgScheduleMode').value='calendar';run('scanScheduleControls()');
   assert(element('cfgInterval').disabled);assert(!element('cfgCalendarFields').hidden);
   element('cfgScheduleTimes').value='02:00\n14:30';element('cfgScheduleTimezone').value='Asia/Shanghai';element('cfgRetainRecords').value='3';
-  element('cfgWeekday0').checked=false;
+  element('cfgWeekday0').checked=false;element('cfgAutoAgentAnalyze').checked=true;
   element('settingsForm').listeners.submit({preventDefault(){}});await flush();await run('loadSettings()');
   assert.equal(run('platform.config.value.schedule_mode'),'calendar');assert.equal(run('platform.config.value.retain_records'),3);
+  assert.equal(run('platform.config.value.auto_agent_analyze'),true);assert(element('cfgAutoAgentAnalyze').checked);
   assert.equal(element('cfgScheduleTimes').value,'02:00\n14:30');assert(!element('cfgWeekday0').checked);
   run('platform.schedule=platform.config.value;renderTask(0)');assert(element('scheduleStatus').textContent.includes('Asia/Shanghai'));
   run('platform.followLatest=false;platform.loaded="historical"');await run('syncState()');assert.equal(run('platform.loaded'),'historical');

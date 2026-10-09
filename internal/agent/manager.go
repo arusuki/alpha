@@ -179,6 +179,9 @@ func (a *Manager) start(id, userID, actor, text string, source *reportSource) (o
 					title = "Host 空间分析报告"
 				}
 				_, err = tx.Exec("UPDATE agent_sessions SET title=?,snapshot_id=?,report_scope=? WHERE id=?", title, source.SnapshotID, source.Scope, id)
+				if err == nil && source.Scheduled {
+					_, err = tx.Exec("UPDATE agent_sessions SET scheduled_job_id=? WHERE id=?", source.SnapshotID, id)
+				}
 			}
 		} else {
 			_, err = tx.Exec("UPDATE agent_sessions SET status='queued',error=NULL,updated_at=?,provider=?,model=? WHERE id=?", platform.Now(), config.Protocol, config.Model, id)

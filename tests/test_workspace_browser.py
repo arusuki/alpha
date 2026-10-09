@@ -69,7 +69,7 @@ class Handler(NodeHandler):
             return self.respond(dict(revision=1, value=dict(root=['/srv'], exclude=[], scan_backend='auto',
                 scan_mode='normal', no_docker=False, include_docker_root=False, max_depth=5, max_nodes=50000,
                 docker_timeout=120, owner_label='project-alpha.owner', interval_minutes=30, schedule_mode='interval',
-                schedule_times=[], schedule_weekdays=list(range(7)), schedule_timezone='UTC', retain_records=0)))
+                schedule_times=[], schedule_weekdays=list(range(7)), schedule_timezone='UTC', retain_records=0, auto_agent_analyze=False)))
         if path == '/api/agent/sessions':
             return self.respond(dict(sessions=[]))
         if path == '/api/users':
@@ -246,6 +246,7 @@ try:
         page.locator('#cfgScheduleTimes').fill('02:00\n14:30')
         page.locator('#cfgScheduleTimezone').fill('Asia/Shanghai')
         page.locator('#cfgRetainRecords').fill('7')
+        page.locator('#cfgAutoAgentAnalyze').check()
         page.locator('#cfgWeekday0').uncheck()
         page.locator('#saveSettings').click()
         page.wait_for_function('platform.config.revision === 2')
@@ -253,9 +254,11 @@ try:
         assert scan_settings['value']['schedule_times'] == ['02:00', '14:30']
         assert scan_settings['value']['schedule_weekdays'] == [1, 2, 3, 4, 5, 6]
         assert scan_settings['value']['retain_records'] == 7
+        assert scan_settings['value']['auto_agent_analyze'] is True
         page.locator('#cfgScheduleTimes').fill('03:00')
         page.locator('#reloadSettings').click()
         page.wait_for_function("document.querySelector('#cfgScheduleTimes').value === '02:00\\n14:30'")
+        assert page.locator('#cfgAutoAgentAnalyze').is_checked()
         page.screenshot(path='/tmp/project-alpha-scan-schedule-mobile.png', full_page=True, animations='disabled')
         page.set_viewport_size(dict(width=1440, height=1080))
         page.screenshot(path='/tmp/project-alpha-scan-schedule-desktop.png', full_page=True, animations='disabled')

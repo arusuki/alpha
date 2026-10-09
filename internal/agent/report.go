@@ -9,6 +9,7 @@ import (
 const maxReportConcurrency = 16
 
 type reportSource struct {
+	Scheduled   bool   `json:"-"`
 	Concurrency int    `json:"concurrency"`
 	SnapshotID  string `json:"snapshot_id"`
 	Revision    int64  `json:"revision"`

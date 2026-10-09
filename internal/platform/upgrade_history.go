@@ -37,6 +37,7 @@ var databaseUpgrades = []databaseUpgrade{
 	{From: 35, To: 36, Apply: upgradeGPUHistory},
 	{From: 36, To: 37, Apply: upgradeScanSchedule},
 	{From: 37, To: 38, Apply: installMihomo},
+	{From: 38, To: 39, Apply: upgradeScheduledAgent},
 }
 
 func databaseUpgradePlan(version int) ([]databaseUpgrade, error) {

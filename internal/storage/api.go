@@ -29,6 +29,9 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	var err error
 	admin := user.Role == "admin"
 	failure := func(err error) (int, any, error) { return 0, nil, err }
+	if route == "/api/worker/scheduled-analysis" {
+		return s.scheduledAnalysis(w, r, user)
+	}
 	if method == "GET" && route == "/api/member-disk" {
 		result, err := s.memberDisk(r, user)
 		return 200, result, err
@@ -68,7 +71,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				break
 			}
 		}
-		return 200, object{"jobs": jobs, "directory_jobs": directories, "latest_id": latest, "active": active, "interval_minutes": config.Value.IntervalMinutes, "schedule_mode": config.Value.ScheduleMode, "schedule_times": config.Value.ScheduleTimes, "schedule_weekdays": config.Value.ScheduleWeekdays, "schedule_timezone": config.Value.ScheduleTimezone, "retain_records": config.Value.RetainRecords, "history_floor": historyFloor}, nil
+		return 200, object{"jobs": jobs, "directory_jobs": directories, "latest_id": latest, "active": active, "interval_minutes": config.Value.IntervalMinutes, "schedule_mode": config.Value.ScheduleMode, "schedule_times": config.Value.ScheduleTimes, "schedule_weekdays": config.Value.ScheduleWeekdays, "schedule_timezone": config.Value.ScheduleTimezone, "retain_records": config.Value.RetainRecords, "auto_agent_analyze": config.Value.AutoAgentAnalyze, "history_floor": historyFloor}, nil
 	}
 	if method == "GET" && route == "/api/jobs" {
 		before := platform.Now() + 1
@@ -100,7 +103,7 @@ func (s *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				return failure(err)
 			}
 			s.Manager.mu.Lock()
-			result, err := db.saveConfig(c, revision, user.Username)
+			result, err := db.saveConfig(c, revision, user)
 			s.Manager.mu.Unlock()
 			return 200, result, err
 		}

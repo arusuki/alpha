@@ -27,6 +27,8 @@ import (
 )
 
 type Control struct {
+	analysisCancel  context.CancelFunc
+	analysisDone    chan struct{}
 	Mihomo          *mihomo.Control
 	mihomoLocal     *mihomo.Manager
 	Updates         *updates.Manager
@@ -105,6 +107,7 @@ func NewControl(db *platform.Database) (*Control, error) {
 		}
 		return h.call(ctx, n, method, path, body, platform.User{ID: h.identity, Username: "mihomo-control", Role: "admin"}, out)
 	})
+	h.initScheduledAnalysis()
 	return h, nil
 }
 func (h *Control) Close() {
@@ -119,6 +122,10 @@ func (h *Control) Close() {
 		handlers = append(handlers, handler)
 	}
 	h.agentMu.Unlock()
+	if h.analysisCancel != nil {
+		h.analysisCancel()
+		<-h.analysisDone
+	}
 	if h.Mihomo != nil {
 		h.Mihomo.Close()
 	}

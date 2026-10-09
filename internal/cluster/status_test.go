@@ -294,6 +294,9 @@ func TestStatusPasswordChangeAndSessionBoundary(t *testing.T) {
 	requireStatus(t, selfCall(f, "POST", path+"/login", "", map[string]string{"password": "Member-password-123"}), 401)
 	token = statusLogin(t, f, "alice", "Changed-password-123")
 	workerNode, workerServer := worker(t, strings.Repeat("9", 32), Inventory{}, moduleFunc(func(_ http.ResponseWriter, r *http.Request, _ platform.User) (int, any, error) {
+		if r.URL.Path == "/api/worker/scheduled-analysis" {
+			return 200, map[string]any{"jobs": []any{}}, nil
+		}
 		var req map[string]string
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req["password"] != "Changed-password-123" {
 			t.Errorf("new container did not receive updated password: %v", err)

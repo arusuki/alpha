@@ -383,7 +383,7 @@ function showPage(page,navigate=true) {
 }
 window.addEventListener('popstate',()=>showPage(window.location.hash.slice(1)||(!platform.nodeID?'cluster':'dashboard'),false));
 function renderHistory() {
-  $('jobsBody').innerHTML=platform.history.filter(j=>j.trigger!=='incremental').map(j=>`<tr class="${j.id===platform.loaded?'history-selected':''}"><td>${esc(dateTime(j.created_at))}<span class="sub">${esc(j.created_by)} · ${esc(triggerNames[j.trigger]||j.trigger)} · ${esc(j.id.slice(0,8))}${j.snapshot_revision ? ` · 明细版本 ${j.snapshot_revision}` : ''}</span></td><td><span class="pill status-${esc(j.status)}">${esc(statusNames[j.status]||j.status)}</span>${j.warnings?`<span class="sub">${j.warnings} 条扫描提示</span>`:''}</td><td class="amount">${fmt(j.allocated)}</td><td>${j.status==='completed'?`<button data-open-job="${esc(j.id)}">查看结果</button> `:''}<button data-job-detail="${esc(j.id)}">详情</button>${platform.user && platform.user.role==='admin'?` <button class="danger" data-delete-job="${esc(j.id)}" ${['queued','running','cancelling'].includes(j.status)?'disabled title="任务结束后可删除"':''}>删除</button>`:''}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">还没有扫描记录。任务开始后会自动保存在这里。</td></tr>';
+  $('jobsBody').innerHTML=platform.history.filter(j=>j.trigger!=='incremental').map(j=>`<tr class="${j.id===platform.loaded?'history-selected':''}"><td>${esc(dateTime(j.created_at))}<span class="sub">${esc(j.created_by)} · ${esc(triggerNames[j.trigger]||j.trigger)} · ${esc(j.id.slice(0,8))}${j.snapshot_revision ? ` · 明细版本 ${j.snapshot_revision}` : ''}</span></td><td><span class="pill status-${esc(j.status)}">${esc(statusNames[j.status]||j.status)}</span>${j.analysis_status&&j.status==='completed'?`<span class="sub">Agent · ${esc(({pending:'等待 / 分析中',completed:'报告与清理条目已生成',failed:'分析失败'})[j.analysis_status]||j.analysis_status)}</span>`:''}${j.warnings?`<span class="sub">${j.warnings} 条扫描提示</span>`:''}</td><td class="amount">${fmt(j.allocated)}</td><td>${j.status==='completed'?`<button data-open-job="${esc(j.id)}">查看结果</button> `:''}<button data-job-detail="${esc(j.id)}">详情</button>${platform.user && platform.user.role==='admin'?` <button class="danger" data-delete-job="${esc(j.id)}" ${['queued','running','cancelling'].includes(j.status)||(j.status==='completed'&&j.analysis_status==='pending')?'disabled title="扫描或自动分析结束后可删除"':''}>删除</button>`:''}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">还没有扫描记录。任务开始后会自动保存在这里。</td></tr>';
   $('moreHistory').hidden=platform.historyExhausted || platform.history.length<50;
 }
 function openDeleteJob(id) {
@@ -440,7 +440,7 @@ async function jobDetails(id) {
   const generation=platform.generation;
   const j=await api(`/api/jobs/${encodeURIComponent(id)}`);
   if(generation!==platform.generation || platform.deletedIDs.has(id))return;
-  $('jobDetails').hidden=false;$('jobDetails').innerHTML=`<h2>任务 ${esc(j.id.slice(0,8))} · ${esc(statusNames[j.status])}</h2><p>开始：${esc(dateTime(j.started_at))} / 结束：${esc(dateTime(j.finished_at))}</p>${j.error?`<p class="error-text">${esc(j.error)}</p>`:''}<h3>任务创建时的配置</h3><pre>${esc(JSON.stringify(j.config,null,2))}</pre><h3>最后进度</h3><pre>${esc(JSON.stringify(j.progress,null,2))}</pre>`;
+  $('jobDetails').hidden=false;$('jobDetails').innerHTML=`<h2>任务 ${esc(j.id.slice(0,8))} · ${esc(statusNames[j.status])}</h2><p>开始：${esc(dateTime(j.started_at))} / 结束：${esc(dateTime(j.finished_at))}</p>${j.analysis_error?`<p class="error-text">自动 Agent 分析：${esc(j.analysis_error)}</p>`:''}${j.error?`<p class="error-text">${esc(j.error)}</p>`:''}<h3>任务创建时的配置</h3><pre>${esc(JSON.stringify(j.config,null,2))}</pre><h3>最后进度</h3><pre>${esc(JSON.stringify(j.progress,null,2))}</pre>`;
 }
 async function loadSettings() {
   const generation=platform.generation;
@@ -450,7 +450,7 @@ async function loadSettings() {
   $('cfgScanBackend').value=c.scan_backend;$('cfgDockerRoot').checked=c.include_docker_root;$('cfgDepth').value=c.max_depth;$('cfgNodes').value=c.max_nodes;
   $('cfgScanMode').value=c.scan_mode;
   $('cfgTimeout').value=c.docker_timeout;$('cfgOwnerLabel').value=c.owner_label;$('cfgInterval').value=c.interval_minutes;
-  $('cfgScheduleMode').value=c.schedule_mode;$('cfgRetainRecords').value=c.retain_records;
+  $('cfgAutoAgentAnalyze').checked=c.auto_agent_analyze;$('cfgScheduleMode').value=c.schedule_mode;$('cfgRetainRecords').value=c.retain_records;
   $('cfgScheduleTimes').value=c.schedule_times.join('\n');$('cfgScheduleTimezone').value=c.schedule_timezone;
   for(let day=0;day<7;day++)$('cfgWeekday'+day).checked=c.schedule_weekdays.includes(day);
   scanScheduleControls();
@@ -502,7 +502,7 @@ $('reloadSettings').addEventListener('click',()=>act(()=>loadSettings(),$('reloa
 $('settingsForm').addEventListener('submit',e=>{e.preventDefault();act(async()=>{
   if(!platform.config)throw Error('请先载入扫描配置');
   const lines=id=>$(id).value.split('\n').map(x=>x.trim()).filter(Boolean);
-  const value={scan_backend:$('cfgScanBackend').value,scan_mode:$('cfgScanMode').value,root:lines('cfgRoots'),exclude:lines('cfgExcludes'),no_docker:!$('cfgDocker').checked,include_docker_root:$('cfgDockerRoot').checked,max_depth:Number($('cfgDepth').value),max_nodes:Number($('cfgNodes').value),docker_timeout:Number($('cfgTimeout').value),owner_label:$('cfgOwnerLabel').value.trim(),interval_minutes:Number($('cfgInterval').value),schedule_mode:$('cfgScheduleMode').value,schedule_times:lines('cfgScheduleTimes'),schedule_weekdays:[0,1,2,3,4,5,6].filter(day=>$('cfgWeekday'+day).checked),schedule_timezone:$('cfgScheduleTimezone').value.trim(),retain_records:Number($('cfgRetainRecords').value)};
+  const value={auto_agent_analyze:$('cfgAutoAgentAnalyze').checked,scan_backend:$('cfgScanBackend').value,scan_mode:$('cfgScanMode').value,root:lines('cfgRoots'),exclude:lines('cfgExcludes'),no_docker:!$('cfgDocker').checked,include_docker_root:$('cfgDockerRoot').checked,max_depth:Number($('cfgDepth').value),max_nodes:Number($('cfgNodes').value),docker_timeout:Number($('cfgTimeout').value),owner_label:$('cfgOwnerLabel').value.trim(),interval_minutes:Number($('cfgInterval').value),schedule_mode:$('cfgScheduleMode').value,schedule_times:lines('cfgScheduleTimes'),schedule_weekdays:[0,1,2,3,4,5,6].filter(day=>$('cfgWeekday'+day).checked),schedule_timezone:$('cfgScheduleTimezone').value.trim(),retain_records:Number($('cfgRetainRecords').value)};
   const generation=platform.generation;
   const result=await api('/api/settings',{method:'PUT',body:JSON.stringify({value,revision:platform.config.revision})});
   if(generation!==platform.generation)return;platform.config=result;

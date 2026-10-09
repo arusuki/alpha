@@ -127,6 +127,11 @@ func (m *Manager) startPlanLocked(actor, trigger string, plan scanPlan) (object,
 			return err
 		}
 		if trigger == "scheduled" {
+			if plan.AutoAgentAnalyze {
+				if _, err = tx.Exec("UPDATE jobs SET analysis_user_id=(SELECT analysis_user_id FROM settings WHERE id=1),analysis_status='pending' WHERE id=?", id); err != nil {
+					return err
+				}
+			}
 			if _, err = tx.Exec("UPDATE settings SET schedule_last_run=? WHERE id=1", platform.Now()); err != nil {
 				return err
 			}

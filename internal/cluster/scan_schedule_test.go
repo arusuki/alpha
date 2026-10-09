@@ -57,7 +57,7 @@ func TestDistributeScanSchedule(t *testing.T) {
 	db2, s2 := scheduleWorker(t, f, b, "/second", false)
 	db3, _ := scheduleWorker(t, f, c, "/third", true)
 	before1, before2 := readScanSettings(t, db1), readScanSettings(t, db2)
-	plan := storage.Schedule{Mode: "calendar", Times: []string{"02:00", "14:30"}, Weekdays: []int{1, 3, 5}, Timezone: "Asia/Shanghai", RetainRecords: 7}
+	plan := storage.Schedule{Mode: "calendar", Times: []string{"02:00", "14:30"}, Weekdays: []int{1, 3, 5}, Timezone: "Asia/Shanghai", RetainRecords: 7, AutoAgentAnalyze: true}
 	send := func(ids []string) []scheduleResult {
 		t.Helper()
 		response := f.request(t, "POST", "/api/cluster/scan-schedule", map[string]any{"node_ids": ids, "schedule": plan})
@@ -80,6 +80,10 @@ func TestDistributeScanSchedule(t *testing.T) {
 		if !reflect.DeepEqual(pair[0].Value, pair[1].Value) || pair[1].Revision != pair[0].Revision+1 {
 			t.Fatalf("worker %d lost settings: %+v", i, pair)
 		}
+	}
+	var owner string
+	if err := db1.SQL.QueryRow("SELECT analysis_user_id FROM settings").Scan(&owner); err != nil || owner != f.user.ID {
+		t.Fatalf("analysis owner=%q: %v", owner, err)
 	}
 	// One offline worker and a conflicting edit must not prevent other writes.
 	s2.Close()
@@ -109,7 +113,7 @@ func TestDistributeScanScheduleValidationAndAuthorization(t *testing.T) {
 	id := strings.Repeat("a", 32)
 	db, _ := scheduleWorker(t, f, id, "/first", false)
 	before := readScanSettings(t, db)
-	plan := map[string]any{"schedule_mode": "calendar", "interval_minutes": 0, "schedule_times": []string{"02:00"}, "schedule_weekdays": []int{1}, "schedule_timezone": "UTC", "retain_records": 0}
+	plan := map[string]any{"schedule_mode": "calendar", "interval_minutes": 0, "schedule_times": []string{"02:00"}, "schedule_weekdays": []int{1}, "schedule_timezone": "UTC", "retain_records": 0, "auto_agent_analyze": false}
 	registryID := strings.Repeat("b", 32)
 	if _, err := f.db.SQL.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?,?)", registryID, "registry", "http://registry.invalid", strings.Repeat("s", 32), platform.Now(), "registry", ""); err != nil {
 		t.Fatal(err)
@@ -126,13 +130,13 @@ func TestDistributeScanScheduleValidationAndAuthorization(t *testing.T) {
 			requireStatus(t, f.request(t, "POST", "/api/cluster/scan-schedule", map[string]any{"node_ids": tc.ids, "schedule": plan}), tc.status)
 		})
 	}
-	for key, value := range map[string]any{"schedule_times": []string{"25:00"}, "schedule_timezone": "Local", "schedule_weekdays": []int{}, "retain_records": -1, "interval_minutes": 10081, "schedule_mode": "bad"} {
+	for key, value := range map[string]any{"schedule_times": []string{"25:00"}, "schedule_timezone": "Local", "schedule_weekdays": []int{}, "retain_records": -1, "interval_minutes": 10081, "schedule_mode": "bad", "auto_agent_analyze": "true"} {
 		original := plan[key]
 		plan[key] = value
 		requireStatus(t, f.request(t, "POST", "/api/cluster/scan-schedule", map[string]any{"node_ids": []string{id}, "schedule": plan}), 400)
 		plan[key] = original
 	}
-	for _, key := range []string{"retain_records", "schedule_times"} {
+	for _, key := range []string{"retain_records", "schedule_times", "auto_agent_analyze"} {
 		original := plan[key]
 		delete(plan, key)
 		requireStatus(t, f.request(t, "POST", "/api/cluster/scan-schedule", map[string]any{"node_ids": []string{id}, "schedule": plan}), 400)

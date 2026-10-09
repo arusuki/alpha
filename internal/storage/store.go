@@ -45,12 +45,12 @@ func (d *Store) config() (Settings, error) {
 	s.Value, err = parseConfig([]byte(raw))
 	return s, err
 }
-func (d *Store) saveConfig(c Config, revision int64, actor string) (Settings, error) {
+func (d *Store) saveConfig(c Config, revision int64, user platform.User) (Settings, error) {
 	if err := c.validate(); err != nil {
 		return Settings{}, err
 	}
 	err := d.Transaction(func(tx *sql.Tx) error {
-		result, err := tx.Exec("UPDATE settings SET value=?,revision=revision+1 WHERE id=1 AND revision=?", httpapi.JSONText(c), revision)
+		result, err := tx.Exec("UPDATE settings SET value=?,analysis_user_id=?,revision=revision+1 WHERE id=1 AND revision=?", httpapi.JSONText(c), user.ID, revision)
 		if err != nil {
 			return err
 		}
@@ -61,7 +61,7 @@ func (d *Store) saveConfig(c Config, revision int64, actor string) (Settings, er
 		if n == 0 {
 			return httpapi.NewError(409, "配置已被其他管理员修改，请重新载入后保存")
 		}
-		return platform.Audit(tx, actor, "settings.update", httpapi.JSONText(c))
+		return platform.Audit(tx, user.Username, "settings.update", httpapi.JSONText(c))
 	})
 	if err != nil {
 		return Settings{}, err
