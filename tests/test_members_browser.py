@@ -139,6 +139,57 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert page.locator('#membersBody img').count() == 0
                 assert '<img' in page.locator('#membersBody').inner_text()
                 assert '1 / 2' in page.locator('#memberInvitationsBody').inner_text()
+                # Reset from account management and verify actual session revocation.
+                old_session = public.post('/api/status/alice/login', data={'password': 'Member-password-123'}).json()['session_token']
+                page.locator(f'#membersBody [data-reset-member="{member_id}"]').click()
+                expect(page.locator('#memberPasswordDialog')).to_be_visible()
+                page.locator('#memberPassword').fill('Reset-password-456')
+                page.locator('#memberPasswordConfirm').fill('Different-password-456')
+                page.locator('#memberPasswordSubmit').click()
+                expect(page.locator('#memberPasswordError')).to_contain_text('两次输入')
+                page.locator('#memberPasswordConfirm').fill('Reset-password-456')
+                page.locator('#memberPasswordSubmit').click()
+                expect(page.locator('#memberPasswordStatus')).to_contain_text('密码重置完成')
+                expect(page.locator('#memberPassword')).to_have_value('')
+                expect(page.locator('#memberPasswordConfirm')).to_have_value('')
+                assert public.get('/api/status/alice', headers={'Authorization': 'Bearer ' + old_session}).status == 401
+                assert public.post('/api/status/alice/login', data={'password': 'Member-password-123'}).status == 401
+                assert public.post('/api/status/alice/login', data={'password': 'Reset-password-456'}).status == 200
+                page.locator('#memberPasswordCancel').click()
+                expect(page.locator('#memberPasswordDialog')).not_to_be_visible()
+                # The container list shares the reset dialog. Exercise partial failure
+                # and retry without real Docker containers or external nodes.
+                page.locator('.platform-nav [data-page="allocations"]').click()
+                page.set_viewport_size(dict(width=390, height=844))
+                reset_button = page.locator(f'#allocationRows [data-reset-member="{member_id}"]')
+                expect(reset_button).to_be_visible()
+                assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+                reset_button.click()
+                expect(page.locator('#memberPasswordDialog')).to_be_visible()
+                page.locator('#memberPassword').fill('Reset-password-789')
+                page.locator('#memberPasswordConfirm').fill('Reset-password-789')
+                page.route('**/api/members/' + member_id + '/password', lambda route: route.fulfill(
+                    content_type='application/json', body=json.dumps(dict(ok=False, account_reset=True, updated=1,
+                    nodes=[dict(node_name='GPU 02', ok=False, errors=['容器已停止，请启动后重试'])]))), times=1)
+                page.locator('#memberPasswordSubmit').click()
+                expect(page.locator('#memberPasswordStatus')).to_contain_text('账号密码已重置')
+                expect(page.locator('#memberPasswordError')).to_contain_text('GPU 02：容器已停止')
+                expect(page.locator('#memberPassword')).to_have_value('Reset-password-789')
+                expect(page.locator('#memberPasswordSubmit')).to_be_enabled()
+                page.locator('#memberPasswordSubmit').click()
+                expect(page.locator('#memberPasswordStatus')).to_contain_text('密码重置完成')
+                expect(page.locator('#memberPasswordError')).to_be_empty()
+                page.screenshot(path='/tmp/project-alpha-member-password-mobile.png', full_page=True)
+                page.locator('#memberPasswordCancel').click()
+                reset_button.click()
+                expect(page.locator('#memberPassword')).to_have_value('')
+                expect(page.locator('#memberPasswordStatus')).to_be_empty()
+                page.locator('#memberPassword').fill('Cancelled-password-123')
+                page.locator('#memberPasswordDialog').press('Escape')
+                expect(page.locator('#memberPassword')).to_have_value('')
+                page.set_viewport_size(dict(width=1440, height=1080))
+                page.locator('.platform-nav [data-page="members"]').click()
+                expect(page.locator('#membersRefresh')).to_be_enabled()
                 payload['username'] = 'bob'
                 assert public.post('/api/members/register', data=payload).status == 201
                 payload['username'] = 'charlie'

@@ -120,11 +120,20 @@ func (s *Store) Logout(token string) error {
 }
 
 func (s *Store) ChangePassword(id, old, password string) error {
-	if err := ValidatePassword(password); err != nil {
-		return err
-	}
 	if err := ValidatePassword(old); err != nil {
 		return httpapi.NewError(403, "当前密码错误")
+	}
+	return s.setPassword(id, old, password, id, false)
+}
+
+// ResetPassword is called only by the administrator's cluster reset operation.
+func (s *Store) ResetPassword(id, password, actor string) error {
+	return s.setPassword(id, "", password, actor, true)
+}
+
+func (s *Store) setPassword(id, old, password, actor string, reset bool) error {
+	if err := ValidatePassword(password); err != nil {
+		return err
 	}
 	hash, err := platform.PasswordHash(password, "")
 	if err != nil {
@@ -133,9 +142,12 @@ func (s *Store) ChangePassword(id, old, password string) error {
 	return s.Transaction(func(tx *sql.Tx) error {
 		var previous string
 		if err := tx.QueryRow("SELECT password_hash FROM members WHERE id=? AND status='active'", id).Scan(&previous); err != nil {
+			if err == sql.ErrNoRows {
+				return httpapi.NewError(404, "使用者不存在或已停用")
+			}
 			return err
 		}
-		if !platform.CheckPassword(old, previous) {
+		if !reset && !platform.CheckPassword(old, previous) {
 			return httpapi.NewError(403, "当前密码错误")
 		}
 		ciphertext, err := s.encryptPassword(tx, id, password)
@@ -148,6 +160,10 @@ func (s *Store) ChangePassword(id, old, password string) error {
 		if _, err := tx.Exec("DELETE FROM member_sessions WHERE member_id=?", id); err != nil {
 			return err
 		}
-		return platform.Audit(tx, id, "member.password.change", id)
+		action := "member.password.change"
+		if reset {
+			action = "member.password.reset"
+		}
+		return platform.Audit(tx, actor, action, id)
 	})
 }

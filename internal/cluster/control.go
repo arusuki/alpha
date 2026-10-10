@@ -199,6 +199,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if user.Role != "admin" {
 			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
 		}
+		if action == "password" {
+			return h.resetMemberPassword(w, r, id, user)
+		}
 		return h.dispatchMemberResource(w, r, id, action, true, user.Username)
 	}
 	if members.IsRoute(r.URL.Path) {

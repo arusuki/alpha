@@ -61,7 +61,11 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return h.permissions(w, r.WithContext(ctx), user, cfg)
 	}
 	if strings.HasPrefix(path, "/api/containers/members/") {
-		return h.memberOperation(w, r.WithContext(ctx), user, cfg, strings.TrimPrefix(path, "/api/containers/members/"))
+		id := strings.TrimPrefix(path, "/api/containers/members/")
+		if memberID, ok := strings.CutSuffix(id, "/password"); ok {
+			return h.resetMemberPassword(w, r.WithContext(ctx), user, memberID)
+		}
+		return h.memberOperation(w, r.WithContext(ctx), user, cfg, id)
 	}
 	if path == "/api/containers/settings" {
 		if user.Role != "admin" {

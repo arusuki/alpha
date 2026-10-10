@@ -103,3 +103,38 @@ func TestMemberPasswordStorageAndSessions(t *testing.T) {
 		t.Fatal("registration replaced missing encryption key")
 	}
 }
+
+func TestAdminResetPasswordTransactionRollback(t *testing.T) {
+	s := testStore(t)
+	if _, err := s.SaveSchema(exampleSchema(), "admin"); err != nil {
+		t.Fatal(err)
+	}
+	invitation, err := s.CreateInvitation("reset", 1, "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := validRegistration(invitation.Code)
+	member, err := s.RegisterWith(req, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.LoginStatus(req.Username, req.Password)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.SQL.Exec("CREATE TRIGGER fail_reset_audit BEFORE INSERT ON audit WHEN NEW.action='member.password.reset' BEGIN SELECT RAISE(ABORT,'audit unavailable'); END"); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.ResetPassword(member.ID, "New-password-123", "operator"); err == nil {
+		t.Fatal("reset without audit")
+	}
+	if _, err = s.SessionID(token); err != nil {
+		t.Fatal("failed reset revoked session", err)
+	}
+	if got, err := s.InitialPassword(member.ID); err != nil || got != req.Password {
+		t.Fatal("failed reset changed password", err)
+	}
+	if _, err = s.LoginStatus(req.Username, "New-password-123"); err == nil {
+		t.Fatal("failed reset changed login")
+	}
+}

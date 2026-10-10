@@ -177,7 +177,7 @@ function renderAllocations(){
   const regular=rows.filter(m=>m.username);
   const unassigned=rows.filter(m=>!m.username);
   const renderUser=m=>`<details class="allocation-user" data-owner="${esc(m.username)}" ${query||(expanded.get(m.username)??false)?'open':''}>
-    <summary><span class="allocation-avatar" aria-hidden="true">${esc(Array.from(m.username||'?')[0].toUpperCase())}</span><span class="allocation-identity"><strong>${esc(m.username||'未归属容器')}</strong>${!m.username?'<small>不计入使用者人数</small>':''}</span><span class="allocation-counts">${m.count} 个容器 · ${m.nodes.length} 个节点</span>${admin()&&m.registered&&m.id?`<button class="danger" data-delete-member="${esc(m.id)}">删除使用者</button>`:''}<span class="allocation-chevron" aria-hidden="true">›</span></summary>
+    <summary><span class="allocation-avatar" aria-hidden="true">${esc(Array.from(m.username||'?')[0].toUpperCase())}</span><span class="allocation-identity"><strong>${esc(m.username||'未归属容器')}</strong>${!m.username?'<small>不计入使用者人数</small>':''}</span><span class="allocation-counts">${m.count} 个容器 · ${m.nodes.length} 个节点</span>${admin()&&m.registered&&m.id?`<span class="allocation-account-actions"><button data-reset-member="${esc(m.id)}">重置密码</button><button class="danger" data-delete-member="${esc(m.id)}">删除使用者</button></span>`:''}<span class="allocation-chevron" aria-hidden="true">›</span></summary>
     <div class="allocation-content">${m.nodes.map(n=>`<section class="allocation-node"><h3><a data-open-node="${n.id}" href="/nodes/${n.id}/#containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>${esc(n.name)} <span aria-hidden="true">↗</span></a><small>${n.containers.length} 个容器</small></h3><div class="table-scroll"><table><thead><tr><th scope="col">容器 / ID</th><th scope="col">记录来源</th><th scope="col">扫描时状态</th></tr></thead><tbody>${n.containers.map(c=>`<tr><td><strong>${esc(c.name)}</strong><small class="sub mono">${esc(c.id)}</small></td><td><span class="resource-tag">${c.managed?'已接管':'扫描发现'}</span></td><td><span class="resource-tag" ${c.state==='running'?'data-tone="success"':''}>${esc(c.state||'尚无扫描状态')}</span><small class="sub">${esc(c.observed_at?new Date(c.observed_at).toLocaleString('zh-CN'):'')}</small></td></tr>`).join('')}</tbody></table></div></section>`).join('')||`<p class="empty">${data.partial?'已读取的节点中暂无该使用者的容器记录，其他节点尚未确认。':'暂无该使用者的容器记录。'}</p>`}</div></details>`;
   $('allocationRows').innerHTML=[...regular,...unassigned].map(renderUser).join('')||`<div class="cluster-empty"><h3>${query?'没有匹配的使用者或容器':'暂无使用者容器记录'}</h3><p>${query?'试试其他使用者、节点名称或容器 ID。':'节点接入并分配容器后，可在这里查看归属。'}</p></div>`;
 }
@@ -262,6 +262,8 @@ $('nodeUnavailableClose').addEventListener('click',()=>$('nodeUnavailableDialog'
 $('clusterNodes').addEventListener('click',openNode);
 $('allocationRows').addEventListener('click',openNode);
 $('allocationRows').addEventListener('click',event=>{
+  const reset=event.target.closest('[data-reset-member]');
+  if(reset&&admin()){event.preventDefault();event.stopPropagation();const member=state.data?.members.find(m=>m.id===reset.dataset.resetMember);if(member)window.MembersUI.resetPassword(member.id,member.username);return;}
   const button=event.target.closest('[data-delete-member]');if(!button||!admin())return;
   event.preventDefault();event.stopPropagation();
   const member=state.data?.members.find(m=>m.id===button.dataset.deleteMember);if(!member)return;

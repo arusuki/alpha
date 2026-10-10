@@ -1,11 +1,11 @@
 'use strict';
 (()=>{
-const state={schema:null,busy:false,epoch:0,deleting:null};
+const state={schema:null,busy:false,epoch:0,deleting:null,resetting:null};
 const admin=()=>platform.user?.role==='admin';
 function controls(){
   $('memberSchemaEditor').disabled=state.busy||!state.schema;
-  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm'])$(id).disabled=state.busy;
-  document.querySelectorAll('[data-delete-member],[data-revoke-invitation] button,[data-edit-invitation],[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
+  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm','memberPasswordSubmit','memberPasswordCancel','memberPassword','memberPasswordConfirm'])$(id).disabled=state.busy;
+  document.querySelectorAll('[data-reset-member],[data-delete-member],[data-revoke-invitation] button,[data-edit-invitation],[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
 }
 function fields(){
   return [...$('memberSchemaFields').querySelectorAll('[data-member-field]')].map(row=>{
@@ -29,7 +29,7 @@ function renderSchema(schema){
 }
 function changed(){ $('memberSchemaStatus').textContent='有未保存的修改';preview(fields()); }
 function renderMembers(members){
-  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td><td><button class="danger" data-delete-member="${esc(m.id)}" data-username="${esc(m.username)}">删除</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
+  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td><td><button data-reset-member="${esc(m.id)}" data-username="${esc(m.username)}">重置密码</button> <button class="danger" data-delete-member="${esc(m.id)}" data-username="${esc(m.username)}">删除</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
 
 }
 async function load(epoch,reloadSchema=false){
@@ -41,7 +41,7 @@ async function load(epoch,reloadSchema=false){
 async function task(fn){
   if(state.busy||!admin())return;
   const epoch=state.epoch;state.busy=true;controls();$('membersError').textContent='';
-  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$(state.deleting?'memberDeleteError':'membersError').textContent=error.message;}
+  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$(state.resetting?'memberPasswordError':state.deleting?'memberDeleteError':'membersError').textContent=error.message;}
   finally{if(epoch===state.epoch){state.busy=false;controls();}}
 }
 function clearCode(){ $('memberInvitationCode').value='';$('memberInvitationCopyStatus').textContent=''; }
@@ -52,9 +52,18 @@ window.MembersUI={
     state.deleting={id,username,onDeleted};$('memberDeleteForm').reset();$('memberDeleteError').textContent='';
     $('memberDeleteTitle').textContent='删除使用者 · '+username;$('memberDeleteDialog').showModal();$('memberDeleteConfirm').focus();
   },
+  resetPassword(id,username){
+    if(state.busy||!admin())return;
+    state.resetting={id,username};$('memberPasswordForm').reset();
+    $('memberPasswordError').textContent='';$('memberPasswordStatus').textContent='';
+    $('memberPasswordSubmit').hidden=false;$('memberPasswordFields').hidden=false;
+    $('memberPasswordCancel').textContent='取消';
+    $('memberPasswordTitle').textContent='重置密码 · '+username;
+    $('memberPasswordDialog').showModal();$('memberPassword').focus();
+  },
   invitationOptions(){return invitationPage(null,'/admin/member-invitations/select');},
   reset(){
-    state.epoch++;state.schema=null;state.busy=false;state.deleting=null;$('memberDeleteDialog').close();
+    state.epoch++;state.schema=null;state.busy=false;state.deleting=null;state.resetting=null;$('memberDeleteDialog').close();$('memberPasswordDialog').close();$('memberPasswordForm').reset();
     if($('memberInvitationDialog').open)$('memberInvitationDialog').close();clearCode();
     for(const id of ['membersBody','memberInvitationsPanel','memberSchemaFields','memberSchemaPreview'])$(id).innerHTML='';
     for(const id of ['membersError','membersStatus','memberSchemaStatus'])$(id).textContent='';
@@ -62,8 +71,34 @@ window.MembersUI={
   }
 };
 $('membersBody').addEventListener('click',event=>{
+  const reset=event.target.closest('[data-reset-member]');if(reset){window.MembersUI.resetPassword(reset.dataset.resetMember,reset.dataset.username);return;}
   const button=event.target.closest('[data-delete-member]');if(button)window.MembersUI.confirmDelete(button.dataset.deleteMember,button.dataset.username);
 });
+$('memberPasswordCancel').addEventListener('click',()=>$('memberPasswordDialog').close());
+$('memberPasswordDialog').addEventListener('cancel',event=>{if(state.busy)event.preventDefault();});
+$('memberPasswordDialog').addEventListener('close',()=>{state.resetting=null;$('memberPasswordForm').reset();});
+$('memberPasswordForm').addEventListener('submit',event=>{event.preventDefault();task(async epoch=>{
+  const target=state.resetting;if(!target)return;
+  $('memberPasswordError').textContent='';
+  const password=$('memberPassword').value;
+  if(password!==$('memberPasswordConfirm').value)throw Error('两次输入的密码不一致。');
+  const length=new TextEncoder().encode(password).length;
+  if(length<12||length>256||/[\x00\r\n:]/.test(password))throw Error('密码需为 12–256 字节，不能含换行、冒号或 NUL。');
+  $('memberPasswordStatus').textContent='正在重置账号与容器密码…';
+  let result;
+  try{result=await api(`/api/members/${target.id}/password`,{method:'POST',body:JSON.stringify({password})});}
+  catch(error){if(epoch===state.epoch)$('memberPasswordStatus').textContent='操作未确认完成；如请求中断，请使用相同密码重试。';throw error;}
+  if(epoch!==state.epoch)return;
+  if(!result.account_reset)throw Error('服务未确认账号密码已重置，请重试。');
+  if(!result.ok){
+    $('memberPasswordStatus').textContent=`账号密码已重置，旧登录会话已注销，已更新 ${result.updated} 个容器。请修复下列问题后使用相同密码重试。`;
+    $('memberPasswordError').textContent=(result.nodes||[]).filter(n=>!n.ok).map(n=>`${n.node_name}：${(n.errors||[]).join('；')}`).join('；');
+    return;
+  }
+  $('memberPasswordForm').reset();$('memberPasswordFields').hidden=true;$('memberPasswordSubmit').hidden=true;
+  $('memberPasswordCancel').textContent='关闭';
+  $('memberPasswordStatus').textContent=`密码重置完成：账号及 ${result.updated} 个容器已更新，旧登录会话已注销。`;
+});});
 $('memberDeleteCancel').addEventListener('click',()=>$('memberDeleteDialog').close());
 $('memberDeleteDialog').addEventListener('cancel',event=>{if(state.busy)event.preventDefault();});
 $('memberDeleteDialog').addEventListener('close',()=>{state.deleting=null;$('memberDeleteConfirm').value='';});
