@@ -132,8 +132,9 @@ func TestDockerContainerUpdate(t *testing.T) {
 			t.Fatalf("deployment changed: %+v", c)
 		}
 		// The persistent generated file must be usable by the next updater run.
-		if _, err = prepareContainers(ctx, db, stage, run, io.Discard); err != nil {
-			t.Fatalf("repeat preparation: %v", err)
+		repeated, err := prepareContainers(ctx, db, stage, run, io.Discard)
+		if err != nil || len(repeated.Updates) != 0 {
+			t.Fatalf("unchanged deployment scheduled again: %v, %v", repeated, err)
 		}
 		preserved, err := os.ReadFile(filepath.Join(data, "service-settings"))
 		if err != nil || !bytes.Equal(saved, preserved) {

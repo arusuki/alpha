@@ -40,7 +40,7 @@ DRAM 循环重启时，可在页面停止服务，也可直接修正参数并保
 
 ## 更新与数据库
 
-主程序与 Rootless 管理容器必须使用匹配的构建，管理接口提供 `bindings` 实时检查命令。新版 updater 会随 worker 更新同步已部署的节点服务容器，权限及恢复流程见[更新器说明](updater.md)。旧 updater 仅替换宿主机二进制，需要手工重新构建并部署 Rootless 镜像后再使用网页挂载管理；不支持该命令的管理服务会提示更新。已有 Rootless `bindings.json` 格式保持不变。
+主程序与 Rootless 管理容器必须使用匹配的构建，管理接口提供 `bindings` 实时检查命令。新版 updater 会随 worker 更新同步已部署的节点服务容器，主程序已是目标版本时也会继续检查容器；权限、启动补齐及恢复流程见[更新器说明](updater.md)。旧 updater 仅替换宿主机二进制，升级后的版本号不能证明容器已更新；需要用修复版 updater 同步同版本容器，或手工重新构建并部署 Rootless 镜像后再使用网页挂载管理。已有 Rootless `bindings.json` 格式保持不变。
 
 若出现 `Rootless 管理请求失败（400）：未知命令：bindings`，说明当前管理 socket 连接的 daemon 不支持挂载检查命令，并非残留配置导致。只更新主程序或宿主机的 client 二进制不会更新运行中的管理容器；需要从与主程序匹配的源码重新构建镜像并重建该服务容器。保留原部署的授权 GID、环境文件和 Compose override，在新源码目录执行：
 

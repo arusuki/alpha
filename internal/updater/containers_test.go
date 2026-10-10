@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -294,13 +296,31 @@ func TestRootlessUpdateVerifiesBindings(t *testing.T) {
 			labels := f.container["Config"].(map[string]any)["Labels"].(map[string]string)
 			labels["project-alpha.service"], labels["com.docker.compose.service"] = "rootless-docker", "rootless-docker"
 			u := containerUpdate{Name: "rootless-docker", Service: "rootless-docker", Project: "node-services", Running: true}
-			var probes []string
+			dir, err := os.MkdirTemp("/tmp", "sync-probe-")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer os.RemoveAll(dir)
+			listener, err := net.Listen("unix", filepath.Join(dir, "control.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			probes := make(chan string, 4)
+			server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct{ Args []string }
+				if r.Method != "POST" || r.URL.Path != "/_rootless/control" || json.NewDecoder(r.Body).Decode(&request) != nil || len(request.Args) != 1 {
+					t.Error("invalid control request")
+					w.WriteHeader(400)
+					return
+				}
+				probes <- request.Args[0]
+				fmt.Fprint(w, `{"output":"[]"}`)
+			})}
+			go server.Serve(listener)
+			defer server.Close()
+			f.container["Mounts"] = []any{map[string]any{"Type": "bind", "Source": dir, "Destination": "/run/rootless-docker"}}
 			run := func(ctx context.Context, endpoint string, args []string, input []byte) ([]byte, error) {
 				if args[0] == "compose" && !slices.Contains(args, "ps") {
-					return nil, nil
-				}
-				if args[0] == "exec" {
-					probes = append(probes, args[len(args)-1])
 					return nil, nil
 				}
 				return f.run(ctx, endpoint, args, input)
@@ -313,8 +333,12 @@ func TestRootlessUpdateVerifiesBindings(t *testing.T) {
 			if updated {
 				want = append(want, "bindings")
 			}
-			if !slices.Equal(probes, want) {
-				t.Fatal(probes, want)
+			var got []string
+			for len(probes) > 0 {
+				got = append(got, <-probes)
+			}
+			if !slices.Equal(got, want) {
+				t.Fatal(got, want)
 			}
 		})
 	}

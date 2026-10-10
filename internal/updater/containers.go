@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -64,6 +66,7 @@ func runDocker(ctx context.Context, endpoint string, args []string, input []byte
 
 type serviceInspection struct {
 	ID, Image, Name string
+	Mounts          []struct{ Type, Source, Destination string }
 	Config          struct {
 		Labels               map[string]string
 		Env, Cmd, Entrypoint []string
@@ -308,6 +311,10 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		if err != nil {
 			return nil, err
 		}
+		if bytes.Equal(before, after) {
+			fmt.Fprintf(out, "节点服务 %s 镜像及配置已一致，跳过重建。\n", image.Name)
+			continue
+		}
 		p.Updates = append(p.Updates, containerUpdate{Name: image.Name, Service: service, Project: project, ID: c.ID, Image: c.Image, NextImage: next, Before: before, After: after, Inspection: snapshot, Running: c.State.Running || c.State.Restarting})
 		fmt.Fprintf(out, "已准备节点服务镜像：%s\n", image.Name)
 	}
@@ -455,14 +462,14 @@ func (p *containerPlan) replace(ctx context.Context, run dockerCommand, u contai
 				// Verify the new manager's actual control protocol, not just a
 				// running container. Old-image rollback only requires status.
 				probe, cancel := context.WithTimeout(ctx, 5*time.Second)
-				_, err = run(probe, p.Endpoint, []string{"exec", c.ID, "/rootless-docker", "status"}, nil)
+				err = probeRootless(probe, c, "status")
 				cancel()
 				if err == nil {
 					if !updated {
 						return nil
 					}
 					probe, cancel = context.WithTimeout(ctx, 5*time.Second)
-					_, err = run(probe, p.Endpoint, []string{"exec", c.ID, "/rootless-docker", "bindings"}, nil)
+					err = probeRootless(probe, c, "bindings")
 					cancel()
 					if err == nil {
 						return nil
@@ -473,7 +480,7 @@ func (p *containerPlan) replace(ctx context.Context, run dockerCommand, u contai
 			stable = time.Now()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("%s did not remain running after replacement", u.Service)
+			return fmt.Errorf("%s did not become ready after replacement: %v", u.Service, err)
 		}
 		select {
 		case <-ctx.Done():
@@ -481,4 +488,43 @@ func (p *containerPlan) replace(ctx context.Context, run dockerCommand, u contai
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
+}
+
+// The manager enters the host mount namespace, so docker exec cannot rely on
+// the image's executable path. Probe the same host socket used by the worker.
+func probeRootless(ctx context.Context, c serviceInspection, command string) error {
+	socket := ""
+	for _, mount := range c.Mounts {
+		if mount.Type == "bind" && mount.Destination == "/run/rootless-docker" && filepath.IsAbs(mount.Source) {
+			socket = filepath.Join(mount.Source, "control.sock")
+		}
+	}
+	if socket == "" {
+		return errors.New("rootless management socket bind mount is missing")
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
+	}}
+	defer transport.CloseIdleConnections()
+	body, _ := json.Marshal(map[string]any{"args": []string{command}})
+	request, err := http.NewRequestWithContext(ctx, "POST", "http://rootless/_rootless/control", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Content-Type", "application/json")
+	response, err := (&http.Client{Transport: transport}).Do(request)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	var result struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&result); err != nil {
+		return err
+	}
+	if response.StatusCode != http.StatusOK || result.Error != "" {
+		return fmt.Errorf("rootless %s failed (%d): %s", command, response.StatusCode, result.Error)
+	}
+	return nil
 }

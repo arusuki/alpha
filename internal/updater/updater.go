@@ -297,8 +297,12 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		return fmt.Errorf("--services-only requires the installed version; use --tag %s", installed)
 	}
 	if next.compare(old) == 0 && !o.servicesOnly {
-		fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only；worker 同步同版本节点服务容器用 --services-only --tag "+installed+"。")
-		return nil
+		if o.role != "worker" {
+			fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only。")
+			return nil
+		}
+		o.servicesOnly = true
+		fmt.Fprintln(out, "主程序已是最新版本，继续检查并同步节点服务容器。")
 	}
 	if o.servicesOnly {
 		files = nil
@@ -368,6 +372,10 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		if err = containers.verify(ctx, db, o.docker); err != nil {
 			return err
 		}
+		if o.servicesOnly && len(containers.Updates) == 0 {
+			fmt.Fprintln(out, "节点服务已同步，无需停服或重建容器。")
+			return servicesCompleted(o.directory, r.Tag)
+		}
 	}
 	if o.prepare != nil {
 		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}, Containers: containers}
@@ -430,6 +438,11 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	}
 	if err = install(o.binDir, stage, files, backup, commit, out); err != nil {
 		return err
+	}
+	if o.role == "worker" {
+		if err = servicesCompleted(o.directory, r.Tag); err != nil {
+			return fmt.Errorf("服务容器已更新，但保存同步结果失败：%w", err)
+		}
 	}
 	fmt.Fprintf(out, "已更新至 %s；请按原配置启动 %s 服务。\n", r.Tag, o.role)
 	return nil

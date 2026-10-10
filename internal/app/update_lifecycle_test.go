@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,6 +19,78 @@ import (
 	"project-alpha/internal/updater"
 	"project-alpha/internal/updates"
 )
+
+func TestWorkerStartupReconcilesCurrentReleaseServices(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "data")
+	if err := os.Mkdir(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(root, "project-alpha")
+	build := exec.Command("go", "build", "-ldflags=-X project-alpha/internal/buildinfo.Version=v0.3.2", "-o", binary, "./cmd/project-alpha")
+	build.Dir = "../.."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v: %s", err, output)
+	}
+	helper := filepath.Join(root, "alpha-updater")
+	if err := os.WriteFile(helper, []byte("#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 3; fi\nexit 0\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	m, err := updates.New(directory, "worker", strings.Repeat("a", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Save(1, updates.Config{Command: helper, Repo: "arusuki/alpha", Automatic: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Receive(updates.Release{Delivery: "installed", Repo: "arusuki/alpha", Tag: "v0.3.2", Published: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	m.Close()
+	logfile, err := os.Create(filepath.Join(root, "worker.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logfile.Close()
+	cmd := exec.Command(binary, "serve", "--worker", "--data-dir", directory, "--port", "0", "--tetragon-socket", filepath.Join(root, "absent.sock"))
+	cmd.Env = append(os.Environ(), "PROJECT_ALPHA_WORKER_TOKEN="+strings.Repeat("u", 32))
+	cmd.Stdout = logfile
+	cmd.Stderr = logfile
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	defer cmd.Process.Kill()
+	completed := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		raw, _ := os.ReadFile(filepath.Join(directory, "update-result.json"))
+		var result updater.ServiceResult
+		if json.Unmarshal(raw, &result) == nil && result.State == "completed" {
+			completed = true
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatal("worker did not reconcile services on startup")
+	}
+	p, err := updater.ReadServicePlan(filepath.Join(directory, "update-service.json"))
+	if err != nil || !p.ServicesOnly || p.Tag != "v0.3.2" {
+		t.Fatal("wrong startup service plan", p, err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not stop")
+	}
+}
 
 func TestUpdaterHandoffReleasedLock(t *testing.T) {
 	directory := os.Getenv("ALPHA_TEST_HANDOFF_DIRECTORY")

@@ -504,6 +504,7 @@ func (m *Manager) trigger(tag string) error {
 		return httpapi.NewError(409, "上次更新需要人工恢复，请检查 .alpha-update-pending")
 	}
 	p := updater.ServicePlan{Format: 3, Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
+	p.ServicesOnly = m.role == "worker" && tag == buildinfo.Version
 	if r := m.state.Release; r != nil && r.Tag == tag && r.Repo == c.Repo && (!r.Prerelease || c.Prerelease) {
 		p.Published = true
 	}
@@ -529,7 +530,31 @@ func (m *Manager) Automatic() error {
 	if (m.role == "registry" && len(m.state.Outbox) > 0) || (m.role == "control" && !m.state.Forwarded) {
 		return nil
 	}
-	if !m.state.Config.Automatic || r == nil || m.state.Attempted == r.Tag || m.plan != nil {
+	if m.closed || !m.state.Config.Automatic || r == nil || m.plan != nil {
+		return nil
+	}
+	// Complete the independently versioned services after a binary-only upgrade.
+	// Persist the attempt before preparing, so failure never creates a restart loop.
+	if m.role == "worker" && r.Tag == buildinfo.Version {
+		attempted, err := updater.ServicesAttempted(m.directory, r.Tag)
+		if err != nil {
+			m.recordResult(m.resultPlan(r.Tag), err)
+			return err
+		}
+		if attempted {
+			return nil
+		}
+		if err := updater.MarkServicesAttempted(m.directory, r.Tag); err != nil {
+			m.recordResult(m.resultPlan(r.Tag), err)
+			return err
+		}
+		if err := m.trigger(r.Tag); err != nil {
+			m.recordResult(m.resultPlan(r.Tag), err)
+			return err
+		}
+		return nil
+	}
+	if m.state.Attempted == r.Tag {
 		return nil
 	}
 	if !updater.Newer(r.Tag, buildinfo.Version) {
