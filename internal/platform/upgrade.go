@@ -168,7 +168,7 @@ func upgradeDatabase(tx *sql.Tx, version int) error {
 		return fmt.Errorf("database upgrade integrity check failed: %s", integrity)
 	}
 	if err = Audit(tx, "alpha-updater", "database.upgrade", fmt.Sprintf("%d -> %d", version, DatabaseVersion)); err != nil {
-		return err
+		return fmt.Errorf("database upgrade audit failed; existing data preserved: %w", err)
 	}
 	_, err = tx.Exec(fmt.Sprintf("PRAGMA user_version=%d", DatabaseVersion))
 	return err

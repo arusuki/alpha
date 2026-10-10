@@ -25,15 +25,6 @@ func scheduledAnalysisOldDatabase(t *testing.T, role string, version int) *platf
 			t.Fatal(err)
 		}
 	}
-	if version >= 38 {
-		schema, err := os.ReadFile("testdata/v0.6.0/mihomo.sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err = db.SQL.Exec(string(schema)); err != nil {
-			t.Fatal(err)
-		}
-	}
 	if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +71,7 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{37, 38} {
+			for _, version := range []int{38} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := scheduledAnalysisOldDatabase(t, role, version)
 					for range 2 {
@@ -134,13 +125,13 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 		}
 		t.Run(entry+"/unsupported", func(t *testing.T) {
 			db := oldDatabase(t, "worker")
-			if _, err := db.SQL.Exec("PRAGMA user_version=36"); err != nil {
+			if _, err := db.SQL.Exec("PRAGMA user_version=37"); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 				t.Fatal("unsupported database accepted")
 			}
-			assertVersion(t, db, 36)
+			assertVersion(t, db, 37)
 		})
 	}
 }

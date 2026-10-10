@@ -36,16 +36,16 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		tables     []string
 		conflict   bool
 	}{
-		{"control", cluster.Initialize, 37, "", []string{"members", "member_invitations"}, false},
-		{"worker", app.Initialize, 37, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
-		{"registry", registry.Initialize, 37, "", []string{"registry_control", "registry_sessions"}, false},
-		{"control", cluster.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"members", "mihomo_runtime"}, true},
-		{"worker", app.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"managed_containers", "mihomo_runtime"}, true},
-		{"registry", registry.Initialize, 37, "CREATE TABLE mihomo_runtime(value TEXT); INSERT INTO mihomo_runtime VALUES('preserve')", []string{"registry_sessions", "mihomo_runtime"}, true},
+		{"control", cluster.Initialize, 38, "", []string{"members", "member_invitations"}, false},
+		{"worker", app.Initialize, 38, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"registry", registry.Initialize, 38, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"members", "mihomo_runtime"}, true},
+		{"worker", app.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"managed_containers", "mihomo_runtime"}, true},
+		{"registry", registry.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"registry_sessions", "mihomo_runtime"}, true},
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
 	// no expired schema fixtures or migrations are retained.
-	for _, version := range []int{1, 34, 35, 36, platform.DatabaseVersion + 1} {
+	for _, version := range []int{1, 34, 35, 36, 37, platform.DatabaseVersion + 1} {
 		for _, role := range []string{"control", "worker", "registry"} {
 			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
 			cases = append(cases, struct {
@@ -88,7 +88,7 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.role == "worker" && tc.version >= 37 {
+				if tc.role == "worker" && tc.version >= 38 {
 					_, err = db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.interval_minutes',30,'$.schedule_mode','interval'),schedule_last_run=100;
 INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
 INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
@@ -96,13 +96,8 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 						t.Fatal(err)
 					}
 				}
-				if tc.version >= 37 && tc.version < 38 {
-					if _, err = db.SQL.Exec("DROP TABLE mihomo_profiles; DROP TABLE mihomo_sync; DROP TABLE mihomo_runtime"); err != nil {
-						t.Fatal(err)
-					}
-				}
 
-				if tc.version >= 37 && tc.version < 39 {
+				if tc.version >= 38 && tc.version < 39 {
 					switch tc.role {
 					case "worker":
 						_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN analysis_user_id;
@@ -118,7 +113,7 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 					}
 				}
 
-				if tc.role == "worker" && tc.version >= 37 && tc.version < 40 {
+				if tc.role == "worker" && tc.version >= 38 && tc.version < 40 {
 					if _, err = db.SQL.Exec("DROP TRIGGER service_mount_owner; DROP TRIGGER service_mount_release; DROP TABLE node_service_mounts; DROP TABLE node_service_settings"); err != nil {
 						t.Fatal(err)
 					}

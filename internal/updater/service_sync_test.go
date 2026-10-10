@@ -47,7 +47,7 @@ func TestSameVersionWorkerPreparesAndUpdatesServices(t *testing.T) {
 	if f.container["Image"] != f.next {
 		t.Fatal("service image unchanged")
 	}
-	assertVersion(t, db, 37)
+	assertVersion(t, db, 38)
 	for _, file := range binaries("worker") {
 		raw, err := os.ReadFile(filepath.Join(dir, file.destination))
 		if err != nil || !bytes.Equal(raw, script(file.source, "v0.6.0")) {

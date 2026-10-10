@@ -31,7 +31,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 	if err != nil {
 		t.Fatal(err)
 	}
-	modules := []string{"platform"}
+	modules := []string{"platform", "mihomo"}
 	switch role {
 	case "control":
 		modules = append(modules, "agent", "members", "bastion", "tailscale", "cluster")
@@ -41,7 +41,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 		modules = append(modules, "registry")
 	}
 	for _, m := range modules {
-		b, e := os.ReadFile("testdata/v0.5.4/" + m + ".sql")
+		b, e := os.ReadFile("testdata/v0.6.0/" + m + ".sql")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -49,7 +49,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 			t.Fatal(m, e)
 		}
 	}
-	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=37", role); err != nil {
+	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=38", role); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = raw.Exec("INSERT INTO users VALUES('user','admin','existing-password-hash','admin',1,123)"); err != nil {
@@ -219,7 +219,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer backup.Close()
-				assertVersion(t, &platform.Database{SQL: backup}, 37)
+				assertVersion(t, &platform.Database{SQL: backup}, 38)
 			}
 			got, err := executableVersion(context.Background(), filepath.Join(dir, binaries(role)[0].destination), "project-alpha")
 			if err != nil || got != "v0.6.0" {
@@ -239,7 +239,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 	t.Run("migration failure restores binaries", func(t *testing.T) {
 		db := oldDatabase(t, "worker")
 		dir := t.TempDir()
-		if _, err := db.SQL.Exec("INSERT INTO owners VALUES('a','alice'),('b','bob'); CREATE TABLE mihomo_runtime(value TEXT)"); err != nil {
+		if _, err := db.SQL.Exec("INSERT INTO owners VALUES('a','alice'),('b','bob'); CREATE TABLE node_service_mounts(value TEXT)"); err != nil {
 			t.Fatal(err)
 		}
 		for _, f := range binaries("worker") {
@@ -249,7 +249,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "previous binaries restored") {
 			t.Fatal(err)
 		}
-		assertVersion(t, db, 37)
+		assertVersion(t, db, 38)
 		for _, f := range binaries("worker") {
 			b, _ := os.ReadFile(filepath.Join(dir, f.destination))
 			if !bytes.Equal(b, script(f.source, "v0.5.4")) {
@@ -283,7 +283,7 @@ func TestRejectedUpdatesPreserveFiles(t *testing.T) {
 			case "wrong-role":
 				o.role = "control"
 			case "unsupported":
-				if _, err := db.SQL.Exec("PRAGMA user_version=36"); err != nil {
+				if _, err := db.SQL.Exec("PRAGMA user_version=37"); err != nil {
 					t.Fatal(err)
 				}
 			case "pending":
@@ -302,9 +302,9 @@ func TestRejectedUpdatesPreserveFiles(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("expected rejection")
 			}
-			wantVersion := 37
+			wantVersion := 38
 			if scenario == "unsupported" {
-				wantVersion = 36
+				wantVersion = 37
 				if err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 					t.Fatalf("expected explicit unsupported version error: %v", err)
 				}

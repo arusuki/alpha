@@ -114,7 +114,7 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, db, payload := newDockerFixture(t)
 			syncDocker := useDockerProcessFixture(t, f.run)
-			oldSchema := 37
+			oldSchema := 38
 			if strings.HasPrefix(mode, "current-schema") {
 				if err := platform.UpgradeDatabase(db.Directory, "worker", nil, nil); err != nil {
 					t.Fatal(err)
@@ -123,13 +123,13 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 				f.container["State"] = map[string]any{"Status": "running", "Running": true}
 			}
 			if mode == "unsupported" {
-				if _, err := db.SQL.Exec("PRAGMA user_version=36"); err != nil {
+				if _, err := db.SQL.Exec("PRAGMA user_version=37"); err != nil {
 					t.Fatal(err)
 				}
-				oldSchema = 36
+				oldSchema = 37
 			}
 			if mode == "database-failure" || mode == "migration-rollback-failure" {
-				if _, err := db.SQL.Exec("CREATE TABLE mihomo_runtime(sentinel TEXT); INSERT INTO mihomo_runtime VALUES('preserved')"); err != nil {
+				if _, err := db.SQL.Exec("CREATE TABLE node_service_mounts(sentinel TEXT); INSERT INTO node_service_mounts VALUES('preserved')"); err != nil {
 					t.Fatal(err)
 				}
 			}

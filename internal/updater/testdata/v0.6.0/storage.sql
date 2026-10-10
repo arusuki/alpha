@@ -1,4 +1,4 @@
--- Source: v0.5.4 internal/storage/schema.sql (schema 37).
+-- Source: v0.6.0 internal/storage/schema.sql (schema 38).
 CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1, schedule_last_run REAL NOT NULL DEFAULT 0);
 CREATE TABLE jobs (
  id TEXT PRIMARY KEY, status TEXT NOT NULL, trigger TEXT NOT NULL, created_by TEXT NOT NULL,

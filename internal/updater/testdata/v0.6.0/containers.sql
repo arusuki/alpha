@@ -1,4 +1,4 @@
--- Source: v0.5.4 internal/containers/schema.sql (schema 37).
+-- Source: v0.6.0 internal/containers/schema.sql (schema 38).
 CREATE TABLE container_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
 CREATE TABLE managed_containers (
  id TEXT PRIMARY KEY, endpoint TEXT NOT NULL, daemon TEXT NOT NULL, name TEXT NOT NULL,

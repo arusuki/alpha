@@ -36,7 +36,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 			if prepared == nil {
 				t.Fatal("missing staged release")
 			}
-			assertVersion(t, db, 37)
+			assertVersion(t, db, 38)
 			got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 			if string(got) != string(original) {
 				t.Fatal("preparation replaced running program")
@@ -61,7 +61,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "checksum changed") {
 					t.Fatal(err)
 				}
-				assertVersion(t, db, 37)
+				assertVersion(t, db, 38)
 				got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 				if string(got) != string(original) {
 					t.Fatal("tampered update modified installation")

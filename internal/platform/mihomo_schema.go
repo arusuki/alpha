@@ -8,7 +8,7 @@ import (
 //go:embed mihomo.sql
 var mihomoSchema string
 
-// The same schema is installed for every role and by the standalone updater.
+// New databases of every role include this schema.
 func installMihomo(tx *sql.Tx) error {
 	_, err := tx.Exec(mihomoSchema)
 	return err
