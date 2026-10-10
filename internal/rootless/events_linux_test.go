@@ -114,7 +114,9 @@ func TestEventStreamsOwnRecoveryAndStopWithLastBinding(t *testing.T) {
 		store: bindingStore{Version: 1, Bindings: []binding{{Host: host, Container: "target", Name: "target", SocketPath: "/sock",
 			BootID: "boot", PID: 42, StartedAt: "first", Receipt: &mountReceipt{Namespace: 1, Device: uint64(source.Dev), Inode: source.Ino, MountID: "2"}}}}}
 	t.Cleanup(func() { cancel(); d.wg.Wait() })
+	d.mu.Lock()
 	d.syncWatchers()
+	d.mu.Unlock()
 	rootless := receive(t, rootlessStreams)
 	target := receive(t, hostStreams)
 	if fmt.Sprint(rootless.filters["type"]) != "[daemon]" || fmt.Sprint(target.filters["event"]) != "[start unpause die destroy]" {
