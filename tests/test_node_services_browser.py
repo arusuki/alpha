@@ -11,6 +11,7 @@ for name in ['tetragon','dram-bw','rootless-docker']:
 services[1]['config']['dram']=dict(backend='amd-rome',interval_us=100000,peak_gbps=0)
 calls=[]
 mode='normal'
+mount_error=''
 class Handler(NodeHandler):
     def do_GET(self):
         if self.control_request():return
@@ -19,7 +20,7 @@ class Handler(NodeHandler):
         if path=='/api/state':return self.respond(dict(jobs=[],directory_jobs=[],latest_id=None,active=None,interval_minutes=0))
         if path=='/api/containers/services':
             if mode=='offline':return self.respond(dict(error='节点离线'),503)
-            return self.respond(dict(services=services,candidates=[dict(owner='alice',name='<training>&alice',container_id='a'*64,initialized=True)],mounts=[dict(owner='alice',name='<training>&alice',container_id='a'*64,socket_path='/var/run/docker.sock',state='mounted',error='')] if 'alice' in services[2]['config']['users'] else [],external_mounts=[],mount_error=''))
+            return self.respond(dict(services=services,candidates=[dict(owner='alice',name='<training>&alice',container_id='a'*64,initialized=True)],mounts=[dict(owner='alice',name='<training>&alice',container_id='a'*64,socket_path='/var/run/docker.sock',state='unknown' if mount_error else 'mounted',error='')] if 'alice' in services[2]['config']['users'] else [],external_mounts=[],mount_error=mount_error))
         self.serve_asset()
     def mutate(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -74,6 +75,9 @@ try:
             expect(page.locator('#servicesMessage')).to_have_text('操作已完成。')
             expect(root.locator('.service-state')).to_have_text(state)
         page.locator('[data-service-select="dram-bw"]').click()
+        mount_error='Rootless 管理服务不支持 bindings 命令，请使用与主程序匹配的源码重新构建并部署 rootless-docker 服务'
+        page.locator('#servicesRefresh').click()
+        expect(page.locator('#serviceMountsHint')).to_have_text(mount_error)
         expect(page.locator('#serviceMountPanel')).to_be_hidden()
         dram=page.locator('[data-service="dram-bw"]')
         dram.locator('[name=interval_us]').fill('250000')
@@ -103,6 +107,8 @@ try:
         expect(dram.locator('.service-state')).to_have_text('运行中')
         capture_preview(page, '/tmp/alpha-node-services-dram.png')
         page.locator('[data-service-select="rootless-docker"]').click()
+        expect(page.locator('#serviceMountsHint')).to_be_visible()
+        expect(page.locator('#serviceMountsHint')).to_have_text(mount_error)
         mode='failure' 
         root.get_by_role('button',name='停止',exact=True).click()
         expect(page.locator('#servicesError')).to_contain_text('挂载撤销失败')

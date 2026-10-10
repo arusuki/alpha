@@ -72,6 +72,8 @@ type Manager struct {
 	ready, closed                   bool
 	prepareCancel                   context.CancelFunc
 	prepareDone                     chan struct{}
+	reportError                     string
+	reportFailedAt                  time.Time
 }
 
 var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
@@ -290,14 +292,52 @@ func (m *Manager) health() map[string]any {
 		}
 	}
 	var result updater.ServiceResult
+	detail := m.state.Error
 	if m.plan == nil {
 		if raw, err := os.ReadFile(filepath.Join(m.directory, "update-result.json")); err == nil {
-			if json.Unmarshal(raw, &result) == nil {
+			if json.Unmarshal(raw, &result) == nil && result.Valid() {
+				if result.Finished.After(m.reportFailedAt) {
+					m.reportError = ""
+				}
 				status = result.State
+				detail = result.Error
+				if result.State == "completed" && m.reportError == "" && m.state.Error != "" {
+					s := m.state
+					s.Error = ""
+					if err := m.commit(s); err != nil {
+						log.Printf("清理更新失败标记: %v", err)
+					}
+				}
+			} else {
+				result = updater.ServiceResult{}
+				status = "failed"
+				detail = "更新结果文件无效，请检查 update-result.json 和 update.log"
 			}
+		} else if !os.IsNotExist(err) {
+			status = "failed"
+			detail = "读取更新结果失败：" + err.Error()
+		}
+		if m.reportError != "" {
+			status = "failed"
+			detail = m.reportError
+		}
+		if detail != "" {
+			status = "failed"
+		}
+	} else {
+		detail = ""
+	}
+	var recovery *updater.RecoveryInstructions
+	if status == "failed" {
+		r := m.resultPlan(m.state.Attempted).Recovery()
+		recovery = &r
+		if result.Recovery != nil {
+			recovery = result.Recovery
+			// The recovery marker can be created or resolved after the result.
+			recovery.RefreshPending()
 		}
 	}
-	return map[string]any{"management_protocol": Protocol, "id": m.id, "mode": m.role, "version": buildinfo.Version, "healthy": true, "update_state": status, "release": m.state.Release, "error": m.state.Error, "result": result, "pending_deliveries": len(m.state.Outbox), "delivery_error": m.state.DeliveryError}
+	return map[string]any{"management_protocol": Protocol, "id": m.id, "mode": m.role, "version": buildinfo.Version, "healthy": true, "update_state": status, "release": m.state.Release, "error": detail, "result": result, "recovery": recovery, "pending_deliveries": len(m.state.Outbox), "delivery_error": m.state.DeliveryError}
 }
 func (m *Manager) Health() map[string]any { m.mu.Lock(); defer m.mu.Unlock(); return m.health() }
 func (m *Manager) Pending() *Release {
@@ -391,7 +431,46 @@ func (m *Manager) Receive(r Release) error {
 	s.Error = ""
 	return m.commit(s)
 }
-func (m *Manager) Trigger(tag string) error { m.mu.Lock(); defer m.mu.Unlock(); return m.trigger(tag) }
+func (m *Manager) resultPlan(tag string) updater.ServicePlan {
+	c := m.state.Config
+	return updater.ServicePlan{Format: 3, Command: c.Command, Executable: m.executable, Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
+}
+
+func (m *Manager) recordResult(p updater.ServicePlan, err error) {
+	result := p.Result(err)
+	if err != nil {
+		file, e := os.OpenFile(filepath.Join(m.directory, "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if e == nil {
+			_, e = fmt.Fprintf(file, "%s %s\n", result.Finished.Format(time.RFC3339), result.Error)
+			file.Close()
+		}
+		if e != nil {
+			result.Error += fmt.Sprintf("; 保存更新日志失败：%v", e)
+		}
+	}
+	s := m.state
+	s.Error = result.Error
+	m.reportError = ""
+	if e := updater.WriteJSON(filepath.Join(m.directory, "update-result.json"), result); e != nil {
+		m.reportError = fmt.Sprintf("%s; 保存更新结果失败：%v", result.Error, e)
+		m.reportFailedAt = result.Finished
+		s.Error = m.reportError
+	}
+	if e := m.commit(s); e != nil {
+		m.state.Error = s.Error
+		log.Printf("保存更新状态失败: %v", e)
+	}
+}
+
+func (m *Manager) Trigger(tag string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	err := m.trigger(tag)
+	if err != nil && m.plan == nil && !m.closed {
+		m.recordResult(m.resultPlan(tag), err)
+	}
+	return err
+}
 func (m *Manager) trigger(tag string) error {
 	if m.closed {
 		return httpapi.NewError(503, "服务正在关闭")
@@ -418,13 +497,13 @@ func (m *Manager) trigger(tag string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	output, e := exec.CommandContext(ctx, c.Command, "--service-protocol").Output()
-	if e != nil || strings.TrimSpace(string(output)) != "2" {
-		return httpapi.NewError(409, "更新器不支持后台下载协议 v2，请先安装新版 alpha-updater")
+	if e != nil || strings.TrimSpace(string(output)) != "3" {
+		return httpapi.NewError(409, "更新器不支持容器更新协议 v3，请先安装新版 alpha-updater")
 	}
 	if _, e = os.Stat(filepath.Join(filepath.Dir(m.executable), ".alpha-update-pending")); !os.IsNotExist(e) {
 		return httpapi.NewError(409, "上次更新需要人工恢复，请检查 .alpha-update-pending")
 	}
-	p := updater.ServicePlan{Format: 2, Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
+	p := updater.ServicePlan{Format: 3, Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
 	if r := m.state.Release; r != nil && r.Tag == tag && r.Repo == c.Repo && (!r.Prerelease || c.Prerelease) {
 		p.Published = true
 	}
@@ -462,10 +541,7 @@ func (m *Manager) Automatic() error {
 		return err
 	}
 	if err := m.trigger(r.Tag); err != nil {
-		s.Error = err.Error()
-		if e := m.commit(s); e != nil {
-			return e
-		}
+		m.recordResult(m.resultPlan(r.Tag), err)
 		return err
 	}
 	return nil
@@ -545,19 +621,5 @@ func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done c
 		return
 	}
 	m.plan = nil
-	result := updater.ServiceResult{State: "completed", Finished: time.Now().UTC()}
-	s := m.state
-	if err != nil {
-		result.State = "failed"
-		result.Error = err.Error()
-		s.Error = err.Error()
-	}
-	if e := updater.WriteJSON(filepath.Join(m.directory, "update-result.json"), result); e != nil {
-		s.Error = fmt.Sprintf("%s; 保存更新结果失败: %v", s.Error, e)
-		log.Print(s.Error)
-	}
-	if e := m.commit(s); e != nil {
-		m.state.Error = s.Error
-		log.Printf("保存更新状态失败: %v", e)
-	}
+	m.recordResult(p, err)
 }

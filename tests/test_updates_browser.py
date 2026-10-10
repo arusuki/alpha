@@ -7,6 +7,7 @@ from playwright.sync_api import sync_playwright, expect
 node = 'e' * 32
 writes = []
 shared_token = ''
+offline = False
 
 def token_settings():
     return dict(revision=configs['control']['revision'], has_token=bool(shared_token), has_environment_token=False)
@@ -27,7 +28,10 @@ class Handler(BrowserHandler):
         if self.path == '/api/updates/targets':
             return self.respond(dict(nodes=[dict(id=node, name='公网入口', kind='registry', url='https://registry.example')]))
         if self.path.startswith('/api/updates/'):
-            return self.respond(configs[self.path.split('/')[3]])
+            if offline:
+                return self.respond(dict(error='节点暂时离线'), 503)
+            config = configs[self.path.split('/')[3]]
+            return self.respond(config['health'] if self.path.endswith('/health') else config)
         self.serve_asset()
 
     def do_PUT(self):
@@ -108,13 +112,57 @@ try:
         page.locator('#updateNow').click()
         expect(page.locator('#updateStatus')).to_contain_text('更新已接受')
         assert writes[-1][0] == f'/api/updates/{node}/update'
+        # The existing application poll reports failures without reloading settings
+        # or overwriting unsaved edits, and treats server text as plain text.
+        retry = "'/opt/alpha dir/alpha-updater' '--role' 'registry' '--data-dir' '/data/node' '--tag' 'v0.8.0-rc2'"
+        failure = dict(mode='registry', version='v0.3.2', healthy=True, update_state='failed',
+            error='Docker socket permission denied <script>throw Error("injected")</script>',
+            delivery_error='下游通知未确认', recovery=dict(command=retry,
+            note='修复问题后，在目标节点使用原账号停止主程序并重试。',
+            log_path='/data/node/update.log', pending_path='/opt/alpha dir/.alpha-update-pending', required=True))
+        configs[node]['health'] = failure
+        page.locator('#updateProxy').fill('http://127.0.0.1:8900')
+        expect(page.locator('#updateHealth')).to_contain_text('上次更新失败', timeout=15000)
+        expect(page.locator('#updateFailure')).to_contain_text('Docker socket permission denied <script>')
+        expect(page.locator('#updateDeliveryError')).to_contain_text('下游通知未确认')
+        expect(page.locator('#updateRecovery')).to_be_visible()
+        expect(page.locator('#updateRetryCommand')).to_have_value(retry)
+        expect(page.locator('#updateLogPath')).to_contain_text('/data/node/update.log')
+        expect(page.locator('#updatePendingPath')).to_be_visible()
+        expect(page.locator('#updateProxy')).to_have_value('http://127.0.0.1:8900')
+        expect(page.locator('#updateStatus')).to_have_text('')
+        offline = True
+        page.evaluate('UpdatesUI.refreshHealth()')
+        expect(page.locator('#updateConnectionError')).to_contain_text('节点暂时离线')
+        expect(page.locator('#updateRetryCommand')).to_have_value(retry)
+        offline = False
         page.screenshot(path='/tmp/project-alpha-updates-desktop.png', full_page=True)
         page.set_viewport_size(dict(width=390, height=844))
         assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), 'mobile overflow'
         page.screenshot(path='/tmp/project-alpha-updates-mobile.png', full_page=True)
+        configs[node]['health'] = dict(mode='registry', version='v0.8.0-rc2', healthy=True,
+            update_state='completed', error='', recovery=None, delivery_error='下游通知未确认',
+            result=dict(state='completed', finished_at='2026-10-10T12:00:00Z'))
+        page.evaluate('UpdatesUI.refreshHealth()')
+        expect(page.locator('#updateHealth')).to_contain_text('上次更新完成')
+        expect(page.locator('#updateFailure')).to_have_text('')
+        expect(page.locator('#updateError')).to_have_text('')
+        expect(page.locator('#updateConnectionError')).to_have_text('')
+        expect(page.locator('#updateRecovery')).to_be_hidden()
+        expect(page.locator('#updateRetryCommand')).to_have_value('')
+        expect(page.locator('#updateProxy')).to_have_value('http://127.0.0.1:8900')
+        expect(page.locator('#updateDeliveryError')).to_contain_text('下游通知未确认')
+        # Changing targets must not display the previous node's failure or command.
+        configs[node]['health'] = failure
+        page.evaluate('UpdatesUI.refreshHealth()')
+        expect(page.locator('#updateRecovery')).to_be_visible()
+        page.locator('#updateTarget').select_option('control')
+        expect(page.locator('#updateHealth')).to_contain_text('control')
+        expect(page.locator('#updateRecovery')).to_be_hidden()
+        expect(page.locator('#updateFailure')).to_have_text('')
         assert not errors, errors
         browser.close()
-    print('Update settings browser checks passed: target routing, proxy, automatic updates, write-only shared token and secret, central token rotation and clearing, update action and mobile layout.')
+    print('Update settings browser checks passed: target routing, settings, secrets, automatic failure reports, retry instructions, offline status, successful recovery, preserved drafts and mobile layout.')
 finally:
     server.shutdown()
     server.server_close()

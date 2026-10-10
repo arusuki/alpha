@@ -24,11 +24,21 @@ import (
 type options struct {
 	role, directory, binDir, repo, proxy, tag string
 	check, prerelease, databaseOnly           bool
+	servicesOnly                              bool
 	published                                 bool
 	prepare                                   func(*PreparedUpdate) error
 	prepared                                  *PreparedUpdate
+	docker                                    dockerCommand
 }
 type binary struct{ source, destination string }
+
+func releaseFiles(role string) []binary {
+	files := binaries(role)
+	if role == "worker" {
+		files = append(files, binary{"dram-bwd", ""}, binary{serviceManifest, ""})
+	}
+	return files
+}
 
 func binaries(role string) []binary {
 	result := []binary{{"project-alpha", "project-alpha"}}
@@ -43,7 +53,7 @@ func binaries(role string) []binary {
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 1 && args[0] == "--service-protocol" {
-		fmt.Fprintln(out, "2")
+		fmt.Fprintln(out, "3")
 		return nil
 	}
 	if len(args) == 2 && args[0] == "_prepare" {
@@ -77,9 +87,10 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	p.BoolVar(&o.check, "check", false, "仅查询最新版本和更新计划，不下载或修改文件")
 	p.BoolVar(&o.prerelease, "prerelease", false, "包括预发布，按发布时间查询最新 release")
 	p.BoolVar(&o.databaseOnly, "database-only", false, "离线备份并原地升级数据库，不更新二进制")
+	p.BoolVar(&o.servicesOnly, "services-only", false, "仅同步 worker 已部署的节点服务容器，目标 tag 必须与已安装主程序一致")
 	showVersion := p.Bool("version", false, "显示更新器版本")
 	p.Usage = func() {
-		fmt.Fprintf(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n离线数据库升级：alpha-updater --database-only --data-dir DIR\n目标数据库版本：%d；支持范围由构建时的 Git tag 升级窗口决定。\n先停止使用这些文件的服务，以可写入数据和二进制目录的账号运行；不自动启动/停止服务。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。\n", platform.DatabaseVersion)
+		fmt.Fprintf(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n离线数据库升级：alpha-updater --database-only --data-dir DIR\n目标数据库版本：%d；支持范围由构建时的 Git tag 升级窗口决定。\n先停止使用这些文件的主程序，以可写入数据和二进制目录的账号运行。worker 更新包含已部署的节点服务容器，要求 Docker socket 权限和 Compose；不调用 sudo。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。\n", platform.DatabaseVersion)
 		p.PrintDefaults()
 	}
 	if err := p.Parse(args); err != nil {
@@ -109,6 +120,9 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	if o.databaseOnly && (o.check || o.role == "share-node") {
 		return fmt.Errorf("--database-only cannot be combined with --check or share-node")
 	}
+	if o.servicesOnly && o.databaseOnly {
+		return fmt.Errorf("--services-only cannot be combined with --database-only")
+	}
 	if o.role == "share-node" && o.directory != "" {
 		return fmt.Errorf("share-node has no platform database; omit --data-dir and PROJECT_ALPHA_DATA_DIR")
 	}
@@ -135,7 +149,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return runConfigured(ctx, o, out)
+	return reportCLI(o, out, func(writer io.Writer) error { return runConfigured(ctx, o, writer) })
 }
 
 func runConfigured(ctx context.Context, o options, out io.Writer) error {
@@ -171,6 +185,9 @@ func runConfigured(ctx context.Context, o options, out io.Writer) error {
 }
 
 func run(ctx context.Context, o options, g github, out io.Writer) error {
+	if o.docker == nil {
+		o.docker = runDocker
+	}
 	var db *platform.Database
 	var lock *os.File
 	var schema int
@@ -213,6 +230,9 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "数据库已原地升级：%d → %d\n", schema, platform.DatabaseVersion)
 		return nil
+	}
+	if o.servicesOnly && o.role != "worker" {
+		return fmt.Errorf("--services-only requires the worker role")
 	}
 	// Serialize installations even when roles use distinct data directories.
 	if !o.check {
@@ -273,12 +293,21 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	if next.compare(old) < 0 {
 		return fmt.Errorf("refusing downgrade from %s to %s", installed, r.Tag)
 	}
-	if next.compare(old) == 0 {
-		fmt.Fprintln(out, "已是最新版本。若仅需升级数据库，请使用对应版本的 alpha-updater --database-only。")
+	if o.servicesOnly && next.compare(old) != 0 {
+		return fmt.Errorf("--services-only requires the installed version; use --tag %s", installed)
+	}
+	if next.compare(old) == 0 && !o.servicesOnly {
+		fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only；worker 同步同版本节点服务容器用 --services-only --tag "+installed+"。")
 		return nil
+	}
+	if o.servicesOnly {
+		files = nil
 	}
 	for _, f := range files {
 		fmt.Fprintf(out, "更新：%s\n", filepath.Join(o.binDir, f.destination))
+	}
+	if o.role == "worker" {
+		fmt.Fprintln(out, "更新已部署的节点服务容器：Tetragon、DRAM、Rootless Docker；保留部署参数和启停状态。")
 	}
 	if o.check {
 		return nil
@@ -287,7 +316,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	keepStage := false
 	if o.prepared != nil {
 		stage = o.prepared.Stage
-		if err := o.prepared.verify(binaries(o.role)); err != nil {
+		if err := o.prepared.verify(releaseFiles(o.role)); err != nil {
 			return err
 		}
 	} else {
@@ -300,8 +329,9 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 				os.RemoveAll(stage)
 			}
 		}()
-		names := make([]string, len(files))
-		for i, f := range files {
+		payload := releaseFiles(o.role)
+		names := make([]string, len(payload))
+		for i, f := range payload {
 			names[i] = f.source
 		}
 		if err = g.download(ctx, r, stage, runtime.GOARCH, names); err != nil {
@@ -322,9 +352,26 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			return fmt.Errorf("rootless-docker cannot run: %w: %s", e, b)
 		}
 	}
+	var containers *containerPlan
+	if o.role == "worker" {
+		if o.prepared != nil {
+			containers = o.prepared.Containers
+			if containers == nil {
+				return fmt.Errorf("prepared worker update has no container plan; prepare again")
+			}
+		} else {
+			containers, err = prepareContainers(ctx, db, stage, o.docker, out)
+			if err != nil {
+				return err
+			}
+		}
+		if err = containers.verify(ctx, db, o.docker); err != nil {
+			return err
+		}
+	}
 	if o.prepare != nil {
-		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}}
-		for _, f := range files {
+		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}, Containers: containers}
+		for _, f := range releaseFiles(o.role) {
 			hash, err := fileHash(filepath.Join(stage, f.source))
 			if err != nil {
 				return err
@@ -339,14 +386,14 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		return nil
 	}
 	backup := ""
-	if db != nil {
+	if db != nil && !o.servicesOnly {
 		backup, err = backupDatabase(db, out)
 		if err != nil {
 			return err
 		}
 	}
 	migrate := func() error {
-		if db == nil {
+		if db == nil || o.servicesOnly {
 			return nil
 		}
 		cmd := exec.CommandContext(ctx, filepath.Join(o.binDir, "alpha-updater"), "_migrate", o.role, o.directory)
@@ -365,7 +412,23 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 		return nil
 	}
-	if err = install(o.binDir, stage, files, backup, migrate, out); err != nil {
+	commit := func() error {
+		if containers == nil {
+			return migrate()
+		}
+		rollback, err := containers.apply(ctx, o.binDir, o.docker, out)
+		if err != nil {
+			return err
+		}
+		if err = migrate(); err != nil {
+			if errors.Is(err, errMigrationUncertain) {
+				return err
+			}
+			return errors.Join(err, rollback())
+		}
+		return nil
+	}
+	if err = install(o.binDir, stage, files, backup, commit, out); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "已更新至 %s；请按原配置启动 %s 服务。\n", r.Tag, o.role)

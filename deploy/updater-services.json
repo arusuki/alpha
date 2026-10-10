@@ -1,0 +1,20 @@
+{
+  "services": [
+    {
+      "name": "tetragon",
+      "image": "quay.io/cilium/tetragon:v1.7.0"
+    },
+    {
+      "name": "dram-bw",
+      "binary": "dram-bwd",
+      "dockerfile": "FROM scratch\nCOPY dram-bwd /usr/local/bin/dram-bwd\nWORKDIR /run/dram-bw\nLABEL project-alpha.dram-settings=\"1\"\nENTRYPOINT [\"/usr/local/bin/dram-bwd\",\"--settings\",\"/run/dram-bw/service-settings\"]\n",
+      "entrypoint": ["/usr/local/bin/dram-bwd", "--settings", "/run/dram-bw/service-settings"]
+    },
+    {
+      "name": "rootless-docker",
+      "binary": "rootless-docker",
+      "dockerfile": "FROM scratch\nCOPY rootless-docker /rootless-docker\nENTRYPOINT [\"/rootless-docker\"]\nCMD [\"daemon\",\"--host-namespaces\"]\n",
+      "entrypoint": ["/rootless-docker"]
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 'use strict';
 (()=>{
-let epoch=0,tokenEpoch=0,revision=null,tokenRevision=null,busy=false;
+let epoch=0,tokenEpoch=0,revision=null,tokenRevision=null,busy=false,refreshing=false,lastState='';
 const admin=()=>platform.user?.role==='admin';
 const target=()=>$('updateTarget').value;
 const endpoint=action=>`/api/updates/${target()}/${action}`;
@@ -15,12 +15,35 @@ function renderHealth(h){
  const states={idle:'等待更新',downloading:'正在后台下载并校验，服务正常运行',restarting:'正在停止服务并启动更新器',completed:'上次更新完成',failed:'上次更新失败'};
  $('updateHealth').textContent=`${h.mode} · ${h.version} · ${h.healthy?'在线':'不可用'} · ${states[h.update_state]||h.update_state}`;
  $('updateRelease').textContent=h.release?`最近通知：${h.release.tag} · ${h.release.repo} · ${new Date(h.release.published_at).toLocaleString()}`:'尚未收到 release 通知';
- $('updateError').textContent=h.delivery_error||h.error||h.result?.error||'';
+ $('updateFailure').textContent=h.update_state==='failed'?(h.error||h.result?.error||'更新失败，请检查日志'):'';
+ $('updateDeliveryError').textContent=h.delivery_error?`版本通知失败：${h.delivery_error}`:'';
+ $('updateConnectionError').textContent='';
+ const recovery=h.update_state==='failed'?h.recovery:null;
+ $('updateRecovery').hidden=!recovery;
+ $('updateRecoveryNote').textContent=recovery?.note||'';
+ $('updateRetryCommand').value=recovery?.command||'';
+ $('updateLogPath').textContent=recovery?`完整日志：${recovery.log_path}`:'';
+ $('updatePendingPath').hidden=!recovery?.required;
+ $('updatePendingPath').textContent=recovery?.required?`需要先完成人工恢复，请检查：${recovery.pending_path}`:'';
+ if(h.update_state!==lastState&&['failed','completed'].includes(h.update_state))$('updateStatus').textContent='';
+ if(h.update_state!==lastState&&h.update_state==='completed')$('updateError').textContent='';
+ lastState=h.update_state;
  if(h.pending_deliveries)$('updateRelease').textContent+=` · ${h.pending_deliveries} 条通知等待下游确认`;
+}
+function clearHealth(){
+ lastState='';$('updateRecovery').hidden=true;$('updateRetryCommand').value='';
+ for(const id of ['updateHealth','updateRelease','updateFailure','updateDeliveryError','updateConnectionError','updateRecoveryNote','updateLogPath','updatePendingPath'])$(id).textContent='';
+}
+async function refreshHealth(){
+ if(!admin()||busy||refreshing||platform.page!=='update-settings'||!target())return;
+ const seq=epoch;refreshing=true;
+ try{const h=await api(endpoint('health'));if(seq===epoch&&platform.page==='update-settings'){renderHealth(h);if(revision===null)await load();}}
+ catch(e){if(seq===epoch&&platform.page==='update-settings')$('updateConnectionError').textContent=`暂时无法读取目标节点的更新状态：${e.message}。已有报告保留，恢复通信后自动刷新。`;}
+ finally{refreshing=false;}
 }
 async function load(){
  if(!admin()||busy||!target())return;
- const seq=++epoch;revision=null;fields(true);$('updateError').textContent='';$('updateStatus').textContent='正在读取…';
+ const seq=++epoch;revision=null;fields(true);clearHealth();$('updateError').textContent='';$('updateStatus').textContent='正在读取…';
  try{
   const data=await api(endpoint('settings'));
   if(seq!==epoch)return;
@@ -64,10 +87,10 @@ $('updateTokenForm').addEventListener('submit',async e=>{
 $('updateNow').addEventListener('click',async()=>{
  if(!admin()||busy||revision===null)return;
  const seq=epoch;busy=true;fields(true);$('updateError').textContent='';
- try{await api(endpoint('update'),{method:'POST',body:'{}'});if(seq!==epoch)return;$('updateStatus').textContent='更新已接受，正在后台下载和校验。准备成功后服务会短暂断开并重启；下载失败不影响服务。请刷新查看状态。';}
+ try{await api(endpoint('update'),{method:'POST',body:'{}'});if(seq!==epoch)return;lastState='downloading';$('updateStatus').textContent='更新已接受，正在后台下载和校验。准备成功后服务会短暂断开并重启；下载失败不影响服务。状态将自动刷新。';}
  catch(e){if(seq===epoch)$('updateError').textContent=e.message;}
- finally{if(seq===epoch){busy=false;fields(false);}}
+ finally{if(seq===epoch){busy=false;fields(false);await refreshHealth();}}
 });
 $('updateTarget').addEventListener('change',load);$('updateReload').addEventListener('click',async()=>{await load();await loadToken();});
-window.UpdatesUI={open,reset(){epoch++;tokenEpoch++;revision=null;tokenRevision=null;busy=false;$('updateToken').value='';$('updateClearToken').checked=false;$('updateTokenState').textContent='';$('updateTokenStatus').textContent='';$('updateTokenError').textContent='';$('updateTokenFields').disabled=true;$('updateSecret').value='';$('updateProxy').value='';$('updateStatus').textContent='';$('updateError').textContent='';fields(true);}};
+window.UpdatesUI={open,refreshHealth,reset(){epoch++;tokenEpoch++;revision=null;tokenRevision=null;busy=false;clearHealth();$('updateToken').value='';$('updateClearToken').checked=false;$('updateTokenState').textContent='';$('updateTokenStatus').textContent='';$('updateTokenError').textContent='';$('updateTokenFields').disabled=true;$('updateSecret').value='';$('updateProxy').value='';$('updateStatus').textContent='';$('updateError').textContent='';fields(true);}};
 })();

@@ -259,7 +259,11 @@ func extract(src io.Reader, directory, packageName string, names []string) error
 	tr := tar.NewReader(io.LimitReader(gz, 1<<30))
 	wanted := map[string]string{}
 	for _, name := range names {
-		wanted[packageName+"/bin/"+name] = name
+		if name == serviceManifest {
+			wanted[packageName+"/deploy/updater-services.json"] = name
+		} else {
+			wanted[packageName+"/bin/"+name] = name
+		}
 	}
 	seen := map[string]bool{}
 	for {
@@ -308,7 +312,7 @@ func extract(src io.Reader, directory, packageName string, names []string) error
 	}
 	for _, name := range names {
 		if !seen[name] {
-			return fmt.Errorf("release package missing bin/%s", name)
+			return fmt.Errorf("release package missing required file %s; use a release containing the node service update payload for worker updates", name)
 		}
 	}
 	return nil

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,17 +23,31 @@ type ServicePlan struct {
 	Arguments                                              []string
 	Prerelease                                             bool
 	Published                                              bool
+	ServicesOnly                                           bool
 }
 type ServiceResult struct {
-	State    string    `json:"state"`
-	Error    string    `json:"error,omitempty"`
-	Finished time.Time `json:"finished_at"`
+	State    string                `json:"state"`
+	Error    string                `json:"error,omitempty"`
+	Finished time.Time             `json:"finished_at"`
+	Recovery *RecoveryInstructions `json:"recovery,omitempty"`
 }
 type Handoff struct{ Command, PlanPath string }
 
 func (h *Handoff) Error() string { return "service update requested" }
 func (h *Handoff) Exec() error {
-	return syscall.Exec(h.Command, []string{h.Command, "_service", h.PlanPath}, os.Environ())
+	err := syscall.Exec(h.Command, []string{h.Command, "_service", h.PlanPath}, os.Environ())
+	return recordServiceFailure(h.PlanPath, fmt.Errorf("启动更新器失败：%w", err))
+}
+
+func recordServiceFailure(path string, err error) error {
+	result := ServiceResult{State: "failed", Error: err.Error(), Finished: time.Now().UTC()}
+	if p, e := ReadServicePlan(path); e == nil {
+		result = p.Result(err)
+	}
+	if e := WriteJSON(filepath.Join(filepath.Dir(path), "update-result.json"), result); e != nil {
+		return errors.Join(err, fmt.Errorf("保存更新结果失败：%w", e))
+	}
+	return err
 }
 func ValidateTag(tag string) error { _, err := supportedVersion(tag); return err }
 func Newer(next, current string) bool {
@@ -81,6 +96,7 @@ type PreparedUpdate struct {
 	Stage, Tag, Installed string
 	Schema                int
 	Hashes                map[string]string
+	Containers            *containerPlan
 }
 
 func (p *PreparedUpdate) validate(binDir string) error {
@@ -97,8 +113,8 @@ func fileHash(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-		return "", fmt.Errorf("expected a regular executable: %s", path)
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("expected a regular file: %s", path)
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -140,7 +156,7 @@ func ReadServicePlan(path string) (*ServicePlan, error) {
 	if err = json.Unmarshal(raw, &p); err != nil {
 		return nil, err
 	}
-	if p.Format != 2 {
+	if p.Format != 3 {
 		return nil, fmt.Errorf("unsupported service update plan format; prepare a new update")
 	}
 	if !filepath.IsAbs(p.Directory) || !filepath.IsAbs(p.Executable) || filepath.Base(p.Executable) != "project-alpha" || !repoPattern.MatchString(p.Repo) {
@@ -167,7 +183,7 @@ func ReadServicePlan(path string) (*ServicePlan, error) {
 	return &p, nil
 }
 func (p *ServicePlan) options() options {
-	return options{role: p.Role, directory: p.Directory, binDir: filepath.Dir(p.Executable), repo: p.Repo, proxy: p.Proxy, tag: p.Tag, prerelease: p.Prerelease, published: p.Published}
+	return options{role: p.Role, directory: p.Directory, binDir: filepath.Dir(p.Executable), repo: p.Repo, proxy: p.Proxy, tag: p.Tag, prerelease: p.Prerelease, published: p.Published, servicesOnly: p.ServicesOnly}
 }
 func prepareService(ctx context.Context, path string, out io.Writer) error {
 	p, err := ReadServicePlan(path)
@@ -196,28 +212,26 @@ func prepareService(ctx context.Context, path string, out io.Writer) error {
 func service(ctx context.Context, path string, out io.Writer) error {
 	p, err := ReadServicePlan(path)
 	if err != nil {
-		return err
+		return recordServiceFailure(path, err)
 	}
 	log, err := os.OpenFile(filepath.Join(p.Directory, "update.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
-		return err
+		return recordServiceFailure(path, fmt.Errorf("打开更新日志失败：%w", err))
 	}
 	defer log.Close()
 	writer := io.MultiWriter(out, log)
 	o := p.options()
 	o.prepared = p.Prepared
-	result := ServiceResult{State: "completed"}
 	if p.Prepared == nil {
 		err = fmt.Errorf("service update has no prepared release; refusing network access after shutdown")
 	} else {
 		err = runConfigured(ctx, o, writer)
 	}
+	err = errors.Join(err, ctx.Err())
+	result := p.Result(err)
 	if err != nil {
-		result.State = "failed"
-		result.Error = err.Error()
-		fmt.Fprintln(writer, err)
+		fmt.Fprintln(writer, result.Error)
 	}
-	result.Finished = time.Now().UTC()
 	if e := WriteJSON(filepath.Join(p.Directory, "update-result.json"), result); e != nil {
 		return e
 	}
@@ -227,5 +241,12 @@ func service(ctx context.Context, path string, out io.Writer) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	return syscall.Exec(p.Executable, append([]string{p.Executable}, p.Arguments...), os.Environ())
+	restartErr := syscall.Exec(p.Executable, append([]string{p.Executable}, p.Arguments...), os.Environ())
+	err = errors.Join(err, fmt.Errorf("更新后启动主程序失败：%w", restartErr))
+	result = p.Result(err)
+	fmt.Fprintln(writer, result.Error)
+	if e := WriteJSON(filepath.Join(p.Directory, "update-result.json"), result); e != nil {
+		return fmt.Errorf("%v; 保存更新结果失败：%w", err, e)
+	}
+	return err
 }

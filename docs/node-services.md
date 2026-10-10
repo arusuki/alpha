@@ -40,6 +40,16 @@ DRAM 循环重启时，可在页面停止服务，也可直接修正参数并保
 
 ## 更新与数据库
 
-主程序与 Rootless 管理容器必须使用此次实现对应的构建，管理接口新增 `bindings` 实时检查命令。重新构建并部署 Rootless 镜像后再使用网页挂载管理；不支持该命令的管理服务会提示更新。已有 Rootless `bindings.json` 格式保持不变。
+主程序与 Rootless 管理容器必须使用匹配的构建，管理接口提供 `bindings` 实时检查命令。新版 updater 会随 worker 更新同步已部署的节点服务容器，权限及恢复流程见[更新器说明](updater.md)。旧 updater 仅替换宿主机二进制，需要手工重新构建并部署 Rootless 镜像后再使用网页挂载管理；不支持该命令的管理服务会提示更新。已有 Rootless `bindings.json` 格式保持不变。
+
+若出现 `Rootless 管理请求失败（400）：未知命令：bindings`，说明当前管理 socket 连接的 daemon 不支持挂载检查命令，并非残留配置导致。只更新主程序或宿主机的 client 二进制不会更新运行中的管理容器；需要从与主程序匹配的源码重新构建镜像并重建该服务容器。保留原部署的授权 GID、环境文件和 Compose override，在新源码目录执行：
+
+```bash
+ROOTLESS_DOCKER_GID=<原授权组数字GID> docker compose -f deploy/services.yaml up -d --build --no-deps rootless-docker
+```
+
+使用额外环境文件或 override 的部署需在命令中沿用对应的 `--env-file`、`-f` 参数，并确认 override 未指向旧源码的构建目录。更新会短暂停止 rootless 引擎，已有账户、Docker 数据及关联记录保留；不需要删除 `bindings.json` 或清空 worker 数据库。更新后使用新版 `rootless-docker bindings`（自定义管理路径时设置 `ROOTLESS_CONTROL_SOCKET=<路径>`）验证，再回到网页刷新并重试应用挂载。若仍报告未知命令，检查所配置的管理 socket 是否连接到了其他旧 daemon。
+
+DRAM 配置不使用 Rootless 挂载接口；“修改容器归属、删除或解除接管前，请先取消服务挂载”是 Rootless 页面固定说明，不表示发现了残留记录。
 
 服务配置和网页挂载操作记录保存在 worker 数据库。初始化和 updater 使用同一 schema；control、registry 同步推进数据库版本但不创建 worker 专用表。升级前停止使用该数据目录的服务，执行 `alpha-updater --database-only --data-dir <原目录>`。目标版本查看 `alpha-updater --help`，支持窗口查看生成的 `internal/platform/upgrade_history.json`；完整操作见 [更新器说明](updater.md)。升级保留已有容器记录、使用者、密钥、服务重启策略和挂载授权；已有 DRAM 服务配置原地补齐采集参数默认值。

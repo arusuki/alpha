@@ -35,7 +35,7 @@ func TestServiceFailureRestartsAndRecoveryMarkerStopsRestart(t *testing.T) {
 				os.WriteFile(filepath.Join(bin, ".alpha-update-pending"), []byte("recovery required"), 0600)
 			}
 			plan := filepath.Join(db.Directory, "update-service.json")
-			if err := WriteJSON(plan, ServicePlan{Format: 2, Directory: db.Directory, Executable: exe, Role: "registry", Repo: "arusuki/alpha", Arguments: []string{"serve", "--registry", "--data-dir", db.Directory}}); err != nil {
+			if err := WriteJSON(plan, ServicePlan{Format: 3, Directory: db.Directory, Executable: exe, Role: "registry", Repo: "arusuki/alpha", Arguments: []string{"serve", "--registry", "--data-dir", db.Directory}}); err != nil {
 				t.Fatal(err)
 			}
 			child := exec.Command(os.Args[0], "-test.run=^TestServiceUpdateProcess$")

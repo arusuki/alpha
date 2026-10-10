@@ -501,7 +501,7 @@ func TestInvalidFormatPreservesFile(t *testing.T) {
 
 func prepareHelperScript() string {
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
-	return "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 2; exit 0; fi\nALPHA_TEST_PREPARE_PLAN=\"$2\" exec " + quote(os.Args[0]) + " -test.run=^TestUpdatePrepareProcess$\n"
+	return "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 3; exit 0; fi\nALPHA_TEST_PREPARE_PLAN=\"$2\" exec " + quote(os.Args[0]) + " -test.run=^TestUpdatePrepareProcess$\n"
 }
 func waitFile(t *testing.T, path string) {
 	t.Helper()

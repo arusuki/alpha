@@ -85,7 +85,7 @@ git push origin v0.7.2
 
 带连字符的标签（例如 `v0.7.0-rc2`）标记为预发布。失败后可在 Actions 重跑；已有 Release 的同名附件会被替换。分支推送、PR 和手动运行只生成 Artifacts，不发布 Release。使用仓库内置的 `GITHUB_TOKEN`，无需额外配置 Secret。
 
-`project-alpha_*.tar.gz` 包含 `bin/project-alpha`、`bin/rootless-docker`、`bin/alpha-updater`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
+`project-alpha_*.tar.gz` 包含 `bin/project-alpha`、`bin/rootless-docker`、`bin/dram-bwd`、`bin/alpha-updater`、`README.md`、`docs/`、`deploy/` 和记录版本、提交、架构及 Go 版本的 `BUILD_INFO`。网页资源已嵌入主程序，无需另行构建前端。
 
 工作流逐个发现 `ctools/*/Makefile` 并执行 `make release`，将每个工具的压缩包作为独立附件上传。例如 `ctools-dram-bw_<标签>_linux_amd64.tar.gz` 包含 daemon、server 脚本、命令行客户端、静态/动态库和公开头文件。所有压缩包均计入 `SHA256SUMS`，也包含在对应架构的 Actions Artifacts 中。
 
@@ -135,6 +135,6 @@ make -C ctools/dram-bw -j test
 
 前端测试需要 Node.js 20+，无需安装 npm 依赖。浏览器回归和 Docker 集成测试的运行方式见 [开发与验证](development.md#验证)。
 
-**0.8.0-rc2** 预发布新增节点服务网页管理、按使用者授权的 Rootless Docker socket 持久挂载，以及 DRAM 采集参数配置。已有数据库在生成的 tag 升级窗口内原地升级；镜像更新要求见[节点服务管理](node-services.md)。
+**0.8.0-rc3** 预发布将已部署节点服务容器纳入 updater，支持失败回滚及同版本服务同步；总控更新设置显示失败报告与手动重试命令，并在更新成功后清除旧失败提示。已有部署升级步骤见[更新器说明](updater.md)和[节点服务管理](node-services.md)。本次不引入数据库变更，保留生成的 tag 升级窗口。
 
 当前正式版为 **0.7.2**，仍在持续开发。1.0 发布前，数据库、配置、API 和快照格式可能变化。[alpha-updater](updater.md) 按角色更新本机程序并原地升级数据库，支持范围以构建生成的 tag 升级窗口为准；其他旧格式不匹配时使用新数据目录，保留已有数据。[数据保存与备份说明](operations.md#配置与数据)。

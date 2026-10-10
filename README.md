@@ -86,7 +86,7 @@ After all checks and both architecture builds pass, a `v*` tag push creates a Gi
 
 Tags containing a hyphen, such as `v0.7.0-rc2`, are marked as prereleases. Failed runs can be rerun from Actions; assets with matching names are replaced if the Release already exists. Branch, pull request, and manual runs only produce Artifacts. The workflow uses the repository's built-in `GITHUB_TOKEN` and needs no additional Secret.
 
-Each `project-alpha_*.tar.gz` archive contains `bin/project-alpha`, `bin/rootless-docker`, `bin/alpha-updater`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
+Each `project-alpha_*.tar.gz` archive contains `bin/project-alpha`, `bin/rootless-docker`, `bin/dram-bwd`, `bin/alpha-updater`, `README.md`, `docs/`, `deploy/`, and `BUILD_INFO` recording the version, commit, architecture, and Go version. Web assets are embedded in the main binary.
 
 The workflow runs `make release` for each `ctools/*/Makefile` and uploads its archive separately. For example, `ctools-dram-bw_<tag>_linux_amd64.tar.gz` includes the daemon, server script, command-line client, static/shared libraries, and public header. All archives are included in `SHA256SUMS` and the per-architecture Actions artifacts.
 
@@ -142,6 +142,6 @@ make -C ctools/dram-bw -j test
 
 Frontend tests require Node.js 20+ and have no npm dependencies. See [development and verification](docs/development.md#验证) for browser regression tests and Docker integration tests.
 
-The **0.8.0-rc2** prerelease adds web controls for node services, persistent Rootless Docker socket access by member, and configurable DRAM collection parameters. Existing databases are upgraded in place within the generated tagged upgrade window. See [node service management](docs/node-services.md) for deployment requirements.
+The **0.8.0-rc3** prerelease adds updater support for deployed node service containers, including rollback and same-version service synchronization. The control's update settings now show failure reports and manual retry commands, and clear old failures after successful updates. See [updater instructions](docs/updater.md) and [node service management](docs/node-services.md) for upgrading existing deployments. This release introduces no database schema changes and retains the generated tagged upgrade window.
 
 The current stable release is **0.7.2**, and the project is under active development. Before 1.0, database, configuration, API, and snapshot formats may change. [alpha-updater](docs/updater.md) updates local release binaries and upgrades databases in place, within the generated tagged upgrade window. Other incompatible formats require a new data directory; existing data is preserved. See [data storage and backups](docs/operations.md#配置与数据).

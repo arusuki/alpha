@@ -185,7 +185,11 @@ func callRootless(ctx context.Context, socket string, args []string) (string, er
 		return "", err
 	}
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("Rootless 管理请求失败（%d）：%s", resp.StatusCode, strings.TrimSpace(string(raw)))
+		detail := strings.TrimSpace(string(raw))
+		if resp.StatusCode == http.StatusBadRequest && len(args) > 0 && detail == "未知命令："+args[0] {
+			return "", fmt.Errorf("Rootless 管理服务不支持 %s 命令，请使用与主程序匹配的源码重新构建并部署 rootless-docker 服务；同时确认管理 socket %s 指向更新后的服务。已有挂载记录已保留，无需清空配置。原始错误（%d）：%s", args[0], socket, resp.StatusCode, detail)
+		}
+		return "", fmt.Errorf("Rootless 管理请求失败（%d）：%s", resp.StatusCode, detail)
 	}
 	var result struct {
 		Output string `json:"output"`

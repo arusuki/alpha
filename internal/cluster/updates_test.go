@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,13 +17,15 @@ import (
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
+	"project-alpha/internal/updater"
 	"project-alpha/internal/updates"
 )
 
 func TestMismatchedBusinessProtocolKeepsHealthAndUpdates(t *testing.T) {
 	f := setup(t)
 	id := strings.Repeat("b", 32)
-	m, err := updates.New(t.TempDir(), "worker", id)
+	directory := t.TempDir()
+	m, err := updates.New(directory, "worker", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +85,24 @@ func TestMismatchedBusinessProtocolKeepsHealthAndUpdates(t *testing.T) {
 	health, _ := json.Marshal(m.Health())
 	if !strings.Contains(string(health), "v0.8.0") {
 		t.Fatal("worker did not receive release")
+	}
+	// Failure and recovery details use the stable management route even when
+	// the business protocol is incompatible. A CLI success replaces the report.
+	if err := m.Trigger("v0.8.0"); err == nil {
+		t.Fatal("missing updater accepted")
+	}
+	r = f.request(t, "GET", "/api/updates/"+id+"/health", nil)
+	requireStatus(t, r, 200)
+	if !strings.Contains(r.Body.String(), `"update_state":"failed"`) || !strings.Contains(r.Body.String(), "--data-dir") || !strings.Contains(r.Body.String(), "--tag") {
+		t.Fatalf("missing remote failure report: %s", r.Body.String())
+	}
+	if err := updater.WriteJSON(filepath.Join(directory, "update-result.json"), (updater.ServicePlan{}).Result(nil)); err != nil {
+		t.Fatal(err)
+	}
+	r = f.request(t, "GET", "/api/updates/"+id+"/health", nil)
+	requireStatus(t, r, 200)
+	if !strings.Contains(r.Body.String(), `"update_state":"completed"`) || !strings.Contains(r.Body.String(), `"recovery":null`) || strings.Contains(r.Body.String(), `"state":"failed"`) {
+		t.Fatalf("remote failure not cleared: %s", r.Body.String())
 	}
 }
 func TestUpdateEndpointsRequireAdminAndCSRF(t *testing.T) {

@@ -55,6 +55,11 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 	if _, err = raw.Exec("INSERT INTO users VALUES('user','admin','existing-password-hash','admin',1,123)"); err != nil {
 		t.Fatal(err)
 	}
+	if role == "worker" {
+		if _, err = raw.Exec(`INSERT INTO container_settings VALUES(1,'{"endpoint":"unix:///test/docker.sock"}')`); err != nil {
+			t.Fatal(err)
+		}
+	}
 	t.Cleanup(func() { raw.Close() })
 	return &platform.Database{SQL: raw, Directory: dir}
 }
@@ -103,11 +108,17 @@ func makeArchive(t *testing.T, entries map[string][]byte) []byte {
 }
 func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	t.Helper()
+	manifest, err := os.ReadFile("../../deploy/updater-services.json")
+	if err != nil {
+		t.Fatal(err)
+	}
 	packageName := "project-alpha_v0.6.0_linux_" + runtime.GOARCH
 	archive := makeArchive(t, map[string][]byte{
-		packageName + "/bin/project-alpha":   script("project-alpha", "v0.6.0"),
-		packageName + "/bin/alpha-updater":   target,
-		packageName + "/bin/rootless-docker": script("rootless-docker", "v0.6.0"),
+		packageName + "/bin/project-alpha":            script("project-alpha", "v0.6.0"),
+		packageName + "/bin/alpha-updater":            target,
+		packageName + "/bin/rootless-docker":          script("rootless-docker", "v0.6.0"),
+		packageName + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
+		packageName + "/deploy/updater-services.json": manifest,
 	})
 	hash := sha256.Sum256(archive)
 	if badHash {
@@ -146,7 +157,7 @@ func TestReleaseUpdateFromV054(t *testing.T) {
 	for _, role := range []string{"control", "worker", "registry", "share-node"} {
 		t.Run(role, func(t *testing.T) {
 			dir := t.TempDir()
-			o := options{role: role, binDir: dir, repo: "arusuki/alpha"}
+			o := options{role: role, binDir: dir, repo: "arusuki/alpha", docker: noDeployedServices}
 			var db *platform.Database
 			if role != "share-node" {
 				db = oldDatabase(t, role)
@@ -233,7 +244,7 @@ func TestReleaseUpdateFromV054(t *testing.T) {
 		for _, f := range binaries("worker") {
 			writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.5.4"))
 		}
-		err := run(context.Background(), options{role: "worker", directory: db.Directory, binDir: dir}, g, io.Discard)
+		err := run(context.Background(), options{role: "worker", directory: db.Directory, binDir: dir, docker: noDeployedServices}, g, io.Discard)
 		if err == nil || !strings.Contains(err.Error(), "previous binaries restored") {
 			t.Fatal(err)
 		}

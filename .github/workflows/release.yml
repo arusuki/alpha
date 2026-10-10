@@ -54,6 +54,8 @@ jobs:
         run: go test -race ./...
       - name: Go vet
         run: go vet ./...
+      - name: Updater container update and rollback
+        run: ALPHA_UPDATER_DOCKER_TEST=1 go test ./internal/updater -run '^TestDockerContainerUpdate$' -count=1 -v
       - name: Frontend tests
         run: |
           for test in tests/test_*.js; do
@@ -126,7 +128,16 @@ jobs:
           stage="$RUNNER_TEMP/$package"
           mkdir -p "$stage/bin" release
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/project-alpha" ./cmd/project-alpha
-          go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
+          # Offline scratch image contexts need no compiler or image download on workers.
+          make -C ctools/dram-bw -j2 BUILD="$RUNNER_TEMP/dram-static" LDFLAGS=-static "$RUNNER_TEMP/dram-static/dram-bwd"
+          cp "$RUNNER_TEMP/dram-static/dram-bwd" "$stage/bin/dram-bwd"
+          for binary in rootless-docker dram-bwd; do
+            if readelf -l "$stage/bin/$binary" | grep -q INTERP; then
+              echo "::error::$binary must be static for the node service image"
+              exit 1
+            fi
+          done
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/alpha-updater" ./cmd/alpha-updater
           check_glibc() {
             local binary="$1" required
@@ -154,6 +165,7 @@ jobs:
           [[ "$binary_version" == "project-alpha $version (commit ${GITHUB_SHA:0:12}, "* ]]
           printf '%s\n' "$binary_version"
           "$RUNNER_TEMP/package-check/$package/bin/rootless-docker" --help
+          "$RUNNER_TEMP/package-check/$package/bin/dram-bwd" --help
           "$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --help
           updater_version="$("$RUNNER_TEMP/package-check/$package/bin/alpha-updater" --version)"
           [[ "$updater_version" == "alpha-updater $version (commit ${GITHUB_SHA:0:12}, "* ]]

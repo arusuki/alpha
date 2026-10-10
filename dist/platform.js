@@ -83,7 +83,7 @@ async function enter(session,restorePage=false) {
 }
 function schedulePoll() {
   clearTimeout(platform.poll);
-  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{schedulePoll();}},!platform.nodeID?10000:platform.active?1000:2000);
+  if(platform.user) platform.poll=setTimeout(async()=>{try{await syncState();}catch(e){if(platform.user)message('状态更新失败：'+e.message);}finally{await window.UpdatesUI?.refreshHealth();schedulePoll();}},!platform.nodeID?10000:platform.active?1000:2000);
 }
 function controls() {
   window.AgentUI?.controls();

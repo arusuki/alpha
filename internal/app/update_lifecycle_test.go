@@ -95,7 +95,7 @@ func TestWebUpdateClosesServiceBeforeExec(t *testing.T) {
 	helper := filepath.Join(root, "alpha-updater")
 	// Test executable checks the real process's released lock after exec.
 	quote := func(v string) string { return "'" + strings.ReplaceAll(v, "'", "'\\''") + "'" }
-	script := "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 2; exit 0; fi\nif [ \"$1\" = _prepare ]; then export ALPHA_TEST_PREPARING=1; fi\nexec " + quote(os.Args[0]) + " -test.run=^TestUpdaterHandoffReleasedLock$\n"
+	script := "#!/bin/sh\nif [ \"$1\" = --service-protocol ]; then echo 3; exit 0; fi\nif [ \"$1\" = _prepare ]; then export ALPHA_TEST_PREPARING=1; fi\nexec " + quote(os.Args[0]) + " -test.run=^TestUpdaterHandoffReleasedLock$\n"
 	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}
