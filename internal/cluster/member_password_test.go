@@ -24,6 +24,9 @@ func TestAdminMemberPasswordResetAndPartialRetry(t *testing.T) {
 	var calls atomic.Int32
 	for i, nodeID := range []string{strings.Repeat("8", 32), strings.Repeat("9", 32)} {
 		w, s := worker(t, nodeID, Inventory{}, moduleFunc(func(_ http.ResponseWriter, r *http.Request, u platform.User) (int, any, error) {
+			if r.URL.Path == "/api/worker/scheduled-analysis" && r.Method == "GET" {
+				return 200, map[string]any{"jobs": []any{}}, nil
+			}
 			if r.URL.Path == "/api/containers/candidates" && r.Method == "GET" {
 				return 200, map[string]any{"containers": []any{}}, nil
 			}
