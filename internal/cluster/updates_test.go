@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +83,7 @@ func TestMismatchedBusinessProtocolKeepsHealthAndUpdates(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	waitRelease(t, m, notice.Delivery)
 	health, _ := json.Marshal(m.Health())
 	if !strings.Contains(string(health), "v0.8.0") {
 		t.Fatal("worker did not receive release")
@@ -237,6 +239,7 @@ func TestWebhookQueuedOfflineReachesControlAndWorker(t *testing.T) {
 	if regUpdates.Pending() != nil {
 		t.Fatal("queued notification not acknowledged")
 	}
+	waitRelease(t, m, "offline-delivery")
 	for _, manager := range []*updates.Manager{m, regUpdates} {
 		if manager.GitHubToken() != "shared-webhook-token" {
 			t.Fatal("release forwarding did not first distribute the shared token")
@@ -256,4 +259,148 @@ func TestWebhookQueuedOfflineReachesControlAndWorker(t *testing.T) {
 	out := httptest.NewRecorder()
 	frontend.ServeHTTP(out, request)
 	requireStatus(t, out, 401)
+}
+
+func waitRelease(t *testing.T, m *updates.Manager, delivery string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if r, ok := m.Health()["release"].(*updates.Release); ok && r != nil && r.Delivery == delivery {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("release not delivered", delivery)
+}
+
+func TestOfflineWorkerDoesNotBlockReleaseAcknowledgement(t *testing.T) {
+	f := setup(t)
+	var offline atomic.Bool
+	var workers []*updates.Manager
+	var offlineNode Node
+	for _, id := range []string{strings.Repeat("d", 32), strings.Repeat("e", 32)} {
+		m, err := updates.New(t.TempDir(), "worker", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer m.Close()
+		workers = append(workers, m)
+		w := &Worker{ID: id, Token: strings.Repeat("s", 32), Updates: m}
+		server := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			if id == strings.Repeat("d", 32) && offline.Load() {
+				rw.WriteHeader(503)
+				return
+			}
+			w.ServeHTTP(rw, r)
+		}))
+		defer server.Close()
+		add(t, f, w, server, "worker")
+		if id == strings.Repeat("d", 32) {
+			offlineNode, err = f.control.node(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	offline.Store(true)
+	notice := updates.Release{Delivery: "independent", Repo: "arusuki/alpha", Tag: "v0.9.0", Published: time.Now()}
+	raw, _ := json.Marshal(notice)
+	if _, err := f.control.releaseNotice(context.Background(), raw); err != nil {
+		t.Fatal("offline worker blocked acknowledgement", err)
+	}
+	waitRelease(t, workers[1], notice.Delivery)
+	persisted, err := updates.New(f.control.DB.Directory, "control", f.control.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer persisted.Close()
+	if len(persisted.PendingForNode(offlineNode.ID)) != 1 {
+		t.Fatal("offline delivery was not durable")
+	}
+	offline.Store(false)
+	// Existing node probes also retry, even without a registry connection.
+	if _, err := f.control.probe(context.Background(), offlineNode); err != nil {
+		t.Fatal(err)
+	}
+	waitRelease(t, workers[0], notice.Delivery)
+	if len(f.control.Updates.PendingForNode(offlineNode.ID)) != 0 {
+		t.Fatal("reconnected worker remains pending")
+	}
+}
+
+func TestUpdateDeliveryIsIndependentAndTokenRotationIsOrdered(t *testing.T) {
+	m, err := updates.New(t.TempDir(), "control", strings.Repeat("a", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+	if err := m.SaveGitHubToken(1, "old-token", false); err != nil {
+		t.Fatal(err)
+	}
+	started, releaseSlow := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	defer once.Do(func() { close(releaseSlow) })
+	received := make(chan string, 4)
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body.Token == "old-token" {
+			close(started)
+			select {
+			case <-releaseSlow:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		received <- body.Token
+		httpapi.WriteJSON(w, 200, map[string]bool{"ok": true})
+	}))
+	defer slow.Close()
+	// Unblock before closing the HTTP server even if an assertion fails.
+	defer once.Do(func() { close(releaseSlow) })
+	fast := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { httpapi.WriteJSON(w, 200, map[string]bool{"ok": true}) }))
+	defer fast.Close()
+	h := &Control{Updates: m, client: http.DefaultClient}
+	slowNode := Node{ID: "slow", URL: slow.URL}
+	slowDone := make(chan struct{})
+	go func() { defer close(slowDone); h.syncUpdateNode(context.Background(), slowNode) }()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("slow delivery did not start")
+	}
+	fastDone := make(chan struct{})
+	go func() { defer close(fastDone); h.syncUpdateNode(context.Background(), Node{ID: "fast", URL: fast.URL}) }()
+	select {
+	case <-fastDone:
+	case <-time.After(time.Second):
+		t.Fatal("slow node blocked independent delivery")
+	}
+	rotated := make(chan error, 1)
+	go func() {
+		h.updateTokenMu.Lock()
+		defer h.updateTokenMu.Unlock()
+		if err := m.SaveGitHubToken(2, "new-token", false); err != nil {
+			rotated <- err
+			return
+		}
+		rotated <- h.pushGitHubToken(context.Background(), slowNode, m.GitHubToken())
+	}()
+	select {
+	case err := <-rotated:
+		t.Fatal("rotation overtook in-flight token", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	once.Do(func() { close(releaseSlow) })
+	<-slowDone
+	if err := <-rotated; err != nil {
+		t.Fatal(err)
+	}
+	if first, second := <-received, <-received; first != "old-token" || second != "new-token" {
+		t.Fatal("stale token arrived after rotation", first, second)
+	}
 }

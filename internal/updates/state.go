@@ -72,6 +72,9 @@ type Manager struct {
 	ready, closed                   bool
 	prepareCancel                   context.CancelFunc
 	prepareDone                     chan struct{}
+	deliveries                      deliveryJournal
+	retry                           preparationRetry
+	retryTimer                      *time.Timer
 	reportError                     string
 	reportFailedAt                  time.Time
 }
@@ -109,6 +112,12 @@ func New(directory, role, id string) (*Manager, error) {
 		return nil, err
 	}
 	if err = m.state.Config.validate(role); err != nil {
+		return nil, err
+	}
+	if err := m.loadRetry(); err != nil {
+		return nil, err
+	}
+	if err := m.loadDeliveries(); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -188,7 +197,11 @@ func (m *Manager) Settings() any {
 func (m *Manager) Save(revision int, c Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.save(revision, c)
+	if err := m.save(revision, c); err != nil {
+		return err
+	}
+	m.reevaluate()
+	return nil
 }
 func (m *Manager) save(revision int, c Config) error {
 	if m.plan != nil {
@@ -260,7 +273,11 @@ func (m *Manager) SaveGitHubToken(revision int, token string, clear bool) error 
 	}
 	c := m.state.Config
 	c.GitHubToken, c.ClearGitHubToken = token, clear
-	return m.save(revision, c)
+	if err := m.save(revision, c); err != nil {
+		return err
+	}
+	m.reevaluate()
+	return nil
 }
 
 // ApplyGitHubToken is called only through the authenticated node management API.
@@ -281,7 +298,11 @@ func (m *Manager) ApplyGitHubToken(token string) error {
 	}
 	s := m.state
 	s.Config = c
-	return m.commit(s)
+	if err := m.commit(s); err != nil {
+		return err
+	}
+	m.reevaluate()
+	return nil
 }
 func (m *Manager) health() map[string]any {
 	status := "idle"
@@ -337,7 +358,17 @@ func (m *Manager) health() map[string]any {
 			recovery.RefreshPending()
 		}
 	}
-	return map[string]any{"management_protocol": Protocol, "id": m.id, "mode": m.role, "version": buildinfo.Version, "healthy": true, "update_state": status, "release": m.state.Release, "error": detail, "result": result, "recovery": recovery, "pending_deliveries": len(m.state.Outbox), "delivery_error": m.state.DeliveryError}
+	pending := len(m.state.Outbox)
+	if m.role == "control" {
+		for _, channels := range m.deliveries.Nodes {
+			for _, d := range channels {
+				if !d.Delivered && d.Release.Repo == m.state.Config.Repo {
+					pending++
+				}
+			}
+		}
+	}
+	return map[string]any{"management_protocol": Protocol, "id": m.id, "mode": m.role, "version": buildinfo.Version, "healthy": true, "update_state": status, "release": m.state.Release, "error": detail, "result": result, "recovery": recovery, "pending_deliveries": pending, "delivery_error": m.state.DeliveryError}
 }
 func (m *Manager) Health() map[string]any { m.mu.Lock(); defer m.mu.Unlock(); return m.health() }
 func (m *Manager) Pending() *Release {
@@ -526,50 +557,7 @@ func (m *Manager) trigger(tag string) error {
 func (m *Manager) Automatic() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r := m.state.Release
-	if (m.role == "registry" && len(m.state.Outbox) > 0) || (m.role == "control" && !m.state.Forwarded) {
-		return nil
-	}
-	if m.closed || !m.state.Config.Automatic || r == nil || m.plan != nil {
-		return nil
-	}
-	// Complete the independently versioned services after a binary-only upgrade.
-	// Persist the attempt before preparing, so failure never creates a restart loop.
-	if m.role == "worker" && r.Tag == buildinfo.Version {
-		attempted, err := updater.ServicesAttempted(m.directory, r.Tag)
-		if err != nil {
-			m.recordResult(m.resultPlan(r.Tag), err)
-			return err
-		}
-		if attempted {
-			return nil
-		}
-		if err := updater.MarkServicesAttempted(m.directory, r.Tag); err != nil {
-			m.recordResult(m.resultPlan(r.Tag), err)
-			return err
-		}
-		if err := m.trigger(r.Tag); err != nil {
-			m.recordResult(m.resultPlan(r.Tag), err)
-			return err
-		}
-		return nil
-	}
-	if m.state.Attempted == r.Tag {
-		return nil
-	}
-	if !updater.Newer(r.Tag, buildinfo.Version) {
-		return nil
-	}
-	s := m.state
-	s.Attempted = r.Tag
-	if err := m.commit(s); err != nil {
-		return err
-	}
-	if err := m.trigger(r.Tag); err != nil {
-		m.recordResult(m.resultPlan(r.Tag), err)
-		return err
-	}
-	return nil
+	return m.automatic()
 }
 func (m *Manager) Handoff() *updater.Handoff {
 	m.mu.Lock()
@@ -596,6 +584,7 @@ func (m *Manager) DeliveryFailed(message string) error {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	m.closed = true
+	m.stopRetry()
 	if m.prepareCancel != nil {
 		m.prepareCancel()
 	}
@@ -639,6 +628,20 @@ func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done c
 			err = fmt.Errorf("更新准备已取消")
 		}
 	}
+	if err == nil {
+		// Persist installation guards only once preparation has succeeded.
+		s := m.state
+		if p.Tag != "" {
+			s.Attempted = p.Tag
+		}
+		if prepared.Prepared != nil {
+			s.Attempted = prepared.Prepared.Tag
+		}
+		err = m.commit(s)
+		if err == nil && p.ServicesOnly {
+			err = updater.MarkServicesAttempted(m.directory, p.Tag)
+		}
+	}
 	if err == nil && prepared.Prepared != nil {
 		m.plan = prepared
 		m.ready = true
@@ -646,5 +649,11 @@ func (m *Manager) prepare(ctx context.Context, cancel context.CancelFunc, done c
 		return
 	}
 	m.plan = nil
+	if err != nil && prepared != nil && prepared.Prepared != nil {
+		os.RemoveAll(prepared.Prepared.Stage)
+	}
 	m.recordResult(p, err)
+	if err == nil || m.delayFailedPreparation(p.Tag) {
+		m.reevaluate()
+	}
 }

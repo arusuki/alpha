@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -97,12 +98,12 @@ func (h *Control) pushGitHubToken(ctx context.Context, n Node, token string) err
 }
 
 func (h *Control) syncGitHubToken(ctx context.Context, n Node) error {
-	h.updateTokenMu.Lock()
-	defer h.updateTokenMu.Unlock()
+	h.updateTokenMu.RLock()
+	defer h.updateTokenMu.RUnlock()
 	return h.pushGitHubToken(ctx, n, h.Updates.GitHubToken())
 }
 
-// The caller holds updateTokenMu so rotations cannot overtake earlier delivery.
+// The caller holds updateTokenMu (shared for delivery, exclusive for rotation).
 func (h *Control) pushGitHubTokens(ctx context.Context) []string {
 	nodes, err := h.nodes("")
 	if err != nil {
@@ -136,12 +137,6 @@ func (h *Control) pushGitHubTokens(ctx context.Context) []string {
 	return pending
 }
 
-func (h *Control) syncGitHubTokens(ctx context.Context) {
-	h.updateTokenMu.Lock()
-	defer h.updateTokenMu.Unlock()
-	h.pushGitHubTokens(ctx)
-}
-
 func (h *Control) releaseNotice(ctx context.Context, raw json.RawMessage) (any, error) {
 	if h.Updates == nil {
 		return nil, httpapi.NewError(503, "更新服务未就绪")
@@ -153,15 +148,57 @@ func (h *Control) releaseNotice(ctx context.Context, raw json.RawMessage) (any, 
 	if err := h.Updates.Receive(notice); err != nil {
 		return nil, err
 	}
-	// Registry keeps its outbox pending until every registered worker has durably
-	// received the notice. Each worker deduplicates it, including across restart.
 	nodes, err := h.nodes("worker")
 	if err != nil {
 		return nil, err
 	}
+	ids := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		ids = append(ids, n.ID)
+	}
+	if err := h.Updates.QueueDeliveries(notice, ids); err != nil {
+		return nil, err
+	}
+	if err := h.Updates.Forwarded(notice); err != nil {
+		return nil, err
+	}
+	// The durable per-node queue owns retries. Neither an offline worker nor a
+	// local preparation failure can prevent registry from acknowledging delivery.
+	h.wakeReleaseDelivery()
+	if err := h.Updates.Automatic(); err != nil {
+		log.Printf("control update: %v", err)
+	}
+	return map[string]bool{"accepted": true}, nil
+}
+
+func (h *Control) syncUpdateNode(ctx context.Context, n Node) {
+	// Independent nodes can deliver concurrently, while token rotations wait for
+	// in-flight sends and prevent any old credential from arriving afterwards.
+	h.updateTokenMu.RLock()
+	defer h.updateTokenMu.RUnlock()
+	token := h.Updates.GitHubToken()
+	if err := h.pushGitHubToken(ctx, n, token); err != nil {
+		return
+	}
+	for _, notice := range h.Updates.PendingForNode(n.ID) {
+		callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		var out json.RawMessage
+		err := h.call(callCtx, n, "POST", updates.Path+"/release", notice, platform.User{ID: h.identity, Username: "release-webhook", Role: "admin"}, &out)
+		cancel()
+		if err != nil {
+			return
+		}
+		if err := h.Updates.DeliveredToNode(n.ID, notice); err != nil {
+			log.Printf("persist worker release delivery: %v", err)
+			return
+		}
+	}
+}
+
+func (h *Control) syncUpdateNodes(ctx context.Context, nodes []Node) {
+	// Each node has its own timeout. A batch deadline would repeatedly starve
+	// later nodes when earlier slots are occupied by offline workers.
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var first error
 	slots := make(chan struct{}, 8)
 	for _, n := range nodes {
 		wg.Go(func() {
@@ -169,41 +206,49 @@ func (h *Control) releaseNotice(ctx context.Context, raw json.RawMessage) (any, 
 			case slots <- struct{}{}:
 				defer func() { <-slots }()
 			case <-ctx.Done():
-				mu.Lock()
-				first = ctx.Err()
-				mu.Unlock()
 				return
 			}
-			callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-			defer cancel()
-			if err := h.syncGitHubToken(callCtx, n); err != nil {
-				mu.Lock()
-				if first == nil {
-					first = err
-				}
-				mu.Unlock()
-				return
-			}
-			var out json.RawMessage
-			e := h.call(callCtx, n, "POST", updates.Path+"/release", notice, platform.User{ID: h.identity, Username: "release-webhook", Role: "admin"}, &out)
-			if e != nil {
-				mu.Lock()
-				if first == nil {
-					first = e
-				}
-				mu.Unlock()
-			}
+			h.syncUpdateNode(ctx, n)
 		})
 	}
 	wg.Wait()
-	if first != nil {
-		return nil, first
+}
+
+func (h *Control) syncUpdateDeliveries(ctx context.Context) {
+	if h.Updates == nil {
+		return
 	}
-	if err = h.Updates.Forwarded(notice); err != nil {
-		return nil, err
+	nodes, err := h.nodes("")
+	if err != nil {
+		log.Printf("read release delivery targets: %v", err)
+		return
 	}
-	if err = h.Updates.Automatic(); err != nil {
-		return nil, err
+	h.syncUpdateNodes(ctx, nodes)
+}
+
+// Delivery work is woken by durable receipts and the existing registry
+// heartbeat. It has no independent polling or health-check timer.
+func (h *Control) initReleaseDelivery() {
+	ctx, cancel := context.WithCancel(context.Background())
+	h.releaseCancel = cancel
+	h.releaseWake = make(chan struct{}, 1)
+	h.releaseDone = make(chan struct{})
+	go func() {
+		defer close(h.releaseDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-h.releaseWake:
+				h.syncUpdateDeliveries(ctx)
+			}
+		}
+	}()
+	h.wakeReleaseDelivery()
+}
+func (h *Control) wakeReleaseDelivery() {
+	select {
+	case h.releaseWake <- struct{}{}:
+	default:
 	}
-	return map[string]bool{"accepted": true}, nil
 }

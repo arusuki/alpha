@@ -32,7 +32,10 @@ type Control struct {
 	Mihomo          *mihomo.Control
 	mihomoLocal     *mihomo.Manager
 	Updates         *updates.Manager
-	updateTokenMu   sync.Mutex
+	updateTokenMu   sync.RWMutex
+	releaseWake     chan struct{}
+	releaseCancel   context.CancelFunc
+	releaseDone     chan struct{}
 	identity        string
 	nodeMu          sync.Mutex
 	nodesClosed     bool
@@ -77,13 +80,14 @@ func NewControl(db *platform.Database) (*Control, error) {
 		lock.Close()
 		return nil, err
 	}
-	h := &Control{Updates: updateManager, DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
+	h := &Control{identity: identity, Updates: updateManager, DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	if err := h.initProvision(); err != nil {
 		transport.CloseIdleConnections()
 		lock.Close()
 		return nil, err
 	}
+	h.initReleaseDelivery()
 	if err := h.initRegistryLinks(); err != nil {
 		h.Close()
 		return nil, err
@@ -132,8 +136,14 @@ func (h *Control) Close() {
 	if h.mihomoLocal != nil {
 		h.mihomoLocal.Close()
 	}
-	h.Updates.Close()
+	if h.releaseCancel != nil {
+		h.releaseCancel()
+	}
 	h.closeRegistryLinks()
+	if h.releaseDone != nil {
+		<-h.releaseDone
+	}
+	h.Updates.Close()
 	for _, handler := range handlers {
 		handler.Manager.Close()
 	}
@@ -165,7 +175,7 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 	}
 	if err == nil && n.ID != "" && info.ID == n.ID && info.ManagementProtocol == updates.Protocol {
 		// Existing probes deliver rotations when a worker becomes reachable again.
-		_ = h.syncGitHubToken(ctx, n)
+		h.syncUpdateNode(ctx, n)
 	}
 	return info, err
 }

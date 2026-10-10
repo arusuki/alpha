@@ -15,11 +15,6 @@ type registryLink struct {
 }
 
 func (h *Control) initRegistryLinks() error {
-	identity, err := h.DB.CheckMode("control")
-	if err != nil {
-		return err
-	}
-	h.identity = identity
 	h.registryLinks = make(map[string]*registryLink)
 	nodes, err := h.nodes("registry")
 	if err != nil {
@@ -46,8 +41,8 @@ func (h *Control) startRegistry(n Node) {
 			link.status = status
 			link.mu.Unlock()
 			if status.State == "connected" {
-				// Reuse the existing link heartbeat to retry offline token delivery.
-				h.syncGitHubTokens(ctx)
+				// Keep network delivery out of the WebSocket receive loop.
+				h.wakeReleaseDelivery()
 			}
 		})
 	}()

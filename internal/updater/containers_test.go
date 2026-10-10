@@ -13,12 +13,14 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"project-alpha/internal/platform"
 )
 
 type dockerFixture struct {
+	mu                 sync.Mutex
 	t                  *testing.T
 	container          map[string]any
 	compose            map[string]any
@@ -27,6 +29,12 @@ type dockerFixture struct {
 	fail, rollbackFail bool
 	duplicate, denied  bool
 	buildFail          bool
+}
+
+func (f *dockerFixture) recordedCalls() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
 }
 
 func noDeployedServices(_ context.Context, _ string, args []string, _ []byte) ([]byte, error) {
@@ -61,6 +69,8 @@ func newDockerFixture(t *testing.T) (*dockerFixture, *platform.Database, string)
 
 func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string, input []byte) ([]byte, error) {
 	f.t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.calls = append(f.calls, slices.Clone(args))
 	if endpoint != "unix:///test/docker.sock" {
 		f.t.Fatal(endpoint)
@@ -149,7 +159,7 @@ func TestContainerUpdatePreservesDeployment(t *testing.T) {
 	if err != nil || len(p.Updates) != 1 {
 		t.Fatal(p, err)
 	}
-	for _, args := range f.calls {
+	for _, args := range f.recordedCalls() {
 		if slices.Contains(args, "up") || slices.Contains(args, "start") {
 			t.Fatal("preparation stopped a service", args)
 		}
@@ -180,7 +190,7 @@ func TestContainerUpdatePreservesDeployment(t *testing.T) {
 	if f.container["Image"] != f.next {
 		t.Fatal("image not updated")
 	}
-	for _, args := range f.calls {
+	for _, args := range f.recordedCalls() {
 		if slices.Contains(args, "start") {
 			t.Fatal("stopped service started")
 		}

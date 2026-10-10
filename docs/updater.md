@@ -145,17 +145,17 @@ alpha-updater --data-dir /var/lib/project-alpha-worker --tag <目标tag> --prere
 
 registry 按原始请求体校验 `X-Hub-Signature-256` 的 HMAC-SHA256 签名，仅处理配置仓库的 `release / published`；支持 GitHub 的 `ping`。签名规则参见 [GitHub 官方文档](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries)，事件定义参见 [release webhook 文档](https://docs.github.com/en/webhooks/webhook-events-and-payloads#release)。草稿、编辑等事件不会启动更新。
 
-通知先持久化到 registry，再通过 control 主动建立的现有 WebSocket 发送给 control，由 control 通知全部已登记 worker。沿用已有连接心跳重试，不增加独立的健康检查任务。worker 离线时通知保持待确认，重连后再次发送；节点保存新版本通知、过滤自己的预发布频道并去重。registry 也会转发预发布通知，即使它自己仅使用正式版。registry 最多保留 128 条待发送通知和最近 256 个 delivery ID；队列满时返回 503，不丢弃已有通知。重复通知不会重复启动同一 tag 的自动更新。下游持续离线或仓库设置不一致会阻止队列确认，可在 registry 更新设置中查看待确认数量与错误。
+通知先持久化到 registry，再通过 control 主动建立的现有 WebSocket 发送给 control。control 按 worker 持久保存待投递状态后即确认接收，后台独立投递；离线、仓库不一致或 Token 下发失败的 worker 不阻塞其他节点及上游更新。control 每个 worker 分别保留最新正式版和预发布通知，以及投递确认，重启后继续；较新的同频道通知替代旧通知。投递失败借用现有连接心跳和节点探测重试，不增加独立的健康检查任务。节点保存新版本通知、过滤自己的预发布频道并去重。registry 也会转发预发布通知，即使它自己仅使用正式版。registry 最多保留 128 条待发送通知和最近 256 个 delivery ID；队列满时返回 503，不丢弃已有通知。各目标的更新设置显示本机待投递通知数；registry 的确认只表示 control 已持久接收，不表示 worker 已安装成功。
 
-worker 可在接受通知后按配置自动更新；control 等该通知完成 worker 投递后才自动更新，registry 等通知队列确认完毕才自动更新。所有目标使用同一个发布仓库；各自的自动更新和预发布开关独立设置。自动更新失败不会反复重启同一版本，请查看错误并手动重试。GitHub 不会自动重投失败的 webhook 请求；若 registry 当时不可达或队列已满，请在 GitHub Recent deliveries 中重投。
+worker、control 和 registry 均可在接受通知后按配置独立自动更新；所有角色启动、保存相关设置后都会重新判断已保存的目标，已有更新计划时不重复启动。所有目标使用同一个发布仓库；各自的自动更新和预发布开关独立设置。尚未交接安装的前置检查、下载或镜像准备失败，每个目标最多自动准备 3 次，失败后分别退避 1 分钟、5 分钟；预算和重试时间持久保存，重启和同 tag 重投不会重置。耗尽预算后需手动重试。已经交接安装、服务容器安装已尝试或存在恢复标记时，不自动重复安装。GitHub 不会自动重投失败的 webhook 请求；若 registry 当时不可达或队列已满，请在 GitHub Recent deliveries 中重投。
 
-Web 更新通过本地服务交接实现，要求主程序和 updater 同时更新到支持本地容器更新协议 v3 的版本；交接协议不匹配时明确报错，服务继续运行，需重新发起更新生成计划。接受请求后以原服务账号启动 updater 的后台准备进程，页面显示“正在后台下载并校验”，HTTP 和业务工作继续运行。准备阶段只读数据库身份和版本，不获取服务锁、不备份或迁移数据库、不替换运行中的程序；下载、SHA-256 校验、解压、版本及可执行性检查完成后，worker 还准备节点服务镜像和部署计划，然后保存本地安装计划。下载失败时不重启；主程序与节点服务均已同步时也不重启。失败结果可在页面查看并手动重试，同一 tag 不自动反复尝试。服务正常退出时取消并等待准备进程结束。
+Web 更新通过本地服务交接实现，要求主程序和 updater 同时更新到支持本地容器更新协议 v3 的版本；交接协议不匹配时明确报错，服务继续运行，需重新发起更新生成计划。接受请求后以原服务账号启动 updater 的后台准备进程，页面显示“正在后台下载并校验”，HTTP 和业务工作继续运行。准备阶段只读数据库身份和版本，不获取服务锁、不备份或迁移数据库、不替换运行中的程序；下载、SHA-256 校验、解压、版本及可执行性检查完成后，worker 还准备节点服务镜像和部署计划，然后保存本地安装计划。下载失败时不重启；主程序与节点服务均已同步时也不重启。失败结果可在页面查看，准备失败按上述有限退避策略重试，也可手动重试。服务正常退出时取消并等待准备进程结束。
 
 只有准备成功才停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为 updater。安装阶段不访问网络，重新获取安装锁和服务锁，校验本机版本、数据库版本和暂存程序哈希，然后备份数据库、替换程序、重建已部署的节点服务容器并原地升级；备份包含下载期间提交的新数据。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停止主程序；节点服务容器由更新器管理。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
 
 GitHub 的 403 不一定是限流。错误保留 GitHub 返回的 message、可用的 `X-RateLimit-*` / `Retry-After` 信息和是否携带认证的状态，不输出 token。只有响应提供限流证据时才标为限流，不会立即循环重试。未认证 REST API 请求按出口 IP 共享每小时 60 次额度，多台节点共用代理或 NAT 时会共用额度；如果仍需 API 查询，可在 Web 更新设置中保存统一 GitHub Token，或在总控服务环境中配置 `GH_TOKEN` 或 `GITHUB_TOKEN`，仅在交互 shell 中设置不会修改已运行的服务环境。详见 [GitHub 限流说明](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。公开仓库的 webhook 自动更新下载路径不使用这项 REST API 额度。
 
-设置及通知保存在数据目录的 `update-settings.json`，交接参数为 `update-service.json`，最近结果为 `update-result.json`，完整输出追加到 `update.log`，均由原服务账号持有，新建文件权限为 0600。设置格式错误会明确报错并保留原文件。
+设置及通知保存在数据目录的 `update-settings.json`，新增的 `update-deliveries.json` 保存 control 的按节点投递状态，`update-retry.json` 保存准备重试预算与时间；现有数据库和设置文件格式不变。交接参数为 `update-service.json`，最近结果为 `update-result.json`，完整输出追加到 `update.log`，均由原服务账号持有，新建文件权限为 0600。设置格式错误会明确报错并保留原文件。
 
 总控 **更新设置** 页按所选目标显示最近一次更新的失败原因、完整日志路径和“修复后手动重试”命令。自动更新的前置检查、后台准备及安装失败，与直接运行 updater 的结果统一写入 `update-result.json`；启动更新器或重新启动主程序失败也会记录。页面沿用现有状态轮询刷新，只刷新报告，不覆盖尚未保存的设置。通知投递错误单独展示，不会遮住更新失败原因。节点停机时总控无法读取新的本地报告，页面保留当前已读取的报告并提示连接失败，节点恢复通信后读取最新结果。
 

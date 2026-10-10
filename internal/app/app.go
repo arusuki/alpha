@@ -320,10 +320,8 @@ func Run(ctx context.Context, args []string) error {
 	if automaticRegistryToken {
 		log.Printf("registry token (saved in data directory): %s", registryToken)
 	}
-	if *worker {
-		if err := updateManager.Automatic(); err != nil {
-			log.Printf("worker 自动更新检查失败: %v", err)
-		}
+	if err := updateManager.Automatic(); err != nil {
+		log.Printf("%s 自动更新检查失败: %v", mode, err)
 	}
 	err = server.Serve(listener)
 	if errors.Is(err, http.ErrServerClosed) {

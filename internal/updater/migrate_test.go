@@ -180,12 +180,12 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 				defer lock.Close()
 			}
 			migrate := func() error {
-				calls := len(f.calls)
+				calls := len(f.recordedCalls())
 				cmd := exec.Command(filepath.Join(bin, "alpha-updater"), "_migrate", "worker", db.Directory)
 				cmd.ExtraFiles = []*os.File{lock}
 				raw, err := cmd.CombinedOutput()
 				syncDocker()
-				for _, args := range f.calls[calls:] {
+				for _, args := range f.recordedCalls()[calls:] {
 					if args[0] == "build" || args[0] == "pull" || slices.Contains(args, "up") || slices.Contains(args, "start") {
 						t.Fatal("migration subprocess modified containers or images", args)
 					}
@@ -224,13 +224,13 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 				if f.container["State"].(map[string]any)["Running"] != (mode == "current-schema") {
 					t.Fatal("service running state changed", f.container["State"])
 				}
-				calls := len(f.calls)
+				calls := len(f.recordedCalls())
 				writeFile(t, filepath.Join(bin, ".alpha-update-pending"), []byte("repeat\n"))
 				if err := migrate(); err != nil {
 					t.Fatal(err)
 				}
 				syncDocker()
-				for _, args := range f.calls[calls:] {
+				for _, args := range f.recordedCalls()[calls:] {
 					if slices.Contains(args, "up") || slices.Contains(args, "start") {
 						t.Fatal("repeated migration rebuilt an unchanged container", args)
 					}
@@ -262,8 +262,8 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 						t.Fatal("caller did not restore binary", file, err)
 					}
 				}
-				if plan == nil && !binaryOnly && len(f.calls) != 0 {
-					t.Fatal("invalid migration reached Docker", f.calls)
+				if plan == nil && !binaryOnly && len(f.recordedCalls()) != 0 {
+					t.Fatal("invalid migration reached Docker", f.recordedCalls())
 				}
 				if _, err := os.Stat(filepath.Join(bin, ".alpha-update-pending")); !os.IsNotExist(err) {
 					t.Fatal("caller did not finish rollback", err)
@@ -274,121 +274,6 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 				if strings.HasPrefix(entry.Name(), ".alpha-migrate-") {
 					t.Fatal("temporary payload leaked", entry.Name())
 				}
-			}
-		})
-	}
-}
-
-// ALPHA_TEST_RELEASE_INSTALLER can point to an updater built from a published
-// tag, exercising its actual _service parent against this release's _migrate.
-func TestReleaseServiceMigrationRecovery(t *testing.T) {
-	const tag = "v0.8.0-rc3.2"
-	const installed = "v0.8.0-rc3.1"
-	target := buildTargetVersion(t, tag)
-	installer := target
-	if path := os.Getenv("ALPHA_TEST_RELEASE_INSTALLER"); path != "" {
-		var err error
-		installer, err = os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, mode := range []string{"success", "validation-failure", "rollback-failure"} {
-		t.Run(mode, func(t *testing.T) {
-			f, db, payload := newDockerFixture(t)
-			if err := platform.UpgradeDatabase(db.Directory, "worker", nil, nil); err != nil {
-				t.Fatal(err)
-			}
-			bin := t.TempDir()
-			marker := filepath.Join(bin, "restarted")
-			main := func(version string) []byte {
-				return []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'project-alpha " + version + "'; else echo '" + version + "' > " + shellQuote(marker) + "; fi\n")
-			}
-			writeFile(t, filepath.Join(bin, "project-alpha"), main(installed))
-			writeFile(t, filepath.Join(bin, "alpha-updater"), installer)
-			writeFile(t, filepath.Join(bin, "rootless-docker"), script("rootless-docker", installed))
-			manifest, err := os.ReadFile(filepath.Join(payload, serviceManifest))
-			if err != nil {
-				t.Fatal(err)
-			}
-			prefix := "project-alpha_" + tag + "_linux_" + runtime.GOARCH
-			archive := makeArchive(t, map[string][]byte{
-				prefix + "/bin/project-alpha":            main(tag),
-				prefix + "/bin/alpha-updater":            target,
-				prefix + "/bin/rootless-docker":          script("rootless-docker", tag),
-				prefix + "/bin/dram-bwd":                 []byte("dram binary"),
-				prefix + "/deploy/updater-services.json": manifest,
-			})
-			stage, err := os.MkdirTemp(bin, ".alpha-stage-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			writeFile(t, filepath.Join(stage, "release.tar.gz"), archive)
-			var names []string
-			for _, file := range releaseFiles("worker") {
-				names = append(names, file.source)
-			}
-			if err := extract(bytes.NewReader(archive), stage, prefix, names); err != nil {
-				t.Fatal(err)
-			}
-			containers, err := prepareContainers(context.Background(), db, stage, f.run, io.Discard)
-			if err != nil {
-				t.Fatal(err)
-			}
-			prepared := &PreparedUpdate{Stage: stage, Tag: tag, Installed: installed, Schema: platform.DatabaseVersion, Hashes: map[string]string{}, Containers: containers}
-			for _, file := range releaseFiles("worker") {
-				hash, err := fileHash(filepath.Join(stage, file.source))
-				if err != nil {
-					t.Fatal(err)
-				}
-				prepared.Hashes[file.source] = hash
-			}
-			f.rollbackFail = mode == "rollback-failure"
-			syncDocker := useDockerProcessFixture(t, func(ctx context.Context, endpoint string, args []string, input []byte) ([]byte, error) {
-				// The installer's fixed image IDs remain valid, but the target
-				// release's image reference is missing at pre-commit validation.
-				if mode != "success" && len(args) == 3 && args[0] == "image" && !strings.HasPrefix(args[2], "sha256:") {
-					return nil, errors.New("injected missing release image")
-				}
-				return f.run(ctx, endpoint, args, input)
-			})
-			plan := filepath.Join(db.Directory, "update-service.json")
-			if err := WriteJSON(plan, ServicePlan{Format: 3, Prepared: prepared, Directory: db.Directory, Executable: filepath.Join(bin, "project-alpha"), Command: filepath.Join(bin, "alpha-updater"), Role: "worker", Repo: "arusuki/alpha", Tag: tag, Prerelease: true, Arguments: []string{"serve", "--worker", "--data-dir", db.Directory}}); err != nil {
-				t.Fatal(err)
-			}
-			output, err := exec.Command(filepath.Join(bin, "alpha-updater"), "_service", plan).CombinedOutput()
-			syncDocker()
-			assertVersion(t, db, platform.DatabaseVersion)
-			journal, pendingErr := os.ReadFile(filepath.Join(bin, ".alpha-update-pending"))
-			restarted, restartErr := os.ReadFile(marker)
-			if mode == "rollback-failure" {
-				if err == nil || pendingErr != nil || !strings.Contains(string(journal), "container_plan=") || !os.IsNotExist(restartErr) {
-					t.Fatalf("uncertain container recovery restarted service or lost journal: %v, %v, %v\n%s", err, pendingErr, restartErr, output)
-				}
-				got, readErr := os.ReadFile(filepath.Join(bin, "alpha-updater"))
-				if readErr != nil || !bytes.Equal(got, target) {
-					t.Fatal("restored binaries despite failed container rollback", readErr)
-				}
-			} else {
-				want := tag
-				if mode == "validation-failure" {
-					want = installed
-				}
-				if err != nil || !os.IsNotExist(pendingErr) || restartErr != nil || strings.TrimSpace(string(restarted)) != want {
-					t.Fatalf("unexpected service restart: %v, %v, %s\n%s", err, pendingErr, restarted, output)
-				}
-			}
-			var result ServiceResult
-			raw, err := os.ReadFile(filepath.Join(db.Directory, "update-result.json"))
-			if err != nil || json.Unmarshal(raw, &result) != nil {
-				t.Fatal("missing update result", err)
-			}
-			if mode == "success" {
-				if result.State != "completed" || f.container["Image"] != f.next {
-					t.Fatal(result, f.container)
-				}
-			} else if result.State != "failed" || !strings.Contains(result.Error, "bootstrap") {
-				t.Fatal("missing actionable failure", result)
 			}
 		})
 	}

@@ -56,9 +56,9 @@ func (m *Manager) Dispatch(w http.ResponseWriter, r *http.Request) (int, any, er
 		if err := m.Receive(release); err != nil {
 			return 0, nil, err
 		}
-		if err := m.Automatic(); err != nil {
-			return 0, nil, err
-		}
+		m.mu.Lock()
+		m.reevaluate()
+		m.mu.Unlock()
 		return 200, map[string]bool{"accepted": true}, nil
 	default:
 		return 0, nil, httpapi.NewError(404, "管理接口不存在")
@@ -120,6 +120,9 @@ func (m *Manager) Webhook(w http.ResponseWriter, r *http.Request) (int, any, err
 	if err := m.Receive(notice); err != nil {
 		return 0, nil, err
 	}
+	m.mu.Lock()
+	m.reevaluate()
+	m.mu.Unlock()
 	return 202, map[string]bool{"accepted": true}, nil
 }
 
