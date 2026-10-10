@@ -32,7 +32,8 @@ func TestSameVersionWorkerPreparesAndUpdatesServices(t *testing.T) {
 	if err := run(context.Background(), o, releaseServer(t, script("alpha-updater", "v0.6.0"), false), io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if prepared == nil || len(prepared.Containers.Updates) != 1 {
+	var plan containerPlan
+	if prepared == nil || json.Unmarshal(prepared.Containers, &plan) != nil || len(plan.Updates) != 1 {
 		t.Fatal("same-version worker skipped services", prepared)
 	}
 	if f.container["Image"] != f.old {

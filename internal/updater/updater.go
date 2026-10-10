@@ -3,6 +3,7 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,9 @@ type options struct {
 	published                                 bool
 	prepare                                   func(*PreparedUpdate) error
 	prepared                                  *PreparedUpdate
+	bootstrap                                 bool
+	servicePlan, downloaded                   string
+	command                                   string
 	docker                                    dockerCommand
 }
 type binary struct{ source, destination string }
@@ -52,6 +56,16 @@ func binaries(role string) []binary {
 }
 
 func Run(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) == 1 && args[0] == "--bootstrap-protocol" {
+		fmt.Fprintln(out, "1")
+		return nil
+	}
+	if len(args) == 2 && args[0] == "_release" {
+		return runRelease(ctx, args[1], out)
+	}
+	if len(args) == 2 && args[0] == "_release-service" {
+		return serviceInstall(ctx, args[1], out, true)
+	}
 	if len(args) == 1 && args[0] == "--service-protocol" {
 		fmt.Fprintln(out, "3")
 		return nil
@@ -154,6 +168,10 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	o.command, err = os.Executable()
+	if err != nil {
+		return err
+	}
 	return reportCLI(o, out, func(writer io.Writer) error { return runConfigured(ctx, o, writer) })
 }
 
@@ -186,6 +204,7 @@ func runConfigured(ctx context.Context, o options, out io.Writer) error {
 		}
 		return nil
 	}}
+	o.bootstrap = !o.check && !o.databaseOnly
 	return run(ctx, o, github{client, "https://api.github.com", o.repo, token}, out)
 }
 
@@ -198,12 +217,12 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	var schema int
 	if o.role != "share-node" {
 		var err error
-		db, err = platform.OpenExistingDatabase(o.directory, o.check || o.prepare != nil)
+		db, err = platform.OpenExistingDatabase(o.directory, o.check || o.prepare != nil || o.bootstrap)
 		if err != nil {
 			return fmt.Errorf("open existing database: %w", err)
 		}
 		defer db.SQL.Close()
-		if !o.check && o.prepare == nil {
+		if !o.check && o.prepare == nil && !o.bootstrap {
 			lock, err = db.LockService()
 			if err != nil {
 				return fmt.Errorf("stop the service before updating: %w", err)
@@ -211,7 +230,11 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			defer lock.Close()
 		}
 		var role string
-		schema, role, err = db.DatabaseState()
+		if o.bootstrap {
+			schema, role, err = db.DatabaseIdentity()
+		} else {
+			schema, role, err = db.DatabaseState()
+		}
 		if err != nil {
 			return err
 		}
@@ -240,7 +263,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		return fmt.Errorf("--services-only requires the worker role")
 	}
 	// Serialize installations even when roles use distinct data directories.
-	if !o.check {
+	if !o.check && !o.bootstrap {
 		f, err := os.OpenFile(filepath.Join(o.binDir, ".alpha-updater.lock"), os.O_CREATE|os.O_RDWR, 0600)
 		if err != nil {
 			return err
@@ -275,6 +298,8 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			return fmt.Errorf("installed version or database changed after preparation; prepare the update again")
 		}
 		r.Tag = o.prepared.Tag
+	} else if o.downloaded != "" {
+		r.Tag = o.tag
 	} else if o.tag != "" {
 		if _, err = supportedVersion(o.tag); err != nil {
 			return err
@@ -303,11 +328,15 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	}
 	if next.compare(old) == 0 && !o.servicesOnly {
 		if o.role != "worker" {
-			fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only。")
-			return nil
+			// Even a no-op must let the target validate its database window.
+			if !o.bootstrap {
+				fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only。")
+				return nil
+			}
+		} else {
+			o.servicesOnly = true
+			fmt.Fprintln(out, "主程序已是最新版本，继续检查并同步节点服务容器。")
 		}
-		o.servicesOnly = true
-		fmt.Fprintln(out, "主程序已是最新版本，继续检查并同步节点服务容器。")
 	}
 	if o.servicesOnly {
 		files = nil
@@ -321,17 +350,23 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	if o.check {
 		return nil
 	}
+	if o.bootstrap {
+		return bootstrapRelease(ctx, o, r, g, out)
+	}
 	stage := ""
 	keepStage := false
 	if o.prepared != nil {
 		stage = o.prepared.Stage
-		if err := o.prepared.verify(releaseFiles(o.role)); err != nil {
+		if err := o.prepared.verify(append(releaseFiles(o.role), binary{source: "release.tar.gz"})); err != nil {
 			return err
 		}
 	} else {
-		stage, err = os.MkdirTemp(o.binDir, ".alpha-stage-")
-		if err != nil {
-			return err
+		stage = o.downloaded
+		if stage == "" {
+			stage, err = os.MkdirTemp(o.binDir, ".alpha-stage-")
+			if err != nil {
+				return err
+			}
 		}
 		defer func() {
 			if !keepStage {
@@ -343,8 +378,10 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		for i, f := range payload {
 			names[i] = f.source
 		}
-		if err = g.download(ctx, r, stage, runtime.GOARCH, names); err != nil {
-			return err
+		if o.downloaded == "" {
+			if err = g.download(ctx, r, stage, runtime.GOARCH, names); err != nil {
+				return err
+			}
 		}
 	}
 	for _, name := range []string{"project-alpha", "alpha-updater"} {
@@ -356,6 +393,27 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			return fmt.Errorf("%s version %s does not match release %s", name, v, r.Tag)
 		}
 	}
+	var configured *configuredUpdater
+	if !o.servicesOnly {
+		configured, err = prepareConfiguredUpdater(o.command, o.binDir, o.role)
+		if err != nil {
+			return fmt.Errorf("configured updater: %w", err)
+		}
+		if o.prepared != nil {
+			var saved *configuredUpdater
+			if err = json.Unmarshal(o.prepared.Updater, &saved); err != nil {
+				return fmt.Errorf("invalid prepared updater: %w", err)
+			}
+			if (saved == nil) != (configured == nil) || saved != nil && *saved != *configured {
+				return fmt.Errorf("configured updater changed after preparation; prepare again")
+			}
+		}
+		unlock, e := configured.lock(o.binDir)
+		if e != nil {
+			return e
+		}
+		defer unlock()
+	}
 	if o.role == "worker" {
 		if b, e := exec.CommandContext(ctx, filepath.Join(stage, "rootless-docker"), "--help").CombinedOutput(); e != nil {
 			return fmt.Errorf("rootless-docker cannot run: %w: %s", e, b)
@@ -364,7 +422,9 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	var containers *containerPlan
 	if o.role == "worker" {
 		if o.prepared != nil {
-			containers = o.prepared.Containers
+			if err = json.Unmarshal(o.prepared.Containers, &containers); err != nil {
+				return fmt.Errorf("invalid prepared container plan: %w", err)
+			}
 			if containers == nil {
 				return fmt.Errorf("prepared worker update has no container plan; prepare again")
 			}
@@ -383,8 +443,16 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 	}
 	if o.prepare != nil {
-		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}, Containers: containers}
-		for _, f := range releaseFiles(o.role) {
+		raw, err := json.Marshal(containers)
+		if err != nil {
+			return err
+		}
+		updater, err := json.Marshal(configured)
+		if err != nil {
+			return err
+		}
+		p := &PreparedUpdate{Stage: stage, Tag: r.Tag, Installed: installed, Schema: schema, Hashes: map[string]string{}, Containers: raw, Updater: updater}
+		for _, f := range append(releaseFiles(o.role), binary{source: "release.tar.gz"}) {
 			hash, err := fileHash(filepath.Join(stage, f.source))
 			if err != nil {
 				return err
@@ -442,7 +510,17 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 		return nil
 	}
-	if err = install(o.binDir, stage, files, backup, commit, out); err != nil {
+	installCommit := func() error {
+		rollback, err := configured.apply(o.binDir, out)
+		if err != nil {
+			return err
+		}
+		if err = commit(); err != nil && !errors.Is(err, errMigrationUncertain) && !errors.Is(err, errContainerUncertain) {
+			return errors.Join(err, rollback())
+		}
+		return err
+	}
+	if err = install(o.binDir, stage, files, backup, installCommit, out); err != nil {
 		return err
 	}
 	if o.role == "worker" {

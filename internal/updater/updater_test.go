@@ -120,6 +120,16 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 		packageName + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
 		packageName + "/deploy/updater-services.json": manifest,
 	})
+	return archiveServer(t, archive, badHash)
+}
+
+func archiveServer(t *testing.T, archive []byte, badHash bool) github {
+	return archiveServerVersion(t, archive, badHash, "v0.6.0")
+}
+
+func archiveServerVersion(t *testing.T, archive []byte, badHash bool, tag string) github {
+	t.Helper()
+	packageName := "project-alpha_" + tag + "_linux_" + runtime.GOARCH
 	hash := sha256.Sum256(archive)
 	if badHash {
 		hash[0] ^= 1
@@ -128,7 +138,7 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/arusuki/alpha/releases/latest":
-			json.NewEncoder(w).Encode(release{Tag: "v0.6.0", Assets: []asset{{Name: packageName + ".tar.gz", URL: server.URL + "/assets/archive"}, {Name: "SHA256SUMS", URL: server.URL + "/assets/sums"}}})
+			json.NewEncoder(w).Encode(release{Tag: tag, Assets: []asset{{Name: packageName + ".tar.gz", URL: server.URL + "/assets/archive"}, {Name: "SHA256SUMS", URL: server.URL + "/assets/sums"}}})
 		case "/assets/archive":
 			w.Write(archive)
 		case "/assets/sums":

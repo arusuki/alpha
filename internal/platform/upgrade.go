@@ -39,11 +39,23 @@ func OpenExistingDatabase(directory string, readOnly bool) (*Database, error) {
 
 // DatabaseState validates persisted identity and the supported upgrade range.
 func (d *Database) DatabaseState() (version int, role string, err error) {
+	return d.databaseState(true)
+}
+
+// DatabaseIdentity reads the fixed bootstrap identity without interpreting the
+// schema. Only the target release may decide whether it can upgrade this data.
+func (d *Database) DatabaseIdentity() (version int, role string, err error) {
+	return d.databaseState(false)
+}
+
+func (d *Database) databaseState(validateVersion bool) (version int, role string, err error) {
 	if err = d.SQL.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return
 	}
-	if _, err = databaseUpgradePlan(version); err != nil {
-		return
+	if validateVersion {
+		if _, err = databaseUpgradePlan(version); err != nil {
+			return
+		}
 	}
 	var id string
 	err = d.SQL.QueryRow("SELECT mode,instance_id FROM service_identity WHERE id=1").Scan(&role, &id)

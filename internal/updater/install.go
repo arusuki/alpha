@@ -110,7 +110,7 @@ func install(directory, stage string, files []binary, databaseBackup string, mig
 		return rollback(err)
 	}
 	if err = migrate(); err != nil {
-		if errors.Is(err, errMigrationUncertain) || errors.Is(err, errContainerUncertain) {
+		if errors.Is(err, errMigrationUncertain) || errors.Is(err, errContainerUncertain) || errors.Is(err, errUpdaterUncertain) {
 			return fmt.Errorf("%w; keep services stopped and inspect %s", err, pending)
 		}
 		return rollback(err)

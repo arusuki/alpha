@@ -96,7 +96,10 @@ type PreparedUpdate struct {
 	Stage, Tag, Installed string
 	Schema                int
 	Hashes                map[string]string
-	Containers            *containerPlan
+	// Release-specific deployment data is opaque to the running service and
+	// bootstrap updater. Only the target release decodes it.
+	Containers json.RawMessage
+	Updater    json.RawMessage
 }
 
 func (p *PreparedUpdate) validate(binDir string) error {
@@ -183,7 +186,7 @@ func ReadServicePlan(path string) (*ServicePlan, error) {
 	return &p, nil
 }
 func (p *ServicePlan) options() options {
-	return options{role: p.Role, directory: p.Directory, binDir: filepath.Dir(p.Executable), repo: p.Repo, proxy: p.Proxy, tag: p.Tag, prerelease: p.Prerelease, published: p.Published, servicesOnly: p.ServicesOnly}
+	return options{role: p.Role, directory: p.Directory, binDir: filepath.Dir(p.Executable), repo: p.Repo, proxy: p.Proxy, tag: p.Tag, prerelease: p.Prerelease, published: p.Published, servicesOnly: p.ServicesOnly, command: p.Command}
 }
 func prepareService(ctx context.Context, path string, out io.Writer) error {
 	p, err := ReadServicePlan(path)
@@ -199,10 +202,7 @@ func prepareService(ctx context.Context, path string, out io.Writer) error {
 	}
 	defer log.Close()
 	o := p.options()
-	o.prepare = func(prepared *PreparedUpdate) error {
-		p.Prepared = prepared
-		return WriteJSON(path, p)
-	}
+	o.servicePlan = path
 	err = runConfigured(ctx, o, io.MultiWriter(out, log))
 	if err != nil {
 		fmt.Fprintln(log, err)
@@ -210,6 +210,10 @@ func prepareService(ctx context.Context, path string, out io.Writer) error {
 	return err
 }
 func service(ctx context.Context, path string, out io.Writer) error {
+	return serviceInstall(ctx, path, out, false)
+}
+
+func serviceInstall(ctx context.Context, path string, out io.Writer, target bool) error {
 	p, err := ReadServicePlan(path)
 	if err != nil {
 		return recordServiceFailure(path, err)
@@ -224,6 +228,16 @@ func service(ctx context.Context, path string, out io.Writer) error {
 	o.prepared = p.Prepared
 	if p.Prepared == nil {
 		err = fmt.Errorf("service update has no prepared release; refusing network access after shutdown")
+	} else if !target {
+		// Keep this launcher independent of the target release's deployment
+		// schema. Installation executes the same verified updater as preparation.
+		err = p.Prepared.verify([]binary{{source: "alpha-updater"}})
+		if err == nil {
+			command := filepath.Join(p.Prepared.Stage, "alpha-updater")
+			err = syscall.Exec(command, []string{command, "_release-service", path}, os.Environ())
+		}
+		// Exec only returns on failure, before any installation has started.
+		os.RemoveAll(p.Prepared.Stage)
 	} else {
 		err = runConfigured(ctx, o, writer)
 	}

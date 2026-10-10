@@ -244,6 +244,9 @@ func (g github) download(ctx context.Context, r release, directory, arch string,
 	if hex.EncodeToString(hash.Sum(nil)) != hex.EncodeToString(expected) {
 		return fmt.Errorf("SHA-256 mismatch for %s; nothing installed", archiveName)
 	}
+	if err = f.Sync(); err != nil {
+		return err
+	}
 	if _, err = f.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
