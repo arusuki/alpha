@@ -217,6 +217,8 @@ docker compose -f deploy/services.yaml logs --tail 100 dram-bw
 
 从旧 Tetragon Compose 部署切换时，先执行 `docker compose -p project-alpha-tetragon -f deploy/services.yaml down`，再运行新的 `up` 命令，以免固定容器名冲突。
 
+总控的计算节点卡片会显示 Tetragon 和 DRAM 带宽服务的容器运行状态、Docker 状态详情及检查时间。状态随面板现有刷新流程查询，不单独启动定时健康检查；它不表示应用协议就绪或 PMU 样本有效。查询使用节点“容器管理”的本机 Docker endpoint，以 `project-alpha.service` 标签识别服务。Docker 不可访问显示“状态未知”，查询成功但无对应容器显示“未部署”；节点离线或刷新失败时不会沿用旧的“运行中”。总控与 worker 需一起更新到相同业务协议。
+
 ### 容器客户端
 
 宿主机或上述 privileged 容器运行 daemon。容器只需访问 socket 所在目录，无需共享 IPC namespace 或挂载 `/dev/shm`。

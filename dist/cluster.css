@@ -75,7 +75,7 @@
 .node-metrics strong{font-size:1.7rem;line-height:1.2;font-weight:450;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
 .node-metrics span{font-size:.64rem;color:var(--muted)}
 .node-symbol.ui-icon{width:32px;height:32px;stroke-width:.9;margin-left:auto;color:#a7ae9b}
-.node-disks,.node-gpus{padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--line);min-width:0}
+.node-disks,.node-gpus,.node-services{padding-bottom:16px;margin-bottom:16px;border-bottom:1px solid var(--line);min-width:0}
 .node-resource-heading,.node-disk-label{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:.7rem}
 .node-resource-heading>span{font-weight:550}.node-resource-heading small,.node-disk>small{color:var(--muted);font-size:.6rem}
 .node-disk{margin-top:12px}.node-disk-label .mono{min-width:0;overflow-wrap:anywhere}.node-disk-label strong{font-size:.7rem;font-weight:500;white-space:nowrap;font-variant-numeric:tabular-nums}
@@ -295,3 +295,11 @@
 #scanPlanResults{max-height:240px;overflow:auto}
 #scanPlanResults p{padding:8px 0;border-bottom:1px solid var(--line)}
 #scanPlanDialog .form-actions{flex-wrap:wrap}
+
+.node-service{margin-top:10px}
+.node-service>div{display:flex;justify-content:space-between;gap:12px;font-size:12px}
+.node-service>div>span{color:var(--muted)}
+.node-service[data-state="running"]>div>span{color:#23845c}
+.node-service[data-state="restarting"]>div>span,.node-service[data-state="dead"]>div>span,.node-service[data-state="exited"]>div>span{color:#ad5825}
+.node-service p{font-size:11px;color:var(--muted);overflow-wrap:anywhere;margin:4px 0}
+.node-service small{font-size:10px;color:var(--muted)}

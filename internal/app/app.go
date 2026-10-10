@@ -240,7 +240,9 @@ func Run(ctx context.Context, args []string) error {
 			value.GPU = gpuMonitor.Summary()
 			return value, err
 		}}
-		node.Module = Modules{Storage: storageHandler, Containers: newContainerHandler(db), Process: process.NewHandler(watcher), GPU: gpuMonitor}
+		containerHandler := newContainerHandler(db)
+		node.Services = containerHandler.ServiceStatuses
+		node.Module = Modules{Storage: storageHandler, Containers: containerHandler, Process: process.NewHandler(watcher), GPU: gpuMonitor}
 		handler = node
 	} else if *registryMode {
 		lock, err := db.LockService()

@@ -2,6 +2,7 @@
 package cluster
 
 import (
+	"context"
 	"crypto/hmac"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"project-alpha/internal/buildinfo"
+	"project-alpha/internal/containers"
 	"project-alpha/internal/gpu"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/mihomo"
@@ -18,7 +20,7 @@ import (
 	"project-alpha/internal/updates"
 )
 
-const Protocol = 10
+const Protocol = 11
 
 var identifier = regexp.MustCompile(`^[a-f0-9]{32}$`)
 
@@ -31,13 +33,14 @@ type Container struct {
 	ObservedAt string `json:"observed_at,omitempty"`
 }
 type Inventory struct {
-	Host        string       `json:"host"`
-	Containers  []Container  `json:"containers"`
-	SnapshotID  string       `json:"snapshot_id,omitempty"`
-	ObservedAt  string       `json:"observed_at,omitempty"`
-	Active      any          `json:"active"`
-	Filesystems []Filesystem `json:"filesystems"`
-	GPU         gpu.Summary  `json:"gpu"`
+	Services    []containers.ServiceStatus `json:"services"`
+	Host        string                     `json:"host"`
+	Containers  []Container                `json:"containers"`
+	SnapshotID  string                     `json:"snapshot_id,omitempty"`
+	ObservedAt  string                     `json:"observed_at,omitempty"`
+	Active      any                        `json:"active"`
+	Filesystems []Filesystem               `json:"filesystems"`
+	GPU         gpu.Summary                `json:"gpu"`
 }
 type Filesystem struct {
 	Mount string  `json:"mount"`
@@ -59,6 +62,7 @@ type Worker struct {
 	ID, Token string
 	Module    platform.Module
 	Inventory func() (Inventory, error)
+	Services  func(context.Context) []containers.ServiceStatus
 	Tools     func(http.ResponseWriter, *http.Request, platform.User) (int, any, error)
 }
 
@@ -158,6 +162,9 @@ func (h *Worker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, err)
 			return
+		}
+		if h.Services != nil {
+			value.Services = h.Services(r.Context())
 		}
 		httpapi.WriteJSON(w, 200, value)
 		return

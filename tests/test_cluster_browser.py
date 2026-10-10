@@ -125,6 +125,10 @@ with tempfile.TemporaryDirectory(prefix='alpha-cluster-') as temporary:
                 assert page.locator('#nodeToken').input_value() == ''
             expect(page.locator('#clusterOnline')).to_have_text('2 / 2')
             expect(page.locator('#clusterContainers')).to_have_text('2')
+            expect(page.locator('.node-services')).to_have_count(2)
+            expect(page.locator('[data-service="tetragon"]')).to_have_count(2)
+            expect(page.locator('[data-service="dram-bw"]')).to_have_count(2)
+            expect(page.locator('.node-services').first).to_contain_text('容器运行状态')
             # Searching and filtering keep the cluster totals; empty results can be cleared.
             page.locator('#clusterSearch').fill('GPU 02')
             expect(page.locator('.node-card')).to_have_count(1)
