@@ -32,6 +32,14 @@ make -C ctools/dram-bw -j test
 
 `ctools/dram-bw` 使用 C11 编译器、Linux 开发头文件、make 和 Python 3，独立构建和测试。上述测试使用 mock 后端与临时 Unix socket，无需 PMU 权限；CI 同样运行此检查。性能基准和可选硬件对照见 [dram-bw 验证说明](../ctools/dram-bw/docs/validation.md)。可从源码单独安装，或使用 Release 中独立的 `ctools-dram-bw_*.tar.gz`。
 
+采集服务容器回归使用独立 Compose 项目和临时 socket，不会启动 Tetragon，也不需要真实 PMU；先构建镜像和客户端，再验证容器内 daemon 与宿主机客户端通信、权限、停止状态及重启：
+
+```bash
+docker compose -f deploy/services.yaml build dram-bw
+make -C ctools/dram-bw -j
+python3 tests/test_services_compose.py
+```
+
 浏览器回归需要 Playwright 和 Chromium：
 
 ```bash

@@ -1,6 +1,6 @@
-# Tetragon agent for the `project-alpha process` collector.
+# Host services for project-alpha workers (Tetragon, DRAM and rootless Docker).
 #
-# Start with: docker compose -f deploy/tetragon.compose.yaml up -d
+# Start with: ROOTLESS_DOCKER_GID=$(id -g) DRAM_BW_GID=$(id -g) docker compose -f deploy/services.yaml up -d --build
 #
 # The collector dials /var/run/tetragon/tetragon.sock, so the agent must export
 # its gRPC socket at that path instead of the image default (TCP on
@@ -17,12 +17,15 @@
 # running. The collector tolerates that by probing /proc before dropping a
 # process, and reports what it had to keep in status.alignment.evicted. Raise
 # --process-cache-size above if that count keeps growing.
-name: project-alpha-tetragon
+name: project-alpha-services
 
 services:
   tetragon:
     image: quay.io/cilium/tetragon:v1.7.0
     container_name: tetragon
+    restart: unless-stopped
+    labels:
+      project-alpha.service: tetragon
     # Tetragon loads BPF programs and resolves container IDs from the host, so
     # it shares the host PID and cgroup namespaces and runs privileged.
     privileged: true
@@ -53,3 +56,53 @@ services:
         until [ -S /var/run/tetragon/tetragon.sock ]; do sleep 0.2; done
         chmod 666 /var/run/tetragon/tetragon.sock
         wait "$$tetragon_pid"
+
+  dram-bw:
+    build:
+      context: ../ctools/dram-bw
+    image: project-alpha-dram-bw:local
+    container_name: dram-bw
+    privileged: true
+    # PMU counters describe the host; clients need only the socket directory.
+    network_mode: none
+    user: "0:${DRAM_BW_GID:-0}"
+    restart: unless-stopped
+    labels:
+      project-alpha.service: dram-bw
+    volumes:
+      - /sys:/sys:ro
+      - /run/dram-bw:/run/dram-bw
+    command:
+      - --backend
+      - "${DRAM_BW_BACKEND:-amd-rome}"
+      - --interval-us
+      - "${DRAM_BW_INTERVAL_US:-100000}"
+      - --socket
+      - /run/dram-bw/control.sock
+      - --socket-mode
+      - "0660"
+
+  rootless-docker:
+    build:
+      context: ..
+      dockerfile: deploy/rootless-docker.Dockerfile
+    image: project-alpha-rootless-docker:local
+    container_name: rootless-docker
+    privileged: true
+    pid: host
+    userns_mode: host
+    cgroup: host
+    restart: unless-stopped
+    stop_grace_period: 120s
+    labels:
+      project-alpha.service: rootless-docker
+    # The manager enters the host mount/network namespaces through /proc/1.
+    # Host Docker/rootless dependencies must already be installed. Its user
+    # service stops on lease EOF even if this container is killed abruptly.
+    volumes:
+      - /run/rootless-docker:/run/rootless-docker
+    command:
+      - daemon
+      - --host-namespaces
+      - --socket-gid
+      - "${ROOTLESS_DOCKER_GID:-0}"

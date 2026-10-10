@@ -1,0 +1,9 @@
+**
+!go.mod
+!go.sum
+!cmd
+!cmd/rootless-docker
+!cmd/rootless-docker/**
+!internal
+!internal/rootless
+!internal/rootless/**

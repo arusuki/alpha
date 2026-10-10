@@ -124,6 +124,7 @@ The detailed guides are currently available in Chinese.
 | Agent reports and cleanup | [Agent API](docs/agent.md) |
 | Public registration, backups, and deployment | [Running and configuration](docs/operations.md) |
 | Rootless Docker daemon/client | [Rootless Docker](docs/rootless-docker.md) |
+| Host services (Tetragon + DRAM + rootless Docker) | [`deploy/services.yaml`](deploy/services.yaml), [setup](ctools/dram-bw/README.md#compose-daemonprivileged) |
 | The standalone C DRAM bandwidth sampler | [dram-bw](ctools/dram-bw/README.md) |
 | Tests, benchmarks, and code structure | [Development and verification](docs/development.md) |
 

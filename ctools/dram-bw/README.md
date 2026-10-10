@@ -196,9 +196,30 @@ sudo journalctl -u dram-bwd -f
 常驻服务以 `dram-bw` 用户和组运行，使用 `CAP_PERFMON` 访问 PMU，内存上限 384 MiB。普通客户端须取得该组权限或另行授权。
 启用服务前先停止占用同一路径的前台实例，并准备好驱动及内核权限策略。
 
+### Compose daemon（privileged）
+
+在仓库根目录用统一的 [`deploy/services.yaml`](../../deploy/services.yaml) 部署 Tetragon 和 DRAM daemon：
+
+```bash
+# 真实硬件仍需宿主机提前加载 PMU 驱动
+sudo modprobe amd_uncore
+export DRAM_BW_GID="$(id -g)"  # 换成客户端使用的宿主机组 GID
+# 以下命令由已有 Docker 权限的普通账号执行
+docker compose -f deploy/services.yaml up -d --build
+docker compose -f deploy/services.yaml logs --tail 100 dram-bw
+```
+
+默认后端为 `amd-rome`，采样等待间隔为 `100000` 微秒。可通过 `DRAM_BW_INTERVAL_US` 设置间隔；仅验证部署流程时显式设置 `DRAM_BW_BACKEND=mock`。不支持的硬件会明确失败，不自动切换到模拟数据。非 Rome 硬件的自定义事件配置见 [命令参数](docs/usage.md)，需自行挂载配置并覆盖 Compose command。
+
+镜像从本目录多阶段构建，只带 daemon 和系统运行库。daemon 在容器内以 root 访问 PMU，使用 privileged，运行组由 `DRAM_BW_GID` 指定（默认 0）；宿主机客户端需属于该组。socket 为 `0660`，目录 `/run/dram-bw` 绑定到宿主机；不发布网络端口，也无需 host PID/IPC namespace 或 `/dev/shm` 挂载。不要同时启动占用同一 socket 的 systemd 或前台 daemon。
+
+两个服务使用 `unless-stopped` 重启策略。正常停止会清理 socket；强制终止留下 socket 时，daemon 会拒绝覆盖。此时先停止 `dram-bw` 容器并确认没有其他 daemon 占用，再手动清理 `/run/dram-bw/control.sock` 后启动。
+
+从旧 Tetragon Compose 部署切换时，先执行 `docker compose -p project-alpha-tetragon -f deploy/services.yaml down`，再运行新的 `up` 命令，以免固定容器名冲突。
+
 ### 容器客户端
 
-宿主机运行 daemon。容器只需访问 socket 所在目录，无需共享 IPC namespace 或挂载 `/dev/shm`。
+宿主机或上述 privileged 容器运行 daemon。容器只需访问 socket 所在目录，无需共享 IPC namespace 或挂载 `/dev/shm`。
 下例假定宿主机已允许容器映射后的 UID/GID 访问 socket：
 
 ```bash

@@ -129,6 +129,29 @@ make build/bench-ring
 
 自定义事件的物理含义、CPU 热插拔、长期负载行为、systemd 与 Docker 部署未在该次硬件验证中覆盖。
 
+## 容器真实 PMU 验证（2026-10-09）
+
+在双路 AMD EPYC 7532、Linux 5.15.0-139-generic 上，使用 `deploy/services.yaml` 构建的 `project-alpha-dram-bw:local` 镜像进行了真实硬件测试。通过独立 Compose 项目覆盖容器名和 socket 目录，启用 `privileged`，使用 `--backend amd-rome --interval-us 100000` 并开启诊断；保持默认私有 PID/IPC namespace、`network_mode: none`，只绑定 `/sys:ro` 和 socket 目录。没有启动 Tetragon，也没有停止原有宿主机 daemon。
+
+容器进程以 `0:1005` 运行，宿主机客户端 UID/GID 为 `1005:1005`，通过 `0660` socket 读取样本。确认容器持有 16 个 `perf_event` FD，诊断覆盖 `amd_df` 的 CPU 0、32，每个 socket 八个通道；所有 11520 条逐计数器记录都有非零计数增量，读取错误为 0。
+
+每阶段读取 120 条样本，去除前后各 10 条后，按实际采样间隔计算约 10 秒稳定窗口的加权平均。负载为绑定物理核的 `perf bench mem memcpy`，每进程两个 256 MiB 缓冲区，最多使用四个核、约 2 GiB 内存；记录的匿名页全部位于相应本地 NUMA 节点。
+
+| 阶段 | 负载 CPU | 总带宽（GB/s） | socket 0 / socket 1（GB/s） |
+|---|---|---:|---:|
+| 背景流量 | 无新增负载 | 0.399 | 0.264 / 0.135 |
+| node0 | 1、17 | 58.735 | 58.143 / 0.592 |
+| node1 | 33、49 | 60.203 | 2.277 / 57.926 |
+| 双节点 | 1、17、33、49 | 117.293 | 59.338 / 57.955 |
+| 撤销负载 | 无新增负载 | 2.933 | 2.733 / 0.200 |
+| 容器重启后 | 无新增负载 | 3.512 | 2.930 / 0.582 |
+
+720 条样本全部有效且不含 MOCK；dropped、LATE、WINDOW_SKEW 和读取错误均为 0。全部样本 flags 为 84，即 MULTIPLEXED、TOTAL_ONLY、PEAK_UNKNOWN；Rome 只提供总带宽，未设置峰值时利用率为 NaN，均符合预期。计数器运行比例中位数约 50.01%，最长扫描 0.415 ms。正常停止删除 socket，重启后普通用户可重新连接并获得有效样本；测试结束已移除测试容器和负载进程，原有 daemon 与 socket 保持运行。
+
+本次验证了容器访问真实 PMU、负载响应、跨容器 socket/共享内存通信及正常启停，不包含独立 `perf stat` 精度对照或强制终止后的恢复。背景有其他任务，各阶段背景流量并非恒定，也不将本次吞吐视为硬件峰值。
+
+原始 CSV、逐事件诊断、NUMA 页分布、镜像 ID、测试脚本及结果保存在本次开发机的 `ctools/dram-bw/results/container-pmu-20261009-907_u777/`，不纳入版本管理。
+
 ## 重跑硬件对照
 
 按 [README 的 perf 对照步骤](../README.md#辅助脚本) 启动服务和采集程序，测量口径及窗口限制见 [技术参考](reference.md#perf-对照细节)。
