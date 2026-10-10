@@ -10,4 +10,5 @@ RUN make -j BUILD=build build/dram-bwd
 FROM ubuntu:24.04
 COPY --from=build /src/build/dram-bwd /usr/local/bin/dram-bwd
 RUN mkdir -p /run/dram-bw
-ENTRYPOINT ["/usr/local/bin/dram-bwd"]
+LABEL project-alpha.dram-settings="1"
+ENTRYPOINT ["/usr/local/bin/dram-bwd", "--settings", "/run/dram-bw/service-settings"]

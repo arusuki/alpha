@@ -147,6 +147,49 @@ def server_wrapper_test(directory):
     assert (Path(metadata["session"]) / "diagnostics.jsonl").exists()
 
 
+def persisted_settings_test(directory):
+    settings = Path(directory) / "service-settings"
+    path = directory + "/settings.sock"
+    # Persisted settings override the deployment flags, on every restart.
+    command = [str(BUILD / "dram-bwd"), "--backend", "auto", "--interval-us", "100000",
+               "--socket", path, "--settings", str(settings)]
+    for interval, peak in [(20000, 3), (50000, 0)]:
+        settings.write_text(f"mock {interval} {peak}\n")
+        process = subprocess.Popen(command)
+        try:
+            wait_ready(process, path)
+            with connect(path) as client:
+                response, fds = exchange(client, 1, 8)
+                assert response[4] == 0
+                try:
+                    with mmap.mmap(fds[0], 4096, prot=mmap.PROT_READ) as header:
+                        assert struct.unpack_from("=Qd", header, 16) == (interval * 1000, peak * 1e9)
+                finally:
+                    for fd in fds:
+                        os.close(fd)
+            output = subprocess.check_output([str(BUILD / "dram-bw-consume"), path, "3"], timeout=5)
+            assert len(output.splitlines()) == 4
+        finally:
+            process.terminate()
+            assert process.wait(timeout=5) == 0
+        assert not os.path.exists(path)
+    for content in ["mock 0 3", "mock -1 3", "mock 10000001 3", "auto 1000 nan",
+                    "mock 1000 -1", "mock 1000 1000001", "unknown 1000 3",
+                    "mock 1000 3 extra", "mock 1000 3\nextra", "[]", ""]:
+        settings.write_text(content)
+        result = subprocess.run(command, capture_output=True, timeout=5)
+        assert result.returncode != 0 and b"Invalid DRAM settings" in result.stderr
+        assert settings.read_text() == content and not os.path.exists(path)
+    settings.unlink()
+    # First deployment has no saved settings; explicit CLI flags still work.
+    process = subprocess.Popen(command + ["--backend", "mock"])
+    try:
+        wait_ready(process, path)
+    finally:
+        process.terminate()
+        assert process.wait(timeout=5) == 0
+
+
 def run():
     with tempfile.TemporaryDirectory(prefix="dbw-test-") as directory:
         path = directory + "/control.sock"
@@ -234,6 +277,7 @@ def run():
             assert r.returncode != 0
         timer_recovery_test(lib, directory)
         server_wrapper_test(directory)
+        persisted_settings_test(directory)
     print("integration: concurrent clients, protocol, fd leaks, crash, timer recovery, diagnostics, server wrapper passed")
 
 

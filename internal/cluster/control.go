@@ -452,7 +452,14 @@ func (h *Control) proxy(w http.ResponseWriter, r *http.Request, n Node, path str
 			}
 		}
 	}()
-	proxy := httputil.ReverseProxy{Transport: h.transport, FlushInterval: -1,
+	transport := h.transport
+	if strings.HasPrefix(path, "/api/containers/services/") && r.Method != "GET" {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(6 * time.Minute))
+		transport = h.transport.Clone()
+		transport.ResponseHeaderTimeout = 5*time.Minute + 10*time.Second
+		defer transport.CloseIdleConnections()
+	}
+	proxy := httputil.ReverseProxy{Transport: transport, FlushInterval: -1,
 		Rewrite: func(p *httputil.ProxyRequest) {
 			p.Out.URL.Scheme = target.Scheme
 			p.Out.URL.Host = target.Host

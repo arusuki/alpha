@@ -3,10 +3,8 @@ package process
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
-	"os"
 
 	tetragon "github.com/cilium/tetragon/api/v1/tetragon"
 	"google.golang.org/grpc"
@@ -34,14 +32,12 @@ type Tetragon struct {
 	client tetragon.FineGuidanceSensorsClient
 }
 
-// Dial connects to the Tetragon agent over its Unix socket. The connection is
-// lazy, so a reachable socket is enough to succeed here.
+// Dial creates a lazy connection, even when the service has not created its
+// socket yet. The resident watcher's existing reconnect loop covers later
+// starts and socket replacement without restarting the worker.
 func Dial(socket string) (*Tetragon, error) {
 	if socket == "" {
 		socket = DefaultSocket
-	}
-	if _, err := os.Stat(socket); err != nil {
-		return nil, fmt.Errorf("tetragon socket: %w", err)
 	}
 	conn, err := grpc.NewClient("passthrough:///tetragon",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),

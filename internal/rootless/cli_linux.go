@@ -38,9 +38,10 @@ const usage = `rootless Docker daemon/client 管理工具
 用法：rootless-docker <命令> [参数]
 
   daemon     启动管理服务及宿主机 rootless dockerd；退出时停止 dockerd
-  add        热挂载 socket 到已有运行容器，并保存关联
+  add        保存 socket 关联；运行容器立即挂载，停止容器等待启动
   remove     卸载本工具的 socket 挂载并删除关联
   list       查看关联和最近的恢复错误
+  bindings   检查每个关联的实时挂载状态
   proxy      查看/设置 registry 代理；修改后重启并恢复挂载
   restart    重启 rootless dockerd 并恢复挂载
   status     查看管理服务和 rootless dockerd 状态
@@ -89,7 +90,7 @@ func parseOptions(args []string) (options, error) {
 			o.Args = o.Args[1:]
 		}
 		return o, nil
-	case "daemon", "proxy", "add", "remove", "list", "restart", "status", "logs", "test":
+	case "daemon", "proxy", "add", "remove", "list", "bindings", "restart", "status", "logs", "test":
 	default:
 		return o, fmt.Errorf("未知命令：%s", o.Command)
 	}

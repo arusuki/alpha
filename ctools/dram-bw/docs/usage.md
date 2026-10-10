@@ -17,6 +17,7 @@
 | `--socket PATH` | `/run/dram-bw/control.sock` | Unix socket；父目录须存在，路径不能被占用 |
 | `--backend auto\|amd-rome\|mock` | `auto` | 自动识别 Rome、指定 Rome，或显式模拟 |
 | `--events FILE` | 无 | 自定义 PMU 事件文件，配合 `--backend auto` 使用 |
+| `--settings FILE` | 不读取文件 | 读取网页保存的后端、间隔和参考峰值，优先于命令参数；文件不存在时使用命令参数，格式无效则报错并保留文件 |
 | `--interval-us N` | `100000` | 每轮处理结束后的等待微秒数，范围 100–10000000 |
 | `--peak-gbps N` | 无 | 计算利用率用的正数参考峰值，单位十进制 GB/s |
 | `--socket-mode OCTAL` | `0660` | socket 文件权限，八进制 |
@@ -93,3 +94,7 @@ LD_LIBRARY_PATH="$PWD/build${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
 `peek` 借出的内存在 `consume/close` 前有效，提交前不要混用 `peek` 和 `read_batch`。
 容量须为 2–65536 的二次幂；一个服务端最多 64 个连接。
 API 中带宽单位是 **B/s**，命令行客户端才会转换为 GB/s。
+
+### 网页服务配置文件
+
+容器镜像入口指定 `--settings /run/dram-bw/service-settings`。文件为一行 `BACKEND INTERVAL_US PEAK_GBPS`（如 `amd-rome 100000 0`），后端仅接受 `auto`、`amd-rome`、`mock`，间隔范围 100–10000000 微秒，参考峰值范围 0–1000000 GB/s。0 表示不计算利用率。设置文件中的后端也取代命令行自定义事件文件；自定义 PMU 事件部署应保持由命令行管理，不在网页保存采集参数。配置在启动时读取，修改后须重启采集器；不会改变订阅协议或共享内存格式。

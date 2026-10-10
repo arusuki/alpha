@@ -1,8 +1,10 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
+	"time"
 
 	"project-alpha/internal/containers"
 	"project-alpha/internal/gpu"
@@ -26,7 +28,17 @@ func (m Modules) Dispatch(w http.ResponseWriter, r *http.Request, user platform.
 	if process.IsRoute(r.URL.Path) {
 		return m.Process.Dispatch(w, r, user)
 	}
-	return m.Storage.Dispatch(w, r, user)
+	status, value, err := m.Storage.Dispatch(w, r, user)
+	if err == nil && r.URL.Path == "/api/owners" && r.Method == "PUT" {
+		if services, ok := m.Containers.(interface{ ReconcileServices(context.Context) error }); ok {
+			ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
+			defer cancel()
+			if err := services.ReconcileServices(ctx); err != nil {
+				value.(map[string]any)["warning"] = "容器归属已保存，服务挂载尚未完成，请在节点服务中重试应用：" + err.Error()
+			}
+		}
+	}
+	return status, value, err
 }
 
 // Initialize creates node tables and binds the directory to worker mode atomically.

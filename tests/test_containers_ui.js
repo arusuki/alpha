@@ -3,6 +3,7 @@ const assert=require('assert'),fs=require('fs'),vm=require('vm');
 const elements=new Map();
 function element(id){if(!elements.has(id))elements.set(id,{id,value:'',checked:false,hidden:false,disabled:false,innerHTML:'',textContent:'',listeners:{},addEventListener(type,fn){this.listeners[type]=fn;},reset(){},focus(){},showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();}});return elements.get(id);}
 const calls=[];let failCreate=false,pending=null;
+const mountWarning='容器操作已完成，服务挂载尚未完成，请在节点服务中重试应用。';
 let permissions={username:'worker-user',uid:1000,endpoint:'unix:///var/run/docker.sock',base_dir:'/docker',group_member:false,group_active:false,group_error:'',restart_required:false,directory_writable:false,directory_error:'permission denied',docker_available:false,docker_error:'socket permission denied',sudo_error:''};
 const managed={id:'a'.repeat(64),name:'alice',owner:'<unsafe>',origin:'adopt',state:'running',initialized:true,spec:{image:'train:test',port:2222,gpus:'all',network:'bridge'}};
 const sandbox={console,$:element,window:{},document:{querySelectorAll(){return [...elements.values()];}},platform:{generation:1,user:{role:'admin'}},esc:s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),api:async(path,options={})=>{
@@ -17,7 +18,8 @@ const sandbox={console,$:element,window:{},document:{querySelectorAll(){return [
  }
  if(path==='/api/containers/settings')return {endpoint:'unix:///var/run/docker.sock',image:'train:test',base_dir:'/docker',start_port:2222,ssh_host:'host.example',proxy_jump:''};
  if(path==='/api/containers'&&!options.method)return {managed:[managed],ssh_host:'host.example'};
- if(path==='/api/containers'&&options.method==='POST'){if(failCreate)throw Error('SSH 端口已被占用');return {name:'bob',port:2223,password:'new-secret'};}
+ if(path==='/api/containers'&&options.method==='POST'){if(failCreate)throw Error('SSH 端口已被占用');return {name:'bob',port:2223,password:'new-secret',warning:mountWarning};}
+ if(path.endsWith('/initialize'))return {name:'alice',port:2222,password:'initialized-secret',warning:mountWarning};
  return {ok:true};
 }};
 vm.createContext(sandbox);vm.runInContext("let containerView='chart'; function renderContainers(){return 'storage';}",sandbox);vm.runInContext(fs.readFileSync('dist/containers.js','utf8'),sandbox);
@@ -33,7 +35,11 @@ async function submit(id){element(id).listeners.submit({preventDefault(){}});awa
  const repair=calls.find(c=>c.path==='/api/containers/permissions'&&c.options.method==='POST');assert.deepEqual(JSON.parse(repair.options.body),{action:'docker_group',base_dir:'/docker',endpoint:'unix:///var/run/docker.sock',sudo_password:'sudo-secret'});
  element('newContainerName').value='bob';element('newContainerNetwork').value='bridge';element('newContainerGPUs').value='all';element('newContainerPassword').value='supplied-secret';
  await submit('createContainerForm');assert.equal(element('newContainerPassword').value,'');assert(element('containerCredentials').textContent.includes('new-secret'));assert(element('containerCredentialsDialog').open);
+ assert(element('containerCredentials').textContent.includes(mountWarning));assert(element('containersStatus').textContent.includes(mountWarning));assert.equal(element('containersError').textContent,'');
  element('containerCredentialsClose').listeners.click();assert.equal(element('containerCredentials').textContent,'');
+ element('managedContainerRows').listeners.click({target:{closest(){return {dataset:{id:managed.id,containerAction:'initialize'}};}}});
+ await submit('containerActionForm');assert(!element('containerActionDialog').open);assert(element('containerCredentialsDialog').open);assert(element('containerCredentials').textContent.includes('initialized-secret'));assert(element('containerCredentials').textContent.includes(mountWarning));assert(element('containersStatus').textContent.includes(mountWarning));
+ element('containerCredentialsClose').listeners.click();
  failCreate=true;await submit('createContainerForm');assert(element('containersError').textContent.includes('SSH 端口已被占用'));failCreate=false;
  const button={dataset:{id:managed.id,containerAction:'delete'}};element('managedContainerRows').listeners.click({target:{closest(){return button;}}});assert(!element('containerConfirmLabel').hidden);assert(element('containerActionHint').textContent.includes('可写层'));
  element('containerConfirmName').value='alice';await submit('containerActionForm');const removal=calls.find(c=>c.path.endsWith('/delete'));assert.equal(JSON.parse(removal.options.body).confirm,'alice');

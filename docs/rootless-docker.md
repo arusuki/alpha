@@ -1,6 +1,6 @@
 # rootless-docker
 
-独立的 daemon/client 工具：管理 daemon 在 privileged 容器或宿主机前台运行，在宿主机以专用用户 `docker-rootless` 启动 rootless dockerd。client 通过 Unix socket 请求挂载、卸载、重启或配置代理。管理 daemon 停止时，rootless dockerd 也停止；镜像、容器和卷保留。不使用平台数据库。
+独立的 daemon/client 工具：管理 daemon 在 privileged 容器或宿主机前台运行，在宿主机以专用用户 `docker-rootless` 启动 rootless dockerd。client 通过 Unix socket 请求挂载、卸载、重启或配置代理。管理 daemon 停止时，rootless dockerd 也停止；镜像、容器和卷保留。独立工具不使用平台数据库。网页的服务配置和挂载授权保存在 worker 数据库，见[节点服务管理](node-services.md)。
 
 ## 部署
 
@@ -52,7 +52,7 @@ sudo ./bin/rootless-docker daemon --socket-gid "$(id -g)"
 DOCKER_HOST=unix:///run/rootless-docker.sock docker info
 ```
 
-目标容器无需重启、无需 privileged，也不需要包含 shell 或 mount 命令。目标容器必须正在运行且未暂停，暂不支持 userns-remap。socket 保持 `0660`，默认目标容器 root 可访问；非 root 进程需要匹配 socket 的 GID。工具不会修改已有进程的附加组、`DOCKER_HOST` 或 Docker context。
+目标容器无需重启、无需 privileged，也不需要包含 shell 或 mount 命令。运行且未暂停的目标立即挂载；停止或暂停的容器保存关联，等待启动或恢复事件后挂载。暂不支持 userns-remap。socket 保持 `0660`，默认目标容器 root 可访问；非 root 进程需要匹配 socket 的 GID。工具不会修改已有进程的附加组、`DOCKER_HOST` 或 Docker context。
 
 ## 生命周期与挂载恢复
 

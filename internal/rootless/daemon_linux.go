@@ -194,7 +194,7 @@ func (d *daemon) control(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		switch o.Command {
-		case "add", "remove", "list", "status", "proxy", "restart":
+		case "add", "remove", "list", "bindings", "status", "proxy", "restart":
 		case "test":
 			if len(o.Args) == 0 || o.Args[0] == "exec" {
 				err = errors.New("交互命令必须在客户端执行")
@@ -226,6 +226,8 @@ func (d *daemon) control(w http.ResponseWriter, r *http.Request) {
 		d.syncWatchers()
 	case "list":
 		err = json.NewEncoder(&output).Encode(d.store.Bindings)
+	case "bindings":
+		err = json.NewEncoder(&output).Encode(d.bindingStatuses())
 	case "status":
 		err = d.manager.verifyDaemon(d.user)
 		if err == nil {

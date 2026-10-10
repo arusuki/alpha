@@ -19,6 +19,12 @@ type command func(context.Context, string, []string, string) (string, error)
 func runDocker(ctx context.Context, endpoint string, args []string, input string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
+	return runServiceDocker(ctx, endpoint, args, input)
+}
+
+// Service shutdown can take the full configured grace period (rootless: 120s).
+// Its caller owns the deadline; ordinary container commands remain bounded above.
+func runServiceDocker(ctx context.Context, endpoint string, args []string, input string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", endpoint}, args...)...)
 	cmd.Env = slices.DeleteFunc(os.Environ(), func(s string) bool {
 		return strings.HasPrefix(s, "DOCKER_HOST=") || strings.HasPrefix(s, "DOCKER_CONTEXT=")

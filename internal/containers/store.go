@@ -65,6 +65,9 @@ func Initialize(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	if err = platform.InstallNodeServices(tx); err != nil {
+		return err
+	}
 	raw, _ := json.Marshal(defaults())
 	_, err = tx.Exec("INSERT INTO container_settings VALUES(1,?)", string(raw))
 	return err

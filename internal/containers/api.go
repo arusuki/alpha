@@ -18,6 +18,8 @@ import (
 type Handler struct {
 	db                *platform.Database
 	run               command
+	serviceRun        command
+	rootlessControl   func(context.Context, string, []string) (string, error)
 	mu                sync.Mutex
 	permissionCommand func(context.Context, string, ...string) *exec.Cmd
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
@@ -29,7 +31,7 @@ type Handler struct {
 }
 
 func NewHandler(db *platform.Database) *Handler {
-	return &Handler{db: db, run: runDocker}
+	return &Handler{db: db, run: runDocker, serviceRun: runServiceDocker, rootlessControl: callRootless}
 }
 func IsRoute(path string) bool {
 	return path == "/api/containers" || strings.HasPrefix(path, "/api/containers/")
@@ -43,6 +45,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return 0, nil, httpapi.NewError(409, "容器管理正在执行其他操作，请稍后刷新或重试")
 	}
 	defer h.mu.Unlock()
+	if r.URL.Path == servicesPath || strings.HasPrefix(r.URL.Path, servicesPath+"/") {
+		return h.dispatchServices(w, r, user)
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 	cfg, err := h.config()
@@ -118,7 +123,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if e != nil {
 			return fail(e)
 		}
-		return 201, value, nil
+		return 201, h.containerServiceResult(ctx, value["id"].(string), value), nil
 	}
 	parts := strings.Split(strings.TrimPrefix(path, "/api/containers/"), "/")
 	if len(parts) == 2 && fullID.MatchString(parts[0]) && r.Method == "POST" {
@@ -143,6 +148,11 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			}
 			if (action == "delete" || action == "release") && req.Confirm != record.Name {
 				return fail(fmt.Errorf("请填写完整容器名 %s 确认操作", record.Name))
+			}
+			if action == "delete" || action == "release" {
+				if err := h.checkServiceMounts(record.ID); err != nil {
+					return fail(err)
+				}
 			}
 			if action == "release" { // Releasing a missing container never calls Docker.
 				err = h.removeRecord(record, user.Username, "release")
@@ -171,7 +181,7 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				if e = h.initialize(ctx, record, pass, user.Username); e != nil {
 					return fail(e)
 				}
-				return 200, map[string]any{"password": pass, "port": record.Spec.Port, "name": record.Name}, nil
+				return 200, h.containerServiceResult(ctx, record.ID, map[string]any{"password": pass, "port": record.Spec.Port, "name": record.Name}), nil
 			}
 			if !record.Initialized && action != "delete" && action != "stop" {
 				return fail(fmt.Errorf("容器尚未完成密码初始化，请先执行初始化"))
@@ -199,6 +209,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			}
 			if err != nil {
 				return fail(fmt.Errorf("Docker 操作已完成，但管理记录/审计写入失败，请刷新核对: %w", err))
+			}
+			if action == "start" || action == "restart" {
+				return 200, h.containerServiceResult(ctx, record.ID, map[string]any{"ok": true}), nil
 			}
 			return 200, map[string]bool{"ok": true}, nil
 		}

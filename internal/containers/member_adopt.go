@@ -93,5 +93,5 @@ func (h *Handler) adoptMember(ctx context.Context, cfg Config, id, username, key
 	if err := h.installMemberKey(ctx, record, id, key); err != nil {
 		return fail(err)
 	}
-	return 200, map[string]any{"id": record.ID, "name": record.Name, "port": record.Spec.Port, "ssh_host": cfg.SSHHost}, nil
+	return 200, h.containerServiceResult(ctx, record.ID, map[string]any{"id": record.ID, "name": record.Name, "port": record.Spec.Port, "ssh_host": cfg.SSHHost}), nil
 }

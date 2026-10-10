@@ -330,8 +330,15 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 			}
 			d := &daemon{manager: m, user: u, bootID: "boot", stateFile: t.TempDir() + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
 			err := d.add(options{Container: "-container", Host: testHost, SocketPath: "/run/custom.sock"})
-			if (err != nil) != (kind != "ok") {
+			waiting := kind == "paused" || kind == "stopped" || kind == "restarting"
+			if (err != nil) != (kind != "ok" && !waiting) {
 				t.Fatal(kind, err)
+			}
+			if waiting {
+				saved, e := loadBindings(d.stateFile)
+				if e != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Receipt != nil || saved.Bindings[0].Error == "" {
+					t.Fatalf("waiting association not persisted: %+v %v", saved, e)
+				}
 			}
 			wantAttach := kind == "ok" || kind == "socket-replaced" || kind == "container-restarted"
 			if attached != wantAttach {

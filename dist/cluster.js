@@ -8,7 +8,7 @@ function configure(){
   document.body.classList.toggle('control-room',central);
   document.querySelectorAll('[data-control-only]').forEach(e=>e.hidden=!central);
   document.querySelectorAll('.platform-nav [data-page]').forEach(e=>{
-    const nodePage=['dashboard','overview','containers','processes','gpus'].includes(e.dataset.page);
+    const nodePage=['dashboard','overview','containers','services','processes','gpus'].includes(e.dataset.page);
     e.hidden=(e.hasAttribute('data-control-only')?!central:nodePage?central:!!platform.nodeID)||(e.hasAttribute('data-admin')&&!admin());
   });
   document.querySelectorAll('[data-page="agent-settings"],[data-page="members"],[data-page="bastion"]').forEach(e=>e.hidden=!!platform.nodeID||!admin());
@@ -71,7 +71,7 @@ function renderNodeServices(n){
   const unavailable=state.refreshFailed?'刷新失败，状态待确认':!n.online?'节点离线，状态未知':!n.inventory?'节点详情不可用':'';
   const services=n.inventory?.services||[];
   const labels={running:'运行中',exited:'已停止',restarting:'重启中',paused:'已暂停',created:'尚未启动',removing:'移除中',dead:'异常',missing:'未部署',unknown:'状态未知'};
-  return `<section class="node-services" aria-label="节点服务状态"><div class="node-resource-heading"><span>节点服务</span><small>容器运行状态</small></div>${['tetragon','dram-bw','rootless-docker'].map(name=>{
+  return `<section class="node-services" aria-label="节点服务状态"><div class="node-resource-heading"><span>节点服务</span>${admin()?`<a data-open-node="${esc(n.id)}" href="/nodes/${esc(n.id)}/#services">管理服务 ↗</a>`:'<small>容器运行状态</small>'}</div>${['tetragon','dram-bw','rootless-docker'].map(name=>{
     const service=services.find(s=>s.name===name);
     const status=unavailable?'unknown':service?.state||'unknown';
     const detail=unavailable||service?.detail||'';

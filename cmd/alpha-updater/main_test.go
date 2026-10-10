@@ -131,6 +131,12 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 					}
 				}
 
+				if tc.role == "worker" && tc.version >= 36 && tc.version < 40 {
+					if _, err = db.SQL.Exec("DROP TRIGGER service_mount_owner; DROP TRIGGER service_mount_release; DROP TABLE node_service_mounts; DROP TABLE node_service_settings"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
 				if tc.downgrade != "" {
 					if _, err = db.SQL.Exec(tc.downgrade); err != nil {
 						t.Fatal(err)

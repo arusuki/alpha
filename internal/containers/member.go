@@ -97,6 +97,15 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 			return 200, map[string]bool{"ok": true}, nil
 		}
 		keys := ""
+		if r.Method == "DELETE" {
+			var mounted bool
+			if err := h.db.SQL.QueryRow("SELECT EXISTS(SELECT 1 FROM node_service_mounts WHERE owner=?)", req.Username).Scan(&mounted); err != nil {
+				return fail(err)
+			}
+			if mounted {
+				return fail(fmt.Errorf("请先在节点服务中取消此使用者的服务挂载，再回收资源"))
+			}
+		}
 		if r.Method == "PATCH" {
 			keys, err = sshkeys.NormalizeList(req.SSHKey)
 			if err != nil {
@@ -275,7 +284,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 		}
 		delete(value, "password")
 		value["ssh_host"] = cfg.SSHHost
-		return 200, value, nil
+		return 200, h.containerServiceResult(ctx, value["id"].(string), value), nil
 	}
 	c, err := h.verify(ctx, record)
 	if err != nil {
@@ -297,7 +306,7 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 			return fail(err)
 		}
 	}
-	return 200, map[string]any{"id": record.ID, "name": record.Name, "port": record.Spec.Port, "ssh_host": cfg.SSHHost}, nil
+	return 200, h.containerServiceResult(ctx, record.ID, map[string]any{"id": record.ID, "name": record.Name, "port": record.Spec.Port, "ssh_host": cfg.SSHHost}), nil
 }
 
 // Recovery must not legitimize an unrelated or externally reconfigured container.

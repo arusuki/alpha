@@ -3,6 +3,7 @@
 #include "backend.h"
 #include <errno.h>
 #include <getopt.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <math.h>
 #include <poll.h>
@@ -165,6 +166,8 @@ static void usage(FILE *out)
         "                          Format: PMU CPU KIND CONFIG CONFIG1 CONFIG2 BYTES_PER_COUNT.\n"
         "  --interval-us N         Delay after each scan in microseconds.\n"
         "                          Default: 100000; range: 100..10000000.\n"
+        "  --settings FILE         Optional persisted backend, interval and peak settings.\n"
+        "                          Overrides CLI values; missing file uses CLI defaults.\n"
         "  --peak-gbps N           Positive reference peak in decimal GB/s.\n"
         "                          Optional; omitted => utilization is NaN.\n"
         "  --socket-mode OCTAL     Socket permissions (default: 0660).\n"
@@ -197,7 +200,8 @@ static int number(const char *str, unsigned long long *out, int base)
 int main(int argc, char **argv)
 {
     const char *path = "/run/dram-bw/control.sock", *backend = "auto", *events = NULL;
-    const char *diagnostics = NULL;
+    const char *diagnostics = NULL, *settings = NULL;
+    char settings_backend[16];
     unsigned long long interval = 100000, mode = 0660, uid = 0;
     bool restrict_uid = false;
     double peak = 0;
@@ -205,6 +209,7 @@ int main(int argc, char **argv)
                                      {"backend", required_argument, NULL, 'b'},
                                      {"events", required_argument, NULL, 'e'},
                                      {"interval-us", required_argument, NULL, 'i'},
+                                     {"settings", required_argument, NULL, 'f'},
                                      {"peak-gbps", required_argument, NULL, 'p'},
                                      {"socket-mode", required_argument, NULL, 'm'},
                                      {"allow-uid", required_argument, NULL, 'u'},
@@ -225,6 +230,9 @@ int main(int argc, char **argv)
             break;
         case 'd':
             diagnostics = optarg;
+            break;
+        case 'f':
+            settings = optarg;
             break;
         case 'i':
             if (number(optarg, &interval, 10))
@@ -252,6 +260,37 @@ int main(int argc, char **argv)
             return 0;
         default:
             goto badargs;
+        }
+    }
+    if (settings) {
+        int fd = open(settings, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+        if (fd < 0 && errno != ENOENT) {
+            perror("dram-bwd settings");
+            return 1;
+        }
+        if (fd >= 0) {
+            struct stat st;
+            char line[160], interval_text[32], peak_text[64], extra;
+            FILE *file = fdopen(fd, "r");
+            if (!file) { close(fd); return 1; }
+            bool valid = !fstat(fd, &st) && S_ISREG(st.st_mode) &&
+                fgets(line, sizeof(line), file) && fgetc(file) == EOF && !ferror(file) &&
+                sscanf(line, "%15s %31s %63s %c", settings_backend, interval_text, peak_text, &extra) == 3;
+            fclose(file);
+            char *end = NULL;
+            errno = 0;
+            double value = valid ? strtod(peak_text, &end) : 0;
+            valid = valid && end != peak_text && !*end && !errno && isfinite(value) && value >= 0 && value <= 1000000;
+            valid = valid && !number(interval_text, &interval, 10) && interval >= 100 && interval <= 10000000;
+            valid = valid && (!strcmp(settings_backend, "auto") || !strcmp(settings_backend, "amd-rome") || !strcmp(settings_backend, "mock"));
+            if (!valid) {
+                fprintf(stderr, "Invalid DRAM settings in %s; file preserved.\n", settings);
+                return 2;
+            }
+            backend = settings_backend;
+            peak = value * 1e9;
+            /* A selected backend replaces custom event definitions as well. */
+            events = NULL;
         }
     }
     if (optind != argc || interval < 100 || interval > 10000000 || mode > 0777 || uid > UINT_MAX ||

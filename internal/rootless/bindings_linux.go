@@ -259,8 +259,8 @@ func (d *daemon) add(o options) error {
 	if err != nil {
 		return err
 	}
-	if !runningTarget(item.State) {
-		return errors.New("目标容器必须正在运行且未暂停")
+	if item.State.Running && item.State.Pid <= 1 {
+		return errors.New("目标容器 PID 无效，拒绝保存挂载")
 	}
 	o.SocketPath = path.Clean(o.SocketPath)
 	index := -1
@@ -275,6 +275,14 @@ func (d *daemon) add(o options) error {
 		index = len(d.store.Bindings) - 1
 	}
 	b := &d.store.Bindings[index]
+	if !runningTarget(item.State) {
+		b.Error = "等待目标容器启动或恢复运行"
+		if err := d.save(); err != nil {
+			return err
+		}
+		fmt.Fprintln(d.manager.out, "关联已保存，等待目标容器启动后挂载。")
+		return nil
+	}
 	err = d.attach(b, item)
 	b.Error = ""
 	if err != nil {
@@ -378,4 +386,48 @@ func (d *daemon) detachAll() error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// Observe without changing the stored intent. A saved receipt alone is never
+// proof of a live mount: verify boot, container incarnation, socket and mount ID.
+func (d *daemon) bindingStatuses() []map[string]any {
+	out := []map[string]any{}
+	for _, b := range d.store.Bindings {
+		state, detail := "unknown", ""
+		item, exists, err := d.findContainer(b.Host, b.Container)
+		switch {
+		case err != nil:
+			detail = err.Error()
+		case !exists:
+			state = "missing"
+			detail = "原容器已删除，未使用同名容器替代"
+		case !runningTarget(item.State):
+			state = "waiting"
+			detail = "等待目标容器启动或恢复运行"
+		case b.Receipt == nil || b.BootID != d.bootID || b.PID != item.State.Pid || b.StartedAt != item.State.StartedAt:
+			state = "pending"
+			detail = b.Error
+		default:
+			source, e := socketIdentity(layout(d.user).Socket)
+			if e != nil {
+				detail = e.Error()
+			} else if uint64(source.Dev) != b.Receipt.Device || source.Ino != b.Receipt.Inode {
+				state = "pending"
+				detail = "socket 已重建，等待恢复挂载"
+			} else {
+				var mounted bool
+				e = d.manager.workerResult(workerRequest{Action: "verify-mount", User: d.user, PID: b.PID, Destination: b.SocketPath, Receipt: b.Receipt}, &mounted)
+				if e != nil {
+					detail = e.Error()
+				} else if mounted {
+					state = "mounted"
+				} else {
+					state = "pending"
+					detail = b.Error
+				}
+			}
+		}
+		out = append(out, map[string]any{"host": b.Host, "container": b.Container, "name": b.Name, "socket_path": b.SocketPath, "state": state, "error": detail})
+	}
+	return out
 }

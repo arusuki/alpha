@@ -76,7 +76,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"/scan-schedule.js":   "scan-schedule.js",
 		"/clipboard.js":       "clipboard.js",
 		"/app.js":             "app.js", "/platform.js": "platform.js", "/settings.js": "settings.js", "/updates.js": "updates.js", "/mihomo.js": "mihomo.js",
-		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/containers.js": "containers.js",
+		"/agent.js": "agent.js", "/cleanup.js": "cleanup.js", "/dashboard.js": "dashboard.js", "/process.js": "process.js", "/services.js": "services.js", "/containers.js": "containers.js",
 		"/style.css": "style.css", "/workspace.css": "workspace.css",
 		"/cluster.js": "cluster.js", "/cluster.css": "cluster.css", "/auth.css": "auth.css", "/auth.js": "auth.js", "/members.js": "members.js", "/bastion.js": "bastion.js",
 	}

@@ -241,6 +241,11 @@ func Run(ctx context.Context, args []string) error {
 			return value, err
 		}}
 		containerHandler := newContainerHandler(db)
+		recoverCtx, recoverCancel := context.WithTimeout(ctx, 30*time.Second)
+		if err := containerHandler.ReconcileServices(recoverCtx); err != nil {
+			log.Printf("节点服务挂载恢复未完成：%v", err)
+		}
+		recoverCancel()
 		node.Services = containerHandler.ServiceStatuses
 		node.Module = Modules{Storage: storageHandler, Containers: containerHandler, Process: process.NewHandler(watcher), GPU: gpuMonitor}
 		handler = node

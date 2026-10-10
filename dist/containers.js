@@ -52,7 +52,7 @@ async function containerTask(fn){
   finally{if(generation===platform.generation){containerView.busy=false;containerControls();}}
 }
 function showContainerCredentials(value){
-  $('containerCredentials').textContent=`容器：${value.name}\nroot 密码：${value.password}\n${sshCommand(value.port)}`;
+  $('containerCredentials').textContent=`容器：${value.name}\nroot 密码：${value.password}\n${sshCommand(value.port)}${value.warning?"\n\n"+value.warning:""}`;
   $('containerCredentialsDialog').showModal();
 }
 function resetContainers(){
@@ -91,7 +91,7 @@ $('createContainerForm').addEventListener('submit',event=>{event.preventDefault(
     throw error;
   }
   if(generation!==platform.generation)return;
-  $('containersStatus').textContent=`已创建 ${result.name}。`;$('createContainerForm').reset();showContainerCredentials(result);await refreshContainers();
+  $('containersStatus').textContent=`已创建 ${result.name}。${result.warning||""}`;$('createContainerForm').reset();showContainerCredentials(result);await refreshContainers();
 });});
 const containerActionNames={start:'启动',stop:'停止',restart:'重启',delete:'删除',release:'解除接管',initialize:'初始化密码并启动'};
 $('managedContainerRows').addEventListener('click',event=>{
@@ -107,7 +107,7 @@ $('containerActionForm').addEventListener('submit',event=>{event.preventDefault(
   const result=await api(`/api/containers/${row.id}/${action}`,{method:'POST',body:JSON.stringify({confirm:$('containerConfirmName').value})});
   if(generation!==platform.generation)return;
   $('containerActionDialog').close();if(result.password)showContainerCredentials(result);
-  $('containersStatus').textContent=`${row.name}：${containerActionNames[action]}操作完成。`;await refreshContainers();
+  $('containersStatus').textContent=`${row.name}：${containerActionNames[action]}操作完成。${result.warning||""}`;await refreshContainers();
 });});
 $('containerActionClose').addEventListener('click',()=>$('containerActionDialog').close());
 $('containerActionDialog').addEventListener('cancel',event=>{if(containerView.busy)event.preventDefault();});

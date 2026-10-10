@@ -604,3 +604,74 @@ func TestRealUserSupervisorLease(t *testing.T) {
 		t.Fatal("dockerd substitute did not receive graceful stop", err)
 	}
 }
+
+func TestBindingStatusesVerifyLiveIdentity(t *testing.T) {
+	m, u := testManager(t)
+	u.Home = t.TempDir()
+	if err := os.MkdirAll(layout(u).Run, 0700); err != nil {
+		t.Fatal(err)
+	}
+	socketFile(t, layout(u).Socket)
+	source, err := socketIdentity(layout(u).Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := containerState{Pid: os.Getpid(), Running: true, StartedAt: "first"}
+	unavailable, missing, mounted := false, false, true
+	m.run = func(args, env []string, _ time.Duration, _ bool) (result, error) {
+		if unavailable {
+			return result{}, errors.New("Docker unavailable")
+		}
+		if strings.Contains(strings.Join(args, " "), "container ls") {
+			if missing {
+				return result{}, nil
+			}
+			return result{Out: "stable-id"}, nil
+		}
+		raw, _ := json.Marshal([]containerInfo{{Id: "stable-id", State: state}})
+		return result{Out: string(raw)}, nil
+	}
+	m.worker = func(r workerRequest, _ bool) error {
+		if r.Action != "verify-mount" {
+			t.Fatal("observation changed mount", r.Action)
+		}
+		return json.NewEncoder(m.out).Encode(mounted)
+	}
+	d := &daemon{manager: m, user: u, bootID: "boot", store: bindingStore{Version: 1, Bindings: []binding{{Host: testHost, Container: "stable-id", Name: "name", SocketPath: "/sock", BootID: "boot", PID: state.Pid, StartedAt: state.StartedAt, Receipt: &mountReceipt{Namespace: 1, Device: uint64(source.Dev), Inode: source.Ino, MountID: "4"}}}}}
+	check := func(want string) {
+		t.Helper()
+		before, _ := json.Marshal(d.store)
+		got := d.bindingStatuses()
+		after, _ := json.Marshal(d.store)
+		if len(got) != 1 || got[0]["state"] != want {
+			t.Fatal(got, want)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatal("observation changed persistence")
+		}
+	}
+	check("mounted")
+	mounted = false
+	check("pending")
+	mounted = true
+	state.StartedAt = "restarted"
+	check("pending")
+	state.StartedAt = "first"
+	d.bootID = "new-boot"
+	check("pending")
+	d.bootID = "boot"
+	state.Running = false
+	check("waiting")
+	state.Running = true
+	missing = true
+	check("missing")
+	missing = false
+	unavailable = true
+	check("unknown")
+	unavailable = false
+	if err := os.Rename(layout(u).Socket, layout(u).Socket+".old"); err != nil {
+		t.Fatal(err)
+	}
+	socketFile(t, layout(u).Socket)
+	check("pending")
+}
