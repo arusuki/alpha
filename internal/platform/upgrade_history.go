@@ -34,7 +34,6 @@ type databaseUpgrade struct {
 // groups all steps since the preceding changed tag into ONE update. Steps below
 // the generated BaseSchema can be removed when that retention window advances.
 var databaseUpgrades = []databaseUpgrade{
-	{From: 36, To: 37, Apply: upgradeScanSchedule},
 	{From: 37, To: 38, Apply: installMihomo},
 	{From: 38, To: 39, Apply: upgradeScheduledAgent},
 	{From: 39, To: 40, Apply: upgradeNodeServices},

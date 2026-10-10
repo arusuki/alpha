@@ -135,6 +135,6 @@ make -C ctools/dram-bw -j test
 
 前端测试需要 Node.js 20+，无需安装 npm 依赖。浏览器回归和 Docker 集成测试的运行方式见 [开发与验证](development.md#验证)。
 
-**0.8.0-rc1** 预发布新增 rootless Docker 管理 daemon 与持久挂载恢复、节点服务统一 Compose 部署、集群卡片实时服务状态，以及使用者和所属已接管容器的管理员密码重置。
+**0.8.0-rc2** 预发布新增节点服务网页管理、按使用者授权的 Rootless Docker socket 持久挂载，以及 DRAM 采集参数配置。已有数据库在生成的 tag 升级窗口内原地升级；镜像更新要求见[节点服务管理](node-services.md)。
 
 当前正式版为 **0.7.2**，仍在持续开发。1.0 发布前，数据库、配置、API 和快照格式可能变化。[alpha-updater](updater.md) 按角色更新本机程序并原地升级数据库，支持范围以构建生成的 tag 升级窗口为准；其他旧格式不匹配时使用新数据目录，保留已有数据。[数据保存与备份说明](operations.md#配置与数据)。

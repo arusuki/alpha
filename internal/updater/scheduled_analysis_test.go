@@ -19,9 +19,8 @@ func scheduledAnalysisOldDatabase(t *testing.T, role string, version int) *platf
 			t.Fatal(err)
 		}
 	}
-	if role == "worker" && version >= 37 {
-		if _, err := db.SQL.Exec(`ALTER TABLE settings ADD COLUMN schedule_last_run REAL NOT NULL DEFAULT 0;
-UPDATE settings SET value=json_set(value,'$.schedule_mode','interval','$.schedule_times',json('[]'),
+	if role == "worker" {
+		if _, err := db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.schedule_mode','interval','$.schedule_times',json('[]'),
 '$.schedule_weekdays',json('[0,1,2,3,4,5,6]'),'$.schedule_timezone','UTC','$.retain_records',7);`); err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +80,7 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{36, 37, 38} {
+			for _, version := range []int{37, 38} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := scheduledAnalysisOldDatabase(t, role, version)
 					for range 2 {
@@ -135,13 +134,13 @@ func TestScheduledAnalysisBuiltUpdater(t *testing.T) {
 		}
 		t.Run(entry+"/unsupported", func(t *testing.T) {
 			db := oldDatabase(t, "worker")
-			if _, err := db.SQL.Exec("PRAGMA user_version=35"); err != nil {
+			if _, err := db.SQL.Exec("PRAGMA user_version=36"); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 				t.Fatal("unsupported database accepted")
 			}
-			assertVersion(t, db, 35)
+			assertVersion(t, db, 36)
 		})
 	}
 }

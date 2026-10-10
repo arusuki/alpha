@@ -142,6 +142,6 @@ make -C ctools/dram-bw -j test
 
 Frontend tests require Node.js 20+ and have no npm dependencies. See [development and verification](docs/development.md#验证) for browser regression tests and Docker integration tests.
 
-The **0.8.0-rc1** prerelease adds a rootless Docker management daemon with persistent mount recovery, unified Compose deployment for node services, live service status on cluster cards, and administrator password resets for members and their managed containers.
+The **0.8.0-rc2** prerelease adds web controls for node services, persistent Rootless Docker socket access by member, and configurable DRAM collection parameters. Existing databases are upgraded in place within the generated tagged upgrade window. See [node service management](docs/node-services.md) for deployment requirements.
 
 The current stable release is **0.7.2**, and the project is under active development. Before 1.0, database, configuration, API, and snapshot formats may change. [alpha-updater](docs/updater.md) updates local release binaries and upgrades databases in place, within the generated tagged upgrade window. Other incompatible formats require a new data directory; existing data is preserved. See [data storage and backups](docs/operations.md#配置与数据).

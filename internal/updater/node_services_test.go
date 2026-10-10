@@ -62,7 +62,7 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{36, 37, 38, 39, 40} {
+			for _, version := range []int{37, 38, 39, 40} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := nodeServicesOldDatabase(t, role, version)
 					for range 2 {
@@ -149,14 +149,14 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 			}
 		})
 		t.Run(entry+"/unsupported", func(t *testing.T) {
-			db := nodeServicesOldDatabase(t, "worker", 36)
-			if _, err := db.SQL.Exec("PRAGMA user_version=35"); err != nil {
+			db := nodeServicesOldDatabase(t, "worker", 37)
+			if _, err := db.SQL.Exec("PRAGMA user_version=36"); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 				t.Fatal("unsupported accepted", err)
 			}
-			assertVersion(t, db, 35)
+			assertVersion(t, db, 36)
 			var name string
 			if err := db.SQL.QueryRow("SELECT name FROM managed_containers WHERE id='kept-container'").Scan(&name); err != nil || name != "kept-name" {
 				t.Fatal("unsupported data changed", name, err)

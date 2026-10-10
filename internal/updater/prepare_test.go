@@ -21,7 +21,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 		t.Run(fmt.Sprint(tamper), func(t *testing.T) {
 			db := oldDatabase(t, "registry")
 			bin := t.TempDir()
-			original := script("project-alpha", "v0.5.0")
+			original := script("project-alpha", "v0.5.4")
 			writeFile(t, filepath.Join(bin, "project-alpha"), original)
 			lock, err := db.LockService()
 			if err != nil {
@@ -36,7 +36,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 			if prepared == nil {
 				t.Fatal("missing staged release")
 			}
-			assertVersion(t, db, 36)
+			assertVersion(t, db, 37)
 			got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 			if string(got) != string(original) {
 				t.Fatal("preparation replaced running program")
@@ -61,7 +61,7 @@ func TestPrepareRunningServiceAndInstallOffline(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "checksum changed") {
 					t.Fatal(err)
 				}
-				assertVersion(t, db, 36)
+				assertVersion(t, db, 37)
 				got, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 				if string(got) != string(original) {
 					t.Fatal("tampered update modified installation")
@@ -96,7 +96,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func TestPublishedNoticeDownloadsWithoutAPI(t *testing.T) {
 	db := oldDatabase(t, "registry")
 	bin := t.TempDir()
-	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.5.0"))
+	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.5.4"))
 	g := releaseServer(t, script("alpha-updater", "v0.6.0"), false)
 	transport := g.client.Transport
 	requests := 0

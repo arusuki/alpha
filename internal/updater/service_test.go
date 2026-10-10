@@ -72,7 +72,7 @@ func TestServiceFailureRestartsAndRecoveryMarkerStopsRestart(t *testing.T) {
 func TestExplicitHTTPProxyIsUsedForGitHub(t *testing.T) {
 	db := oldDatabase(t, "registry")
 	bin := t.TempDir()
-	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.5.0"))
+	writeFile(t, filepath.Join(bin, "project-alpha"), script("project-alpha", "v0.5.4"))
 	seen := make(chan string, 1)
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { seen <- r.Method + " " + r.Host; w.WriteHeader(502) }))
 	defer proxy.Close()
