@@ -46,11 +46,12 @@ make help
 | `build/libdram_bw.a` | 客户端静态库，链接进应用 | `make` | 应用连接时需要 |
 | `build/libdram_bw.so` | 客户端动态库，运行时加载 | `make` | 应用连接时需要 |
 | `build/test-core` | 核心单元测试 | `make build/test-core` | 否 |
+| `build/test-peak` | 内存峰值估算测试 | `make build/test-peak` | 否，使用临时固件数据 |
 | `build/test-client` | 客户端 API 测试 | `make build/test-client` | 是，指定配置的 mock daemon |
 | `build/bench-ring` | 共享内存传输基准 | `make build/bench-ring` | 否，自行创建生产者和消费者 |
 | `build/*.o` | 编译中间文件，不能直接运行 | 按依赖自动生成 | 不适用 |
 
-`client.o`、`ipc.o` 组成客户端库；`daemon.o`、`backend.o`、`ring.o`、`ipc.o` 链接成服务端。
+`client.o`、`ipc.o` 组成客户端库；`daemon.o`、`backend.o`、`peak.o`、`ring.o`、`ipc.o` 链接成服务端。
 `dram-bw-consume` 链接的是静态客户端库，运行时无需项目的 `.so`，仍依赖系统运行库。
 
 | make 命令 | 行为 |
@@ -64,7 +65,7 @@ make help
 | `make clean` | 删除当前 `BUILD` 目录，保留测量结果 |
 | `make help` | 显示构建目标和变量，不构建、不启动程序 |
 
-所有五个可执行程序均支持 `-h` / `--help`；帮助不会连接 socket、打开 PMU 或执行测试。
+所有可执行程序均支持 `-h` / `--help`；帮助不会连接 socket、打开 PMU 或执行测试。
 帮助写到 stdout，退出码为 0；参数错误写到 stderr，退出码为 2。
 
 ### 打包 release
@@ -133,6 +134,7 @@ sudo make server
 | `SERVER_BACKEND` | `amd-rome`；可设 `mock` 验证启动流程 |
 | `SERVER_INTERVAL_US` | `1000000`，传给 daemon 的等待间隔 |
 | `SERVER_UID` / `SERVER_GID` | sudo 调用者的 UID/GID，否则当前用户；root shell 中应显式指定目标用户 |
+| `SERVER_PEAK_GBPS` | `0`，自动估算参考峰值；正数覆盖估算，单位 GB/s |
 | `SERVER_REFERENCE` | `0`；设为 `1` 同时启动 perf 对照，仅支持 Rome |
 
 会话信息位于 `/run/dram-bw/current.json`，诊断位于独立的 `/run/dram-bw/session-*/`。
@@ -143,6 +145,8 @@ Ctrl-C 停止脚本启动的进程，保留日志。硬件访问需要 root 或�
 sudo install -d -m 0755 /run/dram-bw
 sudo ./build/dram-bwd --backend amd-rome --interval-us 100000
 ```
+
+未指定 `--peak-gbps`（或设为 `0`）时，Rome 后端自动估算用于计算利用率的理论峰值：优先读取 SMBIOS 内存配置，读取不到时按 Rome 通道规格估算。日志会显示数值、来源及假设；手动指定正数可覆盖，`make server` 使用 `SERVER_PEAK_GBPS=数值`。估算方法和限制见[技术参考](docs/reference.md#参考峰值自动估算)。
 
 直接启动时 socket 的组由服务进程的运行组决定，普通客户端须属于授权组。不同启动方式不要同时占用同一个 socket。
 
@@ -246,7 +250,7 @@ docker run --rm \
 | `Permission denied` | 检查父目录和 socket 权限、运行组，以及宿主机视角的 `--allow-uid` |
 | `DRAM backend unavailable` | 检查 CPU、驱动、PMU 权限或自定义事件；只试运行流程时显式选择 mock |
 | `Address already in use` / 拒绝替换 socket | 确认是否已有服务；SIGKILL 可能留下路径，确认原进程退出后再清理 |
-| 读写带宽或利用率是 `nan` | Rome 仅有总带宽；利用率需要参考峰值；同时检查 `INVALID` 状态位 |
+| 读写带宽或利用率是 `nan` | Rome 仅有总带宽；自定义事件和 mock 需手动设置参考峰值；同时检查 `INVALID` 状态位 |
 | `libdram_bw.so: cannot open shared object file` | 设置动态库搜索路径，或安装库后执行 `ldconfig` |
 | `dropped` 增长 | 该客户端队列满时丢新样本；提高消费速度或调整自定义客户端的容量 |
 

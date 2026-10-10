@@ -19,7 +19,7 @@
 | `--events FILE` | 无 | 自定义 PMU 事件文件，配合 `--backend auto` 使用 |
 | `--settings FILE` | 不读取文件 | 读取网页保存的后端、间隔和参考峰值，优先于命令参数；文件不存在时使用命令参数，格式无效则报错并保留文件 |
 | `--interval-us N` | `100000` | 每轮处理结束后的等待微秒数，范围 100–10000000 |
-| `--peak-gbps N` | 无 | 计算利用率用的正数参考峰值，单位十进制 GB/s |
+| `--peak-gbps N` | `0`（自动） | 参考峰值，范围 0–1000000，单位十进制 GB/s；正数覆盖估算 |
 | `--socket-mode OCTAL` | `0660` | socket 文件权限，八进制 |
 | `--allow-uid HOST_UID` | 无额外 UID 限制 | 限制可连接的宿主机视角 UID；文件权限仍生效 |
 | `--diagnostics FILE` | 关闭 | 追加逐事件和聚合样本 JSONL，增加文件 I/O |
@@ -57,7 +57,7 @@ stdout 只输出 CSV，stderr 输出诊断和结束统计，因此 `> samples.cs
 | `flags` | 十进制状态位集合，按位判断，详见 [完整标志表](reference.md#时间与状态标志) |
 | `missed_ticks` | 额外跨过的完整目标间隔数 |
 
-**Rome 只提供总带宽**，所以读写两列为 `nan`。未设置 `--peak-gbps` 时利用率为 `nan`。
+**Rome 只提供总带宽**，所以读写两列为 `nan`。未设置 `--peak-gbps` 或设为 `0` 时，Rome 使用[自动估算的理论峰值](reference.md#参考峰值自动估算)，样本带 `PEAK_ESTIMATED`；自定义事件和 mock 的利用率仍为 `nan`。
 `nan` 表示未知或无效，不能当作零；硬件读取异常会设置 `INVALID` 标志。
 正常读完或帮助返回 0，连接/读取失败返回 1，参数错误返回 2。
 
@@ -97,4 +97,4 @@ API 中带宽单位是 **B/s**，命令行客户端才会转换为 GB/s。
 
 ### 网页服务配置文件
 
-容器镜像入口指定 `--settings /run/dram-bw/service-settings`。文件为一行 `BACKEND INTERVAL_US PEAK_GBPS`（如 `amd-rome 100000 0`），后端仅接受 `auto`、`amd-rome`、`mock`，间隔范围 100–10000000 微秒，参考峰值范围 0–1000000 GB/s。0 表示不计算利用率。设置文件中的后端也取代命令行自定义事件文件；自定义 PMU 事件部署应保持由命令行管理，不在网页保存采集参数。配置在启动时读取，修改后须重启采集器；不会改变订阅协议或共享内存格式。
+容器镜像入口指定 `--settings /run/dram-bw/service-settings`。文件为一行 `BACKEND INTERVAL_US PEAK_GBPS`（如 `amd-rome 100000 0`），后端仅接受 `auto`、`amd-rome`、`mock`，间隔范围 100–10000000 微秒，参考峰值范围 0–1000000 GB/s。0 表示未指定峰值：Rome 自动估算，自定义事件和 mock 不计算利用率。设置文件中的后端也取代命令行自定义事件文件；自定义 PMU 事件部署应保持由命令行管理，不在网页保存采集参数。配置在启动时读取，修改后须重启采集器；不会改变订阅协议或共享内存格式。

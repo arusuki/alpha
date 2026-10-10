@@ -120,7 +120,7 @@ def server_wrapper_test(directory):
     server_directory = Path(directory) / "server"
     command = [sys.executable, str(root / "scripts/server.py"),
                "--directory", str(server_directory), "--backend", "mock",
-               "--interval-us", "1000"]
+               "--interval-us", "1000", "--peak-gbps", "3"]
     # Exercise the default path for normal builds and the override for others.
     if BUILD != root / "build":
         command.extend(["--build", str(BUILD)])
@@ -140,6 +140,7 @@ def server_wrapper_test(directory):
         assert second.returncode != 0 and os.stat(path).st_ino == inode
         output = subprocess.check_output([str(BUILD / "dram-bw-consume"), path, "5"], timeout=5)
         assert len(output.splitlines()) == 6
+        assert all(float(line.split(b",")[6]) == .5 for line in output.splitlines()[1:])
     finally:
         process.terminate()
         process.wait(timeout=10)
@@ -152,7 +153,7 @@ def persisted_settings_test(directory):
     path = directory + "/settings.sock"
     # Persisted settings override the deployment flags, on every restart.
     command = [str(BUILD / "dram-bwd"), "--backend", "auto", "--interval-us", "100000",
-               "--socket", path, "--settings", str(settings)]
+               "--socket", path, "--peak-gbps", "10", "--settings", str(settings)]
     for interval, peak in [(20000, 3), (50000, 0)]:
         settings.write_text(f"mock {interval} {peak}\n")
         process = subprocess.Popen(command)
@@ -169,6 +170,11 @@ def persisted_settings_test(directory):
                         os.close(fd)
             output = subprocess.check_output([str(BUILD / "dram-bw-consume"), path, "3"], timeout=5)
             assert len(output.splitlines()) == 4
+            for line in output.splitlines()[1:]:
+                columns = line.split(b",")
+                utilization, flags = float(columns[6]), int(columns[7])
+                assert not flags & 128  # Mock never borrows a host hardware estimate.
+                assert utilization == .5 if peak else math.isnan(utilization) and flags & 64
         finally:
             process.terminate()
             assert process.wait(timeout=5) == 0
@@ -182,7 +188,7 @@ def persisted_settings_test(directory):
         assert settings.read_text() == content and not os.path.exists(path)
     settings.unlink()
     # First deployment has no saved settings; explicit CLI flags still work.
-    process = subprocess.Popen(command + ["--backend", "mock"])
+    process = subprocess.Popen(command + ["--backend", "mock", "--peak-gbps", "0"])
     try:
         wait_ready(process, path)
     finally:
@@ -271,7 +277,8 @@ def run():
                 p.wait(timeout=5)
         # Refuse unsupported backend and invalid numerical configuration.
         for args in (["--backend", "typo"], ["--interval-us", "0"],
-                     ["--peak-gbps", "nan"], ["--socket-mode", "888"],
+                     ["--peak-gbps", "nan"], ["--peak-gbps", "-1"],
+                     ["--peak-gbps", "1000001"], ["--socket-mode", "888"],
                      ["--interval-us", " -18446744073709451616"]):
             r = subprocess.run([str(BUILD / "dram-bwd")] + args, capture_output=True, timeout=5)
             assert r.returncode != 0

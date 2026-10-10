@@ -39,6 +39,8 @@ sudo python3 scripts/server.py --build bin --backend amd-rome \
 
 Ctrl-C 停止包装脚本创建的进程，保留会话日志。也可直接运行 `./bin/dram-bwd --help` 查看服务端选项，自行准备 socket 父目录及访问权限。
 
+Rome 默认自动估算用于计算利用率的理论峰值：优先使用 SMBIOS 内存配置速率和通道映射，信息不足时按 Rome 规格及插槽均衡分布等假设估算。日志会显示数值、来源和假设；普通服务用户无法读取 SMBIOS 时按满通道 DDR4-3200 估算，可能高于实际峰值。向 server 脚本或 daemon 传入 `--peak-gbps 正数` 可使用手动参考值，`0` 表示自动。mock 和自定义事件需手动提供正数才能计算利用率。
+
 ## 链接客户端库
 
 将自己的程序保存为 `client.c`，使用 `#include <dram_bw.h>`。两种链接方式：

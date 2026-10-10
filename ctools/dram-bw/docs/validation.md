@@ -71,6 +71,10 @@ mkdir -p /tmp/dram-bw-test
 语法：`test-client [选项] SOCKET`。通过时输出 `client: ... passed`，失败时断言终止。手动启动的服务完成后用 Ctrl-C 关闭。
 集成测试脚本也可单独运行：`python3 tests/integration.py build`，帮助为 `python3 tests/integration.py --help`；需先构建测试所需产物。
 
+### `test-peak`
+
+`make build/test-peak && ./build/test-peak` 使用临时 SMBIOS 二进制数据验证已配置/额定/扩展速率、ECC 数据位宽、空槽、双路与同通道多 DIMM、不同通道速率求和、缺失/重复通道映射、损坏固件和规格回退。无需 root 或真实 PMU。`make test` 同时检查估算状态位、手动覆盖、mock 不借用硬件峰值，以及设置文件和包装脚本的参数优先级。
+
 ### `bench-ring`
 
 衡量共享内存记录传输开销，自行创建生产者和消费者两个进程，无需另开 daemon 或使用 PMU。
@@ -146,7 +150,7 @@ make build/bench-ring
 | 撤销负载 | 无新增负载 | 2.933 | 2.733 / 0.200 |
 | 容器重启后 | 无新增负载 | 3.512 | 2.930 / 0.582 |
 
-720 条样本全部有效且不含 MOCK；dropped、LATE、WINDOW_SKEW 和读取错误均为 0。全部样本 flags 为 84，即 MULTIPLEXED、TOTAL_ONLY、PEAK_UNKNOWN；Rome 只提供总带宽，未设置峰值时利用率为 NaN，均符合预期。计数器运行比例中位数约 50.01%，最长扫描 0.415 ms。正常停止删除 socket，重启后普通用户可重新连接并获得有效样本；测试结束已移除测试容器和负载进程，原有 daemon 与 socket 保持运行。
+720 条样本全部有效且不含 MOCK；dropped、LATE、WINDOW_SKEW 和读取错误均为 0。全部样本 flags 为 84，即 MULTIPLEXED、TOTAL_ONLY、PEAK_UNKNOWN；Rome 只提供总带宽，当时版本未设置峰值时利用率为 NaN，均符合预期（现版本默认自动估算峰值）。计数器运行比例中位数约 50.01%，最长扫描 0.415 ms。正常停止删除 socket，重启后普通用户可重新连接并获得有效样本；测试结束已移除测试容器和负载进程，原有 daemon 与 socket 保持运行。
 
 本次验证了容器访问真实 PMU、负载响应、跨容器 socket/共享内存通信及正常启停，不包含独立 `perf stat` 精度对照或强制终止后的恢复。背景有其他任务，各阶段背景流量并非恒定，也不将本次吞吐视为硬件峰值。
 

@@ -168,8 +168,10 @@ static void usage(FILE *out)
         "                          Default: 100000; range: 100..10000000.\n"
         "  --settings FILE         Optional persisted backend, interval and peak settings.\n"
         "                          Overrides CLI values; missing file uses CLI defaults.\n"
-        "  --peak-gbps N           Positive reference peak in decimal GB/s.\n"
-        "                          Optional; omitted => utilization is NaN.\n"
+        "  --peak-gbps N           Reference peak in decimal GB/s; range: 0..1000000.\n"
+        "                          0 = auto (default); positive values override estimation.\n"
+        "                          Rome: estimate from SMBIOS, else platform specifications.\n"
+        "                          Custom events/mock need a positive explicit peak.\n"
         "  --socket-mode OCTAL     Socket permissions (default: 0660).\n"
         "  --allow-uid HOST_UID    Restrict connections to this host-visible UID.\n"
         "                          Default: access controlled by socket permissions.\n"
@@ -251,7 +253,7 @@ int main(int argc, char **argv)
             char *end;
             errno = 0;
             peak = strtod(optarg, &end) * 1e9;
-            if (errno || end == optarg || *end || !isfinite(peak) || peak <= 0)
+            if (errno || end == optarg || *end || !isfinite(peak) || peak < 0 || peak > 1e15)
                 goto badargs;
             break;
         }
@@ -343,10 +345,18 @@ int main(int argc, char **argv)
     fprintf(stderr, "dram-bwd: %s backend=%s counters=%zu delay=%llu us\n", path,
             s->backend.mock ? "MOCK" : (s->backend.total_only ? "perf-total" : "perf-read-write"),
             s->backend.count, interval);
-    if (peak > 0)
-        fprintf(stderr, "utilization reference peak: %.3f GB/s\n", peak / 1e9);
+    if (s->backend.peak_estimate.bytes_per_sec > 0)
+        fprintf(stderr,
+                "estimated utilization reference peak: %.3f GB/s [%s]; %s. "
+                "Theoretical estimate, not measured sustainable bandwidth; "
+                "override with --peak-gbps.\n",
+                s->backend.peak / 1e9, s->backend.peak_estimate.source,
+                s->backend.peak_estimate.detail);
+    else if (s->backend.peak > 0)
+        fprintf(stderr, "utilization reference peak: %.3f GB/s (manual)\n", s->backend.peak / 1e9);
     else
-        fprintf(stderr, "reporting bandwidth; utilization unavailable (no --peak-gbps)\n");
+        fprintf(stderr, "reporting bandwidth; utilization unavailable "
+                        "(no applicable estimate; set --peak-gbps)\n");
     if (diagnostics)
         fprintf(stderr, "diagnostics: %s (appending raw snapshots; extra I/O enabled)\n",
                 diagnostics);

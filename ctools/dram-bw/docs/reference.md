@@ -28,7 +28,24 @@ utilization = total_bytes_per_sec / peak_bytes_per_sec
 
 `enabled/running` 的含义见 [perf_event_open](https://man7.org/linux/man-pages/man2/perf_event_open.2.html)。这些速率是复用估计值；短窗口和突发负载可能产生误差。任何通道读取失败、没有运行时间或时间增量异常，整个样本标记 INVALID 并返回 NaN。有效时间窗口内的零计数是有效的 0 B/s。读取失败后的第一次成功读取仅重建基线，下一次才恢复计算。
 
-`--peak-gbps` 必须与计数器覆盖范围一致，可按实际通道配置与内存速率计算，或采用相同覆盖范围的 STREAM 实测值。不提供峰值时带宽仍有效，利用率为 NaN，设置 PEAK_UNKNOWN。利用率不截断到 1。
+`--peak-gbps` 必须与计数器覆盖范围一致，可按实际通道配置与内存速率计算，或采用相同覆盖范围的 STREAM 实测值。不提供正数峰值时 Rome 自动估算；不适用估算的后端利用率为 NaN，设置 PEAK_UNKNOWN。利用率不截断到 1。
+
+### 参考峰值自动估算
+
+`--peak-gbps` 省略或为 `0` 时，内置 Rome 后端在启动时估算一次，不运行内存压力测试。正数手动值直接使用。配置文件仍优先于命令行；其中 `0` 同样表示自动。估算不改变 PMU 流量的计算，只提供利用率分母。
+
+计算公式为 `Σ(通道速率 MT/s × 10^6 × 数据位宽 / 8)`，结果使用十进制 GB/s。DDR 的 MT/s 已含双沿传输，不再乘 2；64 位数据总线不包含 ECC 校验位。Rome 每个 DF 实例对应八个通道，通道上限来自后端实际枚举的 PMU 范围，不按 CPU 线程数或 NUMA 节点数计算。[AMD Rome 规格](https://www.amd.com/content/dam/amd/en/documents/products/epyc/amd-epyc-7002-series-datasheet.pdf)给出的每路上限是八通道 DDR4-3200，即 204.8 GB/s。
+
+读取 `/sys/firmware/dmi/tables/DMI`，不依赖 `dmidecode` 外部命令：
+
+1. 使用 SMBIOS Type 17 的已安装 DDR4 内存信息，优先取 **Configured Memory Speed**，支持扩展速率字段，忽略空槽。配置速率缺失时取额定速率，仍缺失时假定 3200 MT/s；数据位宽未知时假定 Rome 的 64 位，并在日志注明假设。
+2. Type 37 完整映射所有已安装 DIMM 时，每个实际占用通道只计算一次，同通道多条 DIMM 取最低速率，再按通道求和，来源为 `smbios-channels`。
+3. 缺少完整通道映射时，假设均衡插槽布局，通道数取 `min(已安装 DIMM 数, Rome 通道上限)`，速率取所有 DIMM 的最低值，来源为 `smbios-rome`。同通道多 DIMM、不均衡插槽布局可能导致误差；不从厂商自定义槽位名称猜测通道。
+4. 固件缺失、不可读或无效时，来源为 `rome-spec`，假设所有 PMU 覆盖的通道满配 DDR4-3200。双路完整覆盖时为 409.6 GB/s，实际未满配或降频时会高估。
+
+这是**理论峰值估算**，不是 STREAM 实测可持续带宽，不额外套用固定效率系数。受固件质量、插槽布局和实际负载影响，实测峰值可能更低。日志显示数值、来源和假设，诊断 session 记录 `peak_bytes_per_sec`、`peak_source`、`peak_detail`；客户端 `dbw_get_stats()` 返回采用的峰值，样本带 `PEAK_ESTIMATED`。如需以实测可持续峰值计算利用率，请提供相同采集范围的手动值。
+
+普通服务用户通常无权读取原始 SMBIOS，会使用 `rome-spec`；现有 privileged Compose 部署可通过只读 `/sys` 读取宿主机信息，无需为估算扩大常驻服务权限。自定义 `--events` 的范围无法自动确认，mock 也不代表真实内存，两者均需手动设置正数，否则保持 `PEAK_UNKNOWN`。
 
 ## 时间与状态标志
 
@@ -48,7 +65,8 @@ utilization = total_bytes_per_sec / peak_bytes_per_sec
 | LATE | 8 | 跨过额外的完整目标间隔 |
 | TOTAL_ONLY | 16 | 仅提供总带宽 |
 | WINDOW_SKEW | 32 | 当前或上次扫描耗时超过目标间隔 10% |
-| PEAK_UNKNOWN | 64 | 未配置利用率参考峰值 |
+| PEAK_UNKNOWN | 64 | 无可用的利用率参考峰值 |
+| PEAK_ESTIMATED | 128 | 利用率分母使用自动估算的理论峰值 |
 | READ_ERROR | 256 | perf 读取失败或长度异常 |
 | NO_BASELINE | 512 | 仅重建读取基线 |
 | TIME_BACKWARDS | 1024 | enabled/running 累计时间回退 |
@@ -57,7 +75,7 @@ utilization = total_bytes_per_sec / peak_bytes_per_sec
 | RUNNING_GT_ENABLED | 8192 | running 增量超过 enabled 增量 |
 | ZERO_INTERVAL | 16384 | 两轮扫描结束时间相同 |
 
-C 常量均带 `DBW_SAMPLE_` 前缀。原因位按全部通道合并；PEAK_UNKNOWN、LATE、WINDOW_SKEW 本身不使带宽失效。
+C 常量均带 `DBW_SAMPLE_` 前缀。原因位按全部通道合并；PEAK_UNKNOWN、PEAK_ESTIMATED、LATE、WINDOW_SKEW 本身不使带宽失效。
 
 ## 数据通路与开销
 

@@ -287,6 +287,13 @@ int dbw_backend_open(struct dbw_backend *b, const char *name, const char *events
         int saved = errno;
         dbw_backend_close(b);
         errno = saved;
+    } else if (!events && peak == 0) {
+        /* open_rome enumerates every DF instance and its eight channels.
+         * Custom event files may cover only part of the host; do not apply
+         * a host-wide denominator to them (or to synthetic mock traffic). */
+        dbw_peak_estimate_rome("/sys/firmware/dmi/tables/DMI", (unsigned)b->count,
+                               &b->peak_estimate);
+        b->peak = b->peak_estimate.bytes_per_sec;
     }
     return ret;
 }
@@ -381,8 +388,11 @@ int dbw_backend_diagnostics_open(struct dbw_backend *b, const char *path)
     fprintf(f,
             "{\"type\":\"session\",\"pid\":%ld,\"counters\":%zu,\"mock\":%s,"
             "\"rate_formula\":\"delta_count*bytes_per_count*1e9/delta_running_ns\","
-            "\"peak_bytes_per_sec\":%.17g}\n",
-            (long)getpid(), b->count, b->mock ? "true" : "false", b->peak);
+            "\"peak_bytes_per_sec\":%.17g,\"peak_source\":\"%s\",\"peak_detail\":\"%s\"}\n",
+            (long)getpid(), b->count, b->mock ? "true" : "false", b->peak,
+            b->peak_estimate.bytes_per_sec > 0 ? b->peak_estimate.source
+                                               : (b->peak > 0 ? "manual" : "unknown"),
+            b->peak_estimate.detail);
     if (fflush(f)) {
         int saved = errno;
         fclose(f);
@@ -565,6 +575,8 @@ void dbw_backend_sample(struct dbw_backend *b, dbw_sample *s, uint64_t interval_
         s->read_bytes_per_sec = s->write_bytes_per_sec = s->total_bytes_per_sec = NAN;
     if (b->peak <= 0)
         s->flags |= DBW_SAMPLE_PEAK_UNKNOWN;
+    else if (b->peak_estimate.bytes_per_sec > 0)
+        s->flags |= DBW_SAMPLE_PEAK_ESTIMATED;
     s->utilization = b->peak > 0 ? s->total_bytes_per_sec / b->peak : NAN;
     write_diagnostics(b, s, interval_ns, scan_ns);
     b->previous_ns = s->timestamp_ns;

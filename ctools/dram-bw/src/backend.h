@@ -1,6 +1,7 @@
 #ifndef DBW_BACKEND_H
 #define DBW_BACKEND_H
 #include "dram_bw.h"
+#include "peak.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -35,6 +36,7 @@ struct dbw_backend {
     uint64_t previous_ns, sequence;
     uint64_t previous_scan_ns;
     double peak;
+    struct dbw_peak_estimate peak_estimate;
     FILE *diagnostics;
 };
 int dbw_backend_open(struct dbw_backend *b, const char *name, const char *events, double peak);

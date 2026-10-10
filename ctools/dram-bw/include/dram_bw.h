@@ -28,6 +28,7 @@ extern "C" {
 #define DBW_SAMPLE_TOTAL_ONLY 16u   /* Read/write split unavailable; use total. */
 #define DBW_SAMPLE_WINDOW_SKEW 32u  /* Current/previous scan > 10% of target period. */
 #define DBW_SAMPLE_PEAK_UNKNOWN 64u /* Reference peak unavailable; utilization NaN. */
+#define DBW_SAMPLE_PEAK_ESTIMATED 128u /* Utilization uses an estimated theoretical peak. */
 /* INVALID includes one or more of these reasons (OR across all counters). */
 #define DBW_SAMPLE_READ_ERROR (1u << 8)
 #define DBW_SAMPLE_NO_BASELINE (1u << 9)
@@ -69,7 +70,7 @@ typedef struct {
     uint64_t dropped;          /* New records discarded because this ring was full. */
     uint64_t available;        /* Queued records not yet consumed. */
     uint64_t interval_ns;      /* Minimum delay after each completed scan. */
-    double peak_bytes_per_sec; /* Reference peak; 0 if not configured. */
+    double peak_bytes_per_sec; /* Manual/estimated reference peak; 0 if unavailable. */
     uint32_t capacity;         /* Ring capacity in records. */
     uint32_t state;            /* DBW_STOPPED, DBW_RUNNING or DBW_DEAD. */
 } dbw_stats;

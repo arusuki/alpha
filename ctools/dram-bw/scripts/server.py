@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import select
@@ -30,6 +31,8 @@ def main():
                         help="hardware backend, or explicit synthetic data")
     parser.add_argument("--interval-us", type=int, default=1000000,
                         help="daemon delay after each scan, in microseconds (100..10000000)")
+    parser.add_argument("--peak-gbps", type=float, default=0,
+                        help="reference peak in GB/s; 0 estimates Rome hardware, positive overrides")
     parser.add_argument("--uid", type=int, default=os.getuid(), help="host UID allowed to connect")
     parser.add_argument("--gid", type=int, default=os.getgid(), help="group owning the socket and logs")
     parser.add_argument("--reference", type=int, choices=(0, 1), default=0,
@@ -37,6 +40,8 @@ def main():
     args = parser.parse_args()
     if not 100 <= args.interval_us <= 10000000 or min(args.uid, args.gid) < 0:
         parser.error("invalid interval or uid/gid")
+    if not math.isfinite(args.peak_gbps) or not 0 <= args.peak_gbps <= 1000000:
+        parser.error("peak must be 0..1000000 GB/s (0 = automatic)")
     if args.reference and args.backend != "amd-rome":
         parser.error("perf reference requires the real amd-rome backend")
     if os.geteuid() != 0 and (args.uid != os.getuid() or args.gid != os.getgid()):
@@ -68,6 +73,7 @@ def main():
     daemon_command = [str(args.build.resolve() / "dram-bwd"),
                       "--backend", args.backend, "--socket", str(socket),
                       "--interval-us", str(args.interval_us), "--socket-mode", "0660",
+                      "--peak-gbps", str(args.peak_gbps),
                       "--allow-uid", str(args.uid), "--diagnostics", str(session / "diagnostics.jsonl")]
     metadata = {"created_utc": datetime.now(timezone.utc).isoformat(),
                 "socket": str(socket), "session": str(session), "uid": args.uid,

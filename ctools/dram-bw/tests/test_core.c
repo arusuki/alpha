@@ -169,9 +169,31 @@ static void snapshot_test(bool diagnostics)
     assert(isnan(s.total_bytes_per_sec));
     feed_counter(&b.counters[0], (struct dbw_counter_value){600, 600000000, 600000000});
     b.peak = 128000;
+    b.peak_estimate.bytes_per_sec = b.peak;
     dbw_backend_sample(&b, &s, 100000000);
     assert(!(s.flags & DBW_SAMPLE_INVALID) && !(s.flags & DBW_SAMPLE_PEAK_UNKNOWN));
     assert(s.total_bytes_per_sec == 64000 && s.utilization == .5);
+    assert(s.flags & DBW_SAMPLE_PEAK_ESTIMATED);
+    dbw_backend_close(&b);
+}
+
+static void peak_override_test(void)
+{
+    struct dbw_backend b;
+    dbw_sample sample;
+    assert(dbw_backend_open(&b, "mock", NULL, 3e9) == 0);
+    assert(b.peak == 3e9 && b.peak_estimate.bytes_per_sec == 0);
+    assert(dbw_backend_start(&b) == 0);
+    dbw_backend_sample(&b, &sample, 1000000);
+    assert(sample.utilization == .5);
+    assert(!(sample.flags & (DBW_SAMPLE_PEAK_ESTIMATED | DBW_SAMPLE_PEAK_UNKNOWN)));
+    dbw_backend_close(&b);
+    assert(dbw_backend_open(&b, "mock", NULL, 0) == 0);
+    assert(b.peak == 0 && b.peak_estimate.bytes_per_sec == 0);
+    assert(dbw_backend_start(&b) == 0);
+    dbw_backend_sample(&b, &sample, 1000000);
+    assert(isnan(sample.utilization) && (sample.flags & DBW_SAMPLE_PEAK_UNKNOWN));
+    assert(!(sample.flags & DBW_SAMPLE_PEAK_ESTIMATED));
     dbw_backend_close(&b);
 }
 
@@ -295,6 +317,7 @@ int main(int argc, char **argv)
     perf_math_test();
     snapshot_test(false);
     snapshot_test(true);
+    peak_override_test();
     config_test();
     ipc_test();
     puts("core: ring overflow/wrap, hostile cursor, memfd seals, per-counter rates, read recovery, "

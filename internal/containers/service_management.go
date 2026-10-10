@@ -72,7 +72,7 @@ func (c ServiceConfig) validate(name string) error {
 			return errors.New("DRAM 采样间隔必须为 100–10000000 微秒")
 		}
 		if math.IsNaN(c.DRAM.PeakGBPS) || math.IsInf(c.DRAM.PeakGBPS, 0) || c.DRAM.PeakGBPS < 0 || c.DRAM.PeakGBPS > 1000000 {
-			return errors.New("DRAM 参考峰值必须为 0–1000000 GB/s，0 表示不设置")
+			return errors.New("DRAM 参考峰值必须为 0–1000000 GB/s，0 表示自动估算（Rome）")
 		}
 	} else if c.DRAM != nil {
 		return errors.New("此服务不支持 DRAM 采集参数")
