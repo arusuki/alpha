@@ -8,6 +8,7 @@ services=[]
 for name in ['tetragon','dram-bw','rootless-docker']:
     rootless=name=='rootless-docker'
     services.append(dict(name=name,state='running',checked_at=1,config=dict(restart_policy='unless-stopped',stop_timeout=120 if rootless else 10,control_socket='/run/rootless-docker/control.sock' if rootless else '',socket_path='/var/run/docker.sock' if rootless else '',users=[])))
+services[1]['config'].update(control_socket='/run/dram-bw-manager/control.sock',socket_path='/run/dram-bw/control.sock')
 services[1]['config']['dram']=dict(backend='amd-rome',interval_us=100000,peak_gbps=0)
 calls=[]
 mode='normal'
@@ -20,7 +21,7 @@ class Handler(NodeHandler):
         if path=='/api/state':return self.respond(dict(jobs=[],directory_jobs=[],latest_id=None,active=None,interval_minutes=0))
         if path=='/api/containers/services':
             if mode=='offline':return self.respond(dict(error='节点离线'),503)
-            return self.respond(dict(services=services,candidates=[dict(owner='alice',name='<training>&alice',container_id='a'*64,initialized=True)],mounts=[dict(owner='alice',name='<training>&alice',container_id='a'*64,socket_path='/var/run/docker.sock',state='unknown' if mount_error else 'mounted',error='')] if 'alice' in services[2]['config']['users'] else [],external_mounts=[],mount_error=mount_error))
+            return self.respond(dict(services=services,candidates=[dict(owner='alice',name='<training>&alice',container_id='a'*64,initialized=True)],mounts=[dict(service=s['name'],owner='alice',name='<training>&alice',container_id='a'*64,socket_path=s['config']['socket_path'],state='unknown' if s['name']=='rootless-docker' and mount_error else 'mounted',error='') for s in services if 'alice' in s['config']['users']],external_mounts=[],mount_errors={'rootless-docker':mount_error,'dram-bw':''}))
         self.serve_asset()
     def mutate(self):
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -77,15 +78,26 @@ try:
         page.locator('[data-service-select="dram-bw"]').click()
         mount_error='Rootless 管理服务不支持 bindings 命令，请使用与主程序匹配的源码重新构建并部署 rootless-docker 服务'
         page.locator('#servicesRefresh').click()
-        expect(page.locator('#serviceMountsHint')).to_have_text(mount_error)
-        expect(page.locator('#serviceMountPanel')).to_be_hidden()
+        expect(page.locator('#serviceMountsHint')).not_to_have_text(mount_error)
+        expect(page.locator('#serviceMountPanel')).to_be_visible()
+        expect(page.locator('#serviceMounts')).not_to_contain_text('<training>&alice')
         dram=page.locator('[data-service="dram-bw"]')
+        dram.locator('[name=users][value=alice]').check()
+        dram.locator('[name=socket_path]').fill('/run/dram-custom.sock')
+        dram.locator('[data-default-path=socket_path]').click()
+        expect(dram.locator('[name=socket_path]')).to_have_value('/run/dram-bw/control.sock')
         dram.locator('[name=interval_us]').fill('250000')
         expect(dram.locator('[data-frequency]')).to_contain_text('4 Hz')
         dram.locator('[name=backend]').select_option('auto')
         dram.locator('[name=peak_gbps]').fill('256')
         dram.get_by_role('button',name='保存并应用配置').click()
         expect(page.locator('#servicesMessage')).to_have_text('操作已完成。')
+        assert calls[-1][2]['users']==['alice']
+        assert calls[-1][2]['control_socket']=='/run/dram-bw-manager/control.sock'
+        assert services[2]['config']['users']==['alice']
+        expect(page.locator('#serviceMounts')).to_contain_text('/run/dram-bw/control.sock')
+        expect(page.locator('#serviceMounts')).not_to_contain_text('/var/run/docker.sock')
+        expect(page.locator('#serviceMounts tr')).to_have_count(1)
         assert calls[-1][2]['dram']==dict(backend='auto',interval_us=250000,peak_gbps=256)
         services[1]['state']='restarting'
         page.locator('#servicesRefresh').click()
@@ -108,6 +120,8 @@ try:
         capture_preview(page, '/tmp/alpha-node-services-dram.png')
         page.locator('[data-service-select="rootless-docker"]').click()
         expect(page.locator('#serviceMountsHint')).to_be_visible()
+        expect(page.locator('#serviceMounts')).to_contain_text('/var/run/docker.sock')
+        expect(page.locator('#serviceMounts')).not_to_contain_text('/run/dram-bw/control.sock')
         expect(page.locator('#serviceMountsHint')).to_have_text(mount_error)
         mode='failure' 
         root.get_by_role('button',name='停止',exact=True).click()

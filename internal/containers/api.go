@@ -19,7 +19,7 @@ type Handler struct {
 	db                *platform.Database
 	run               command
 	serviceRun        command
-	rootlessControl   func(context.Context, string, []string) (string, error)
+	mountControl      func(context.Context, ServiceConfig, []string) (string, error)
 	mu                sync.Mutex
 	permissionCommand func(context.Context, string, ...string) *exec.Cmd
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
@@ -31,7 +31,7 @@ type Handler struct {
 }
 
 func NewHandler(db *platform.Database) *Handler {
-	return &Handler{db: db, run: runDocker, serviceRun: runServiceDocker, rootlessControl: callRootless}
+	return &Handler{db: db, run: runDocker, serviceRun: runServiceDocker, mountControl: callServiceControl}
 }
 func IsRoute(path string) bool {
 	return path == "/api/containers" || strings.HasPrefix(path, "/api/containers/")

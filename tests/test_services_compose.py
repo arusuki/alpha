@@ -20,7 +20,8 @@ with tempfile.TemporaryDirectory(prefix='alpha-services-') as directory:
     override = root / 'override.json'
     override.write_text(json.dumps({'services': {'dram-bw': {
         'container_name': project,
-        'volumes': [f'{root}:/run/dram-bw'],
+        'image': os.environ.get('DRAM_TEST_IMAGE','project-alpha-dram-bw:local'),
+        'volumes': [f'{root}/samples:/run/dram-bw',f'{root}/manager:/run/dram-bw-manager',f'{root}/state:/var/lib/dram-bw-manager'],
         'command': ['--backend', 'mock', '--interval-us', '1000', '--peak-gbps', '3',
                     '--socket', '/run/dram-bw/control.sock', '--socket-mode', '0660'],
     }}}))
@@ -31,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-services-') as directory:
         return subprocess.run(args, env=env, check=True, text=True, capture_output=True, timeout=45, **kwargs).stdout
 
     def consume():
-        path = root / 'control.sock'
+        path = root / 'samples/control.sock'
         for _ in range(100):
             if path.exists():
                 break
@@ -39,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='alpha-services-') as directory:
         assert path.is_socket(), run(['docker', 'logs', project])
         assert stat.S_IMODE(path.stat().st_mode) == 0o660
         assert path.stat().st_gid == os.getgid()
-        result = run([str(repo / 'ctools/dram-bw/build/dram-bw-consume'), str(path), '3'])
+        result = run([os.environ.get('DRAM_TEST_CLIENT',str(repo / 'ctools/dram-bw/build/dram-bw-consume')), str(path), '3'])
         rows = list(csv.DictReader(io.StringIO(result)))
         assert len(rows) == 3, result
         assert all(float(row['total_GBps']) == 1.5 for row in rows), result
@@ -55,10 +56,11 @@ with tempfile.TemporaryDirectory(prefix='alpha-services-') as directory:
         args = ['docker', 'container', 'ls', '--all', '--filter', f'label=com.docker.compose.project={project}', '--filter', 'label=project-alpha.service', '--format', template]
         assert json.loads(run(args))['state'] == 'running'
         run(compose + ['stop', 'dram-bw'])
-        assert not (root / 'control.sock').exists(), 'normal stop must clean up socket'
+        assert not (root / 'samples/control.sock').exists(), 'normal stop must clean up socket'
         assert json.loads(run(args))['state'] == 'exited'
         run(compose + ['start', 'dram-bw'])
         consume()
         print('Compose: privileged daemon, group access, host client samples, live/stopped states and restart passed')
     finally:
         run(compose + ['down', '--timeout', '5'])
+        run(['docker','run','--rm','--network=none','-v',f'{root}:/test','alpine:latest','chown','-R',f'{os.getuid()}:{os.getgid()}','/test'])

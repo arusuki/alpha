@@ -30,8 +30,8 @@ func TestRootlessUnsupportedCommand(t *testing.T) {
 	})}
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
-	s.handler.rootlessControl = func(ctx context.Context, _ string, args []string) (string, error) {
-		return callRootless(ctx, socket, args)
+	s.handler.mountControl = func(ctx context.Context, _ ServiceConfig, args []string) (string, error) {
+		return callServiceControl(ctx, ServiceConfig{ControlSocket: socket}, args)
 	}
 	code, out := call(s.handler, "GET", servicesPath, "", admin)
 	if code != 200 || !strings.Contains(out, "重新构建并部署 rootless-docker") || !strings.Contains(out, socket) || !strings.Contains(out, "未知命令：bindings") || strings.Contains(out, `"state":"mounted"`) {
@@ -62,8 +62,8 @@ func TestRootlessOtherControlError(t *testing.T) {
 	})}
 	go server.Serve(listener)
 	t.Cleanup(func() { server.Close() })
-	_, err = callRootless(context.Background(), socket, []string{"bindings"})
-	if err == nil || err.Error() != "Rootless 管理请求失败（400）：请求格式无效" {
+	_, err = callServiceControl(context.Background(), ServiceConfig{ControlSocket: socket}, []string{"bindings"})
+	if err == nil || err.Error() != "服务管理请求失败（400）：请求格式无效" {
 		t.Fatal("unrelated error misreported as unsupported command", err)
 	}
 }

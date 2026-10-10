@@ -166,12 +166,12 @@ func (d *daemon) attach(b *binding, item containerInfo) error {
 	if !runningTarget(item.State) {
 		return errors.New("目标容器尚未运行或已暂停，等待启动事件")
 	}
-	source, err := socketIdentity(layout(d.user).Socket)
+	source, err := socketIdentity(d.source())
 	if err != nil {
 		return err
 	}
 	if source.Mode&syscall.S_IFMT != syscall.S_IFSOCK || source.Uid != d.user.UID {
-		return errors.New("rootless socket 类型或所属用户不正确")
+		return errors.New("服务 socket 类型或所属用户不正确")
 	}
 	if b.Receipt != nil {
 		// Repeated add is idempotent. Re-enter the worker to verify the mount,
@@ -211,7 +211,7 @@ func (d *daemon) attach(b *binding, item containerInfo) error {
 func (d *daemon) mount(b *binding, item containerInfo, before syscall.Stat_t) (mountReceipt, error) {
 	m, u := d.manager, d.user
 	var receipt mountReceipt
-	if err := m.verifyDaemon(u); err != nil {
+	if err := d.verifySource(); err != nil {
 		return receipt, err
 	}
 	r, err := m.docker(u, b.Host, "info", "--format", "{{json .}}")
@@ -233,7 +233,7 @@ func (d *daemon) mount(b *binding, item containerInfo, before syscall.Stat_t) (m
 	if strings.Join(strings.Fields(string(mapping)), " ") != "0 0 4294967295" {
 		return receipt, errors.New("暂不支持启用 userns-remap 的目标容器。")
 	}
-	source := layout(u).Socket
+	source := d.source()
 	if err = m.workerResult(workerRequest{Action: "attach", User: u, PID: state.Pid, Source: source, Destination: b.SocketPath}, &receipt); err != nil {
 		return receipt, err
 	}
@@ -242,7 +242,7 @@ func (d *daemon) mount(b *binding, item containerInfo, before syscall.Stat_t) (m
 		return receipt, err
 	}
 	if before.Dev != after.Dev || before.Ino != after.Ino {
-		return receipt, errors.New("rootless daemon 在挂载时重建了 socket，请重新执行 add。")
+		return receipt, errors.New("服务在挂载时重建了 socket，请重新执行 add。")
 	}
 	latest, err := m.inspect(u, b.Host, item.Id)
 	if err != nil {
@@ -408,7 +408,7 @@ func (d *daemon) bindingStatuses() []map[string]any {
 			state = "pending"
 			detail = b.Error
 		default:
-			source, e := socketIdentity(layout(d.user).Socket)
+			source, e := socketIdentity(d.source())
 			if e != nil {
 				detail = e.Error()
 			} else if uint64(source.Dev) != b.Receipt.Device || source.Ino != b.Receipt.Inode {

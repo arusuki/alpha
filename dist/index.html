@@ -266,7 +266,7 @@
   <nav id="serviceNav" class="service-nav" aria-label="选择服务"></nav>
   <div class="service-content">
    <div id="serviceCards"></div>
-   <article id="serviceMountPanel" class="management-panel" hidden><div class="section-heading"><div><p class="eyebrow">CONTAINER ACCESS</p><h2>当前挂载</h2></div></div><p id="serviceMountsHint" role="status"></p><p class="form-note">修改容器归属、删除或解除接管前，请先取消服务挂载。命令行关联通过 rootless-docker remove 管理。</p><div class="table-scroll"><table class="service-mount-table"><thead><tr><th>使用者</th><th>容器</th><th>容器内路径</th><th>挂载状态</th><th>管理来源</th></tr></thead><tbody id="serviceMounts"></tbody></table></div></article>
+   <article id="serviceMountPanel" class="management-panel" hidden><div class="section-heading"><div><p class="eyebrow">CONTAINER ACCESS</p><h2>当前挂载</h2></div></div><p id="serviceMountsHint" role="status"></p><p class="form-note">修改容器归属、删除或解除接管前，请先取消服务挂载。命令行关联通过 rootless-docker remove 管理，使用对应服务的管理 socket。</p><div class="table-scroll"><table class="service-mount-table"><thead><tr><th>使用者</th><th>容器</th><th>容器内路径</th><th>挂载状态</th><th>管理来源</th></tr></thead><tbody id="serviceMounts"></tbody></table></div></article>
   </div>
  </div>
 </section>

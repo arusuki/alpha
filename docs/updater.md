@@ -24,7 +24,7 @@ go build -o bin/alpha-updater ./cmd/alpha-updater
 
 worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器。运行账号须能访问节点配置中的本机 Docker socket、执行 Docker CLI / Compose v2，并读取原 Compose 文件及环境文件；不需要 sudo。普通业务容器和未部署的节点服务不在更新范围内。权限不足、同标签容器重复、非 Compose 部署或配置缺失时，在准备阶段明确失败，不停服安装。
 
-发布包提供静态 Rootless / DRAM 二进制和 `deploy/updater-services.json` 镜像描述。准备阶段用发布包的二进制构建 scratch 镜像，拉取指定的 Tetragon 镜像，并固定镜像 ID；节点无需安装 Go 或 C 编译器。镜像拉取使用 Docker daemon 自身的网络和代理配置。原 Compose 参数（含 override、环境文件、授权 GID、挂载目录、命令、日志和网络）解析后保存到安装目录内权限受限的 `.alpha-service-deploy-*`，运行策略沿用容器当前值。运行的服务重建后恢复运行，停止的服务保持停止；Rootless 还验证 `status` 和 `bindings` 接口。不会删除 Docker 数据、卷或挂载关联。安装阶段检查容器身份和配置是否在准备期间改变；发生改变则要求重新准备。
+发布包提供静态 Rootless / DRAM 二进制和 `deploy/updater-services.json` 镜像描述。准备阶段用发布包的二进制构建 scratch 镜像，拉取指定的 Tetragon 镜像，并固定镜像 ID；节点无需安装 Go 或 C 编译器。镜像拉取使用 Docker daemon 自身的网络和代理配置。原 Compose 参数（含 override、环境文件、授权 GID、挂载目录、命令、日志和网络）解析后保存到安装目录内权限受限的 `.alpha-service-deploy-*`，运行策略沿用容器当前值。运行的服务重建后恢复运行，停止的服务保持停止；Rootless 和更新后的 DRAM 均验证 `status` 和 `bindings` 接口。DRAM 镜像同时打包采集与独立挂载管理二进制，并补齐 host PID/user namespace 及管理、关联记录目录；已有采集目录和参数保留。不会删除 Docker 数据、卷或挂载关联。安装阶段检查容器身份和配置是否在准备期间改变；发生改变则要求重新准备。
 
 镜像 ID 和生成配置都一致的服务跳过重建。Rootless 的更新验收直接访问其宿主机管理 socket。
 

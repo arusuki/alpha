@@ -43,6 +43,8 @@ func serviceConfigDefault(name string) ServiceConfig {
 	c := ServiceConfig{RestartPolicy: "unless-stopped", StopTimeout: 10, Users: []string{}}
 	if name == "dram-bw" {
 		c.DRAM = &DRAMConfig{Backend: "amd-rome", IntervalUS: 100000}
+		c.ControlSocket = "/run/dram-bw-manager/control.sock"
+		c.SocketPath = "/run/dram-bw/control.sock"
 	}
 	if name == rootlessService {
 		c.StopTimeout = 120
@@ -50,6 +52,13 @@ func serviceConfigDefault(name string) ServiceConfig {
 		c.SocketPath = "/var/run/docker.sock"
 	}
 	return c
+}
+func mountService(name string) bool { return name == rootlessService || name == "dram-bw" }
+func (c ServiceConfig) mountService() string {
+	if c.DRAM != nil {
+		return "dram-bw"
+	}
+	return rootlessService
 }
 func serviceName(name string) bool {
 	return name == "tetragon" || name == "dram-bw" || name == rootlessService
@@ -84,7 +93,7 @@ func (c ServiceConfig) validate(name string) error {
 		}
 		seen[user] = true
 	}
-	if name != rootlessService {
+	if !mountService(name) {
 		if c.ControlSocket != "" || c.SocketPath != "" || len(c.Users) != 0 {
 			return errors.New("此服务不向使用者容器提供 socket 挂载")
 		}
@@ -164,12 +173,13 @@ func serviceStateError(c inspection, name string) error {
 	return nil
 }
 
-func callRootless(ctx context.Context, socket string, args []string) (string, error) {
+func callServiceControl(ctx context.Context, c ServiceConfig, args []string) (string, error) {
+	socket := c.ControlSocket
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}
 	defer transport.CloseIdleConnections()
-	data, _ := json.Marshal(map[string]any{"args": args})
+	data, _ := json.Marshal(map[string]any{"args": args, "service": c.mountService()})
 	req, err := http.NewRequestWithContext(ctx, "POST", "http://rootless/_rootless/control", bytes.NewReader(data))
 	if err != nil {
 		return "", err
@@ -177,7 +187,7 @@ func callRootless(ctx context.Context, socket string, args []string) (string, er
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := (&http.Client{Transport: transport}).Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Rootless 管理 socket 不可用：%w", err)
+		return "", fmt.Errorf("服务管理 socket 不可用：%w", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -187,9 +197,9 @@ func callRootless(ctx context.Context, socket string, args []string) (string, er
 	if resp.StatusCode != 200 {
 		detail := strings.TrimSpace(string(raw))
 		if resp.StatusCode == http.StatusBadRequest && len(args) > 0 && detail == "未知命令："+args[0] {
-			return "", fmt.Errorf("Rootless 管理服务不支持 %s 命令，请使用与主程序匹配的源码重新构建并部署 rootless-docker 服务；同时确认管理 socket %s 指向更新后的服务。已有挂载记录已保留，无需清空配置。原始错误（%d）：%s", args[0], socket, resp.StatusCode, detail)
+			return "", fmt.Errorf("服务管理接口不支持 %s 命令，请使用与主程序匹配的源码重新构建并部署 %s 服务；同时确认管理 socket %s 指向更新后的服务。已有挂载记录已保留，无需清空配置。原始错误（%d）：%s", args[0], c.mountService(), socket, resp.StatusCode, detail)
 		}
-		return "", fmt.Errorf("Rootless 管理请求失败（%d）：%s", resp.StatusCode, detail)
+		return "", fmt.Errorf("服务管理请求失败（%d）：%s", resp.StatusCode, detail)
 	}
 	var result struct {
 		Output string `json:"output"`
@@ -203,20 +213,20 @@ func callRootless(ctx context.Context, socket string, args []string) (string, er
 	}
 	return result.Output, nil
 }
-func (h *Handler) waitRootless(ctx context.Context, c ServiceConfig) error {
+func (h *Handler) waitServiceSocket(ctx context.Context, c ServiceConfig) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	var last error
 	for {
 		attempt, stop := context.WithTimeout(ctx, 3*time.Second)
-		_, last = h.rootlessControl(attempt, c.ControlSocket, []string{"status"})
+		_, last = h.mountControl(attempt, c, []string{"status"})
 		stop()
 		if last == nil {
 			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("服务容器已启动，但 Rootless 尚未就绪；可重试应用挂载：%w", last)
+			return fmt.Errorf("服务容器已启动，但 socket 管理接口尚未就绪；可重试应用挂载：%w", last)
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
@@ -225,8 +235,8 @@ func (h *Handler) waitRootless(ctx context.Context, c ServiceConfig) error {
 // The image entrypoint reads this file on every start. Copying works for both
 // running and stopped containers and preserves all other deployment settings.
 func (h *Handler) applyDRAMConfig(ctx context.Context, endpoint string, service inspection, c ServiceConfig) error {
-	if service.Config.Labels["project-alpha.dram-settings"] != "1" || !slices.Equal(service.Config.Entrypoint, []string{"/usr/local/bin/dram-bwd", "--settings", "/run/dram-bw/service-settings"}) {
-		return errors.New("DRAM 镜像不支持网页配置，请重新构建并部署 dram-bw 服务")
+	if service.Config.Labels["project-alpha.dram-settings"] != "2" || !slices.Equal(service.Config.Entrypoint, []string{"/rootless-docker", "--dram-daemon"}) {
+		return errors.New("DRAM 镜像不支持授权挂载与网页配置，请重新构建并部署 dram-bw 服务")
 	}
 	payload := fmt.Sprintf("%s %d %s\n", c.DRAM.Backend, c.DRAM.IntervalUS, strconv.FormatFloat(c.DRAM.PeakGBPS, 'g', -1, 64))
 	var archive bytes.Buffer
@@ -323,7 +333,7 @@ func (h *Handler) dispatchServices(w http.ResponseWriter, r *http.Request, user 
 	if !saving && (r.Method != "POST" || !slices.Contains([]string{"start", "stop", "restart", "apply"}, action)) {
 		return 0, nil, httpapi.NewError(405, "不支持该服务操作")
 	}
-	if action == "apply" && name != rootlessService {
+	if action == "apply" && !mountService(name) {
 		return fail(errors.New("此服务不提供使用者挂载"))
 	}
 	current, err := h.serviceConfig(name)
@@ -338,12 +348,12 @@ func (h *Handler) dispatchServices(w http.ResponseWriter, r *http.Request, user 
 		if err = next.validate(name); err != nil {
 			return fail(err)
 		}
-		if name == rootlessService {
+		if mountService(name) {
 			mounts, e := h.serviceMounts()
 			if e != nil {
 				return fail(e)
 			}
-			if current.ControlSocket != next.ControlSocket && len(mounts) > 0 {
+			if current.ControlSocket != next.ControlSocket && slices.ContainsFunc(mounts, func(m ServiceMount) bool { return m.Service == name }) {
 				return fail(errors.New("请先取消所有受管理挂载，再更换管理 socket"))
 			}
 			// Revoke access before committing the new selection. Failed removals stay
@@ -367,7 +377,10 @@ func (h *Handler) dispatchServices(w http.ResponseWriter, r *http.Request, user 
 	if err = serviceStateError(c, name); err != nil {
 		return fail(err)
 	}
-	if name == rootlessService && (action == "stop" || action == "restart") {
+	// DRAM restart retains daemon associations: its shutdown/startup journal owns
+	// detach/restore. This also lets saved sampling parameters repair a crashed
+	// collector when its management socket is temporarily unavailable.
+	if mountService(name) && (action == "stop" || name == rootlessService && action == "restart") {
 		if err = h.revokeServiceMounts(ctx, current, current, true); err != nil {
 			return fail(fmt.Errorf("未能撤销挂载，尚未停止服务：%w", err))
 		}
@@ -389,9 +402,9 @@ func (h *Handler) dispatchServices(w http.ResponseWriter, r *http.Request, user 
 			return fail(err)
 		}
 	}
-	if name == rootlessService && action != "stop" && (!saving || c.State.Running) {
-		if !saving {
-			if err = h.waitRootless(ctx, current); err != nil {
+	if mountService(name) && action != "stop" && (!saving || c.State.Running || c.State.Restarting) {
+		if !saving || name == "dram-bw" {
+			if err = h.waitServiceSocket(ctx, current); err != nil {
 				return fail(err)
 			}
 		}

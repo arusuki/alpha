@@ -25,7 +25,7 @@ func (d *daemon) syncWatchers() {
 		for _, b := range d.store.Bindings {
 			wanted[b.Host] = true
 		}
-		if len(wanted) > 0 {
+		if len(wanted) > 0 && d.sourceSocket == "" {
 			wanted["unix://"+layout(d.user).Socket] = true
 		}
 	}
@@ -57,7 +57,11 @@ func (d *daemon) syncWatchers() {
 // stay buffered in the stream. On reconnect, inspecting current state also
 // covers any gap without replaying duplicate historical events.
 func (d *daemon) watchEvents(ctx context.Context, host string, watcher *eventWatcher) {
-	transport := unixTransport(strings.TrimPrefix(host, "unix://"))
+	socket := strings.TrimPrefix(host, "unix://")
+	transport := unixTransport(socket)
+	if d.sourceSocket != "" {
+		transport = hostUnixTransport(socket)
+	}
 	transport.ResponseHeaderTimeout = 10 * time.Second
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
@@ -141,7 +145,7 @@ func (d *daemon) consumeEvents(ctx context.Context, client *http.Client, endpoin
 }
 
 func (d *daemon) reconcileSocket() error {
-	source, err := socketIdentity(layout(d.user).Socket)
+	source, err := socketIdentity(d.source())
 	if err != nil {
 		return err
 	}

@@ -34,8 +34,8 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 	}
 	s := &serviceFixture{handler: h, docker: f, bindings: []rootlessBinding{}}
 	s.service.ID = strings.Repeat("b", 64)
-	s.service.Config.Labels = map[string]string{"project-alpha.service": rootlessService, "project-alpha.dram-settings": "1"}
-	s.service.Config.Entrypoint = []string{"/usr/local/bin/dram-bwd", "--settings", "/run/dram-bw/service-settings"}
+	s.service.Config.Labels = map[string]string{"project-alpha.service": rootlessService, "project-alpha.dram-settings": "2"}
+	s.service.Config.Entrypoint = []string{"/rootless-docker", "--dram-daemon"}
 	s.service.State.Running = true
 	s.service.State.Status = "running"
 	h.run = func(ctx context.Context, endpoint string, args []string, input string) (string, error) {
@@ -78,7 +78,7 @@ func newServiceFixture(t *testing.T) *serviceFixture {
 		}
 		return "", nil
 	}
-	h.rootlessControl = func(ctx context.Context, socket string, args []string) (string, error) {
+	h.mountControl = func(ctx context.Context, c ServiceConfig, args []string) (string, error) {
 		s.calls = append(s.calls, "rootless "+strings.Join(args, " "))
 		if s.fail == args[0] {
 			return "", errors.New("injected " + args[0])
@@ -209,7 +209,7 @@ func TestServiceAttachFailurePersistsIntentAndRetriesAfterRestart(t *testing.T) 
 	// Recreate the handler as a worker restart would; recover from database intent.
 	next := NewHandler(s.handler.db)
 	next.run = s.handler.run
-	next.rootlessControl = s.handler.rootlessControl
+	next.mountControl = s.handler.mountControl
 	if err = next.ReconcileServices(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestMonitoringServicesHaveIndependentSettingsAndControls(t *testing.T) {
 		}
 	}
 	for _, c := range s.calls {
-		if strings.HasPrefix(c, "rootless ") {
+		if strings.HasPrefix(c, "rootless add") || strings.HasPrefix(c, "rootless remove") {
 			t.Fatal("monitoring service touched rootless mounts", c)
 		}
 	}
@@ -358,7 +358,7 @@ func TestInvalidBindingResponseCannotClearJournal(t *testing.T) {
 	if code, out := s.configure(t, "alice"); code != 200 {
 		t.Fatal(code, out)
 	}
-	s.handler.rootlessControl = func(context.Context, string, []string) (string, error) { return `[{}]`, nil }
+	s.handler.mountControl = func(context.Context, ServiceConfig, []string) (string, error) { return `[{}]`, nil }
 	if code, _ := s.configure(t); code == 200 {
 		t.Fatal("malformed observations accepted")
 	}

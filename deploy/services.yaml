@@ -59,11 +59,14 @@ services:
 
   dram-bw:
     build:
-      context: ../ctools/dram-bw
+      context: ..
+      dockerfile: ctools/dram-bw/Dockerfile
     image: project-alpha-dram-bw:local
     container_name: dram-bw
     privileged: true
-    # PMU counters describe the host; clients need only the socket directory.
+    # PMU counters describe the host. The manager injects only the sampling socket.
+    pid: host
+    userns_mode: host
     network_mode: none
     user: "0:${DRAM_BW_GID:-0}"
     restart: unless-stopped
@@ -72,6 +75,8 @@ services:
     volumes:
       - /sys:/sys:ro
       - /run/dram-bw:/run/dram-bw
+      - /run/dram-bw-manager:/run/dram-bw-manager
+      - /var/lib/dram-bw-manager:/var/lib/dram-bw-manager
     command:
       - --backend
       - "${DRAM_BW_BACKEND:-amd-rome}"

@@ -71,6 +71,8 @@ add / remove <容器名或ID>：
 
 test：默认 rootless-cli-test；exec 还需客户端能访问宿主机 Docker。
 管理服务生命周期由前台进程或 Docker Compose start/stop 控制。
+--dram-daemon [dram-bwd 参数]：独立 DRAM 采集与挂载管理入口，不启动 Docker 引擎。
+DRAM 管理 socket：/run/dram-bw-manager/control.sock；客户端设置 ROOTLESS_CONTROL_SOCKET。
 `
 
 func parseOptions(args []string) (options, error) {
@@ -285,7 +287,9 @@ func controlSocket() string {
 // Main keeps interactive Docker execution on the client, never in the daemon.
 func Main(args []string) int {
 	var err error
-	if len(args) == 1 && args[0] == "--internal-worker" {
+	if len(args) > 0 && args[0] == "--dram-daemon" {
+		err = runDRAMDaemon(args[1:])
+	} else if len(args) == 1 && args[0] == "--internal-worker" {
 		err = workerMain()
 	} else if len(args) == 3 && args[0] == "--internal-supervisor" {
 		err = supervise(args[1], args[2])

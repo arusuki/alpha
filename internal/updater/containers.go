@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,8 +25,9 @@ import (
 const serviceManifest = "node-services.json"
 
 type serviceImage struct {
-	Name, Image, Binary, Dockerfile string
-	Entrypoint                      []string
+	Name, Image, Dockerfile string
+	Binaries                []string
+	Entrypoint              []string
 }
 
 // Resolved Compose documents contain environment values: keep them private and
@@ -115,6 +117,18 @@ func inspectService(ctx context.Context, run dockerCommand, endpoint, id string)
 	if err = json.Unmarshal(all[0], &doc); err != nil {
 		return c, nil, err
 	}
+	// Docker does not guarantee Mounts order across identical inspections.
+	var mounts []map[string]any
+	if err = json.Unmarshal(doc["Mounts"], &mounts); err != nil {
+		return c, nil, err
+	}
+	slices.SortFunc(mounts, func(a, b map[string]any) int {
+		return strings.Compare(fmt.Sprint(a["Destination"]), fmt.Sprint(b["Destination"]))
+	})
+	doc["Mounts"], err = json.Marshal(mounts)
+	if err != nil {
+		return c, nil, err
+	}
 	snapshot, err := json.Marshal(map[string]any{"Id": c.ID, "Image": c.Image, "Name": c.Name, "Config": doc["Config"], "HostConfig": doc["HostConfig"], "Mounts": doc["Mounts"], "Running": c.State.Running || c.State.Restarting})
 	return c, snapshot, err
 }
@@ -158,8 +172,13 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 			return nil, errors.New("invalid or duplicate service image")
 		}
 		seen[image.Name] = true
-		if image.Image == "" && (!slices.Contains([]string{"rootless-docker", "dram-bwd"}, image.Binary) || image.Dockerfile == "") {
+		if image.Image == "" && (len(image.Binaries) == 0 || image.Dockerfile == "") {
 			return nil, errors.New("invalid service build context")
+		}
+		for _, binary := range image.Binaries {
+			if !slices.Contains([]string{"rootless-docker", "dram-bwd"}, binary) {
+				return nil, errors.New("invalid service binary")
+			}
 		}
 	}
 	if len(seen) != 3 {
@@ -255,25 +274,34 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		}
 		ref := image.Image
 		if ref == "" {
-			hash, hashErr := fileHash(filepath.Join(stage, image.Binary))
-			if hashErr != nil {
-				return nil, hashErr
+			digest := sha256.New()
+			digest.Write([]byte(image.Dockerfile))
+			for _, binary := range image.Binaries {
+				hash, err := fileHash(filepath.Join(stage, binary))
+				if err != nil {
+					return nil, err
+				}
+				digest.Write([]byte(binary + ":" + hash))
 			}
+			hash := fmt.Sprintf("%x", digest.Sum(nil))
 			ref = "project-alpha-" + image.Name + ":update-" + hash[:16]
 			var input bytes.Buffer
 			tw := tar.NewWriter(&input)
-			binary, readErr := os.ReadFile(filepath.Join(stage, image.Binary))
-			if readErr != nil {
-				return nil, readErr
+			if err = tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0644, Size: int64(len(image.Dockerfile))}); err != nil {
+				return nil, err
 			}
-			for _, entry := range []struct {
-				name string
-				data []byte
-			}{{"Dockerfile", []byte(image.Dockerfile)}, {image.Binary, binary}} {
-				if err = tw.WriteHeader(&tar.Header{Name: entry.name, Mode: 0755, Size: int64(len(entry.data))}); err != nil {
+			if _, err = tw.Write([]byte(image.Dockerfile)); err != nil {
+				return nil, err
+			}
+			for _, name := range image.Binaries {
+				binary, readErr := os.ReadFile(filepath.Join(stage, name))
+				if readErr != nil {
+					return nil, readErr
+				}
+				if err = tw.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(binary))}); err != nil {
 					return nil, err
 				}
-				if _, err = tw.Write(entry.data); err != nil {
+				if _, err = tw.Write(binary); err != nil {
 					return nil, err
 				}
 			}
@@ -304,7 +332,23 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 			if labels == nil {
 				labels = map[string]any{}
 			}
-			labels["project-alpha.dram-settings"] = "1"
+			labels["project-alpha.dram-settings"] = "2"
+			spec["pid"] = "host"
+			spec["userns_mode"] = "host"
+			volumes, _ := spec["volumes"].([]any)
+			for _, target := range []string{"/run/dram-bw-manager", "/var/lib/dram-bw-manager"} {
+				found := false
+				for _, v := range volumes {
+					if mount, ok := v.(map[string]any); ok && mount["target"] == target {
+						found = true
+						break
+					}
+				}
+				if !found {
+					volumes = append(volumes, map[string]any{"type": "bind", "source": target, "target": target})
+				}
+			}
+			spec["volumes"] = volumes
 			spec["labels"] = labels
 		}
 		after, err := json.Marshal(config)
@@ -456,23 +500,37 @@ func (p *containerPlan) replace(ctx context.Context, run dockerCommand, u contai
 		}
 		if c.State.Running && !c.State.Restarting && !c.State.Dead && !c.State.Paused {
 			if time.Since(stable) >= time.Second {
-				if u.Name != "rootless-docker" {
-					return nil
-				}
-				// Verify the new manager's actual control protocol, not just a
-				// running container. Old-image rollback only requires status.
-				probe, cancel := context.WithTimeout(ctx, 5*time.Second)
-				err = probeRootless(probe, c, "status")
-				cancel()
-				if err == nil {
-					if !updated {
-						return nil
+				if u.Name == "dram-bw" && updated {
+					for _, command := range []string{"status", "bindings"} {
+						probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+						_, err = run(probe, p.Endpoint, []string{"exec", "--env", "ROOTLESS_CONTROL_SOCKET=/run/dram-bw-manager/control.sock", c.ID, "/rootless-docker", command}, nil)
+						cancel()
+						if err != nil {
+							break
+						}
 					}
-					probe, cancel = context.WithTimeout(ctx, 5*time.Second)
-					err = probeRootless(probe, c, "bindings")
-					cancel()
 					if err == nil {
 						return nil
+					}
+				} else if u.Name != "rootless-docker" {
+					return nil
+				}
+				if u.Name == "rootless-docker" {
+					// Verify the new manager's actual control protocol, not just a
+					// running container. Old-image rollback only requires status.
+					probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+					err = probeRootless(probe, c, "status")
+					cancel()
+					if err == nil {
+						if !updated {
+							return nil
+						}
+						probe, cancel = context.WithTimeout(ctx, 5*time.Second)
+						err = probeRootless(probe, c, "bindings")
+						cancel()
+						if err == nil {
+							return nil
+						}
 					}
 				}
 			}

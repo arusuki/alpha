@@ -211,13 +211,15 @@ docker compose -f deploy/services.yaml logs --tail 100 dram-bw
 
 默认后端为 `amd-rome`，采样等待间隔为 `100000` 微秒。可通过 `DRAM_BW_INTERVAL_US` 设置间隔；仅验证部署流程时显式设置 `DRAM_BW_BACKEND=mock`。不支持的硬件会明确失败，不自动切换到模拟数据。非 Rome 硬件的自定义事件配置见 [命令参数](docs/usage.md)，需自行挂载配置并覆盖 Compose command。
 
-镜像从本目录多阶段构建，只带 daemon 和系统运行库。daemon 在容器内以 root 访问 PMU，使用 privileged，运行组由 `DRAM_BW_GID` 指定（默认 0）；宿主机客户端需属于该组。socket 为 `0660`，目录 `/run/dram-bw` 绑定到宿主机；不发布网络端口，也无需 host PID/IPC namespace 或 `/dev/shm` 挂载。不要同时启动占用同一 socket 的 systemd 或前台 daemon。
+平台镜像以仓库根目录为构建上下文，使用本目录的 Dockerfile 多阶段构建，包含静态采集 daemon 与独立挂载管理进程。独立 C 工具的构建与安装不依赖该管理进程。daemon 在容器内以 root 访问 PMU，使用 privileged，运行组由 `DRAM_BW_GID` 指定（默认 0）；宿主机客户端需属于该组。socket 为 `0660`，目录 `/run/dram-bw` 绑定到宿主机；不发布网络端口；平台授权挂载需要 host PID 和 user namespace，无需共享 IPC namespace 或挂载 `/dev/shm`。管理 socket 位于 `/run/dram-bw-manager/control.sock`，关联保存在 `/var/lib/dram-bw-manager`，均不挂入业务容器。三个持久化目录需由 root 所有且不允许组或其他用户写入。不要同时启动占用同一 socket 的 systemd 或前台 daemon。
 
 两个服务使用 `unless-stopped` 重启策略。正常停止会清理 socket；强制终止留下 socket 时，daemon 会拒绝覆盖。此时先停止 `dram-bw` 容器并确认没有其他 daemon 占用，再手动清理 `/run/dram-bw/control.sock` 后启动。
 
 从旧 Tetragon Compose 部署切换时，先执行 `docker compose -p project-alpha-tetragon -f deploy/services.yaml down`，再运行新的 `up` 命令，以免固定容器名冲突。
 
 总控的计算节点卡片会显示 Tetragon 和 DRAM 带宽服务的容器运行状态、Docker 状态详情及检查时间。状态随面板现有刷新流程查询，不单独启动定时健康检查；它不表示应用协议就绪或 PMU 样本有效。查询使用节点“容器管理”的本机 Docker endpoint，以 `project-alpha.service` 标签识别服务。Docker 不可访问显示“状态未知”，查询成功但无对应容器显示“未部署”；节点离线或刷新失败时不会沿用旧的“运行中”。总控与 worker 需一起更新到相同业务协议。
+
+平台管理员可在“节点服务 → DRAM 带宽”选择使用者并配置容器内 socket 路径，默认不授权。授权、撤销、恢复和旧部署更新见[节点服务管理](../../docs/node-services.md#dram-的授权与挂载)。容器只能读取采集数据；管理进程独立运行，不需要启动 Rootless Docker 引擎。
 
 ### 容器客户端
 

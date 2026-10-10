@@ -111,6 +111,7 @@ type result struct {
 }
 type runner func([]string, []string, time.Duration, bool) (result, error)
 type manager struct {
+	dockerAPI   func(string, ...string) (result, error)
 	ctx         context.Context
 	run         runner
 	worker      func(workerRequest, bool) error
@@ -185,6 +186,9 @@ func dockerArgs(u account, host string, args ...string) []string {
 	return userCommand(u, append([]string{"docker", "--config", p.Client, "--host", "unix://" + p.Socket}, args...)...)
 }
 func (m *manager) docker(u account, host string, args ...string) (result, error) {
+	if m.dockerAPI != nil {
+		return m.dockerAPI(host, args...)
+	}
 	var env []string
 	if host != "" {
 		env = rootDockerEnv

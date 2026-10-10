@@ -39,12 +39,13 @@ CREATE UNIQUE INDEX idx_agent_scheduled ON agent_sessions(node_id,scheduled_job_
 			t.Fatal(err)
 		}
 	}
-	if version == 40 {
+	if version >= 40 {
 		if role == "worker" {
 			if err := db.Transaction(platform.InstallNodeServices); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.SQL.Exec(`DROP TABLE node_service_settings;
+			if _, err := db.SQL.Exec(`ALTER TABLE node_service_mounts DROP COLUMN service;
+DROP TABLE node_service_settings;
 CREATE TABLE node_service_settings(name TEXT PRIMARY KEY, config TEXT NOT NULL CHECK(json_valid(config)));
 INSERT INTO node_service_settings VALUES('dram-bw','{"restart_policy":"on-failure","stop_timeout":35,"control_socket":"","socket_path":"","users":[]}');
 INSERT INTO node_service_settings VALUES('rootless-docker','{"restart_policy":"always","stop_timeout":150,"control_socket":"/run/custom/control.sock","socket_path":"/run/custom/docker.sock","users":["alice"]}');`); err != nil {
@@ -55,6 +56,17 @@ INSERT INTO node_service_settings VALUES('rootless-docker','{"restart_policy":"a
 			t.Fatal(err)
 		}
 	}
+	if version == 41 {
+		if role == "worker" {
+			if _, err := db.SQL.Exec(`UPDATE node_service_settings SET config=json_set(config,'$.dram',json('{"backend":"mock","interval_us":250000,"peak_gbps":256}')) WHERE name='dram-bw';
+  INSERT INTO node_service_mounts(container_id,endpoint,daemon,owner,name,socket_path) VALUES('kept-container','unix:///test.sock','daemon','alice','kept-name','/run/kept.sock');`); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := db.SQL.Exec("PRAGMA user_version=41"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return db
 }
 func TestNodeServicesBuiltUpdater(t *testing.T) {
@@ -62,7 +74,7 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{37, 38, 39, 40} {
+			for _, version := range []int{37, 38, 39, 40, 41} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := nodeServicesOldDatabase(t, role, version)
 					for range 2 {
@@ -87,6 +99,21 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 							}
 							if err := db.SQL.QueryRow(`SELECT json_extract(config,'$.users'),json_extract(config,'$.socket_path') FROM node_service_settings WHERE name='rootless-docker'`).Scan(&users, &socket); err != nil || users != `["alice"]` || socket != "/run/custom/docker.sock" {
 								t.Fatal(users, socket, err)
+							}
+						}
+						if version >= 40 {
+							var socket, control string
+							if err := db.SQL.QueryRow(`SELECT json_extract(config,'$.control_socket'),json_extract(config,'$.socket_path') FROM node_service_settings WHERE name='dram-bw'`).Scan(&control, &socket); err != nil || control != "/run/dram-bw-manager/control.sock" || socket != "/run/dram-bw/control.sock" {
+								t.Fatal(control, socket, err)
+							}
+						}
+						if version == 41 {
+							var service, backend string
+							if err := db.SQL.QueryRow("SELECT service FROM node_service_mounts WHERE socket_path='/run/kept.sock'").Scan(&service); err != nil || service != "rootless-docker" {
+								t.Fatal(service, err)
+							}
+							if err := db.SQL.QueryRow(`SELECT json_extract(config,'$.dram.backend') FROM node_service_settings WHERE name='dram-bw'`).Scan(&backend); err != nil || backend != "mock" {
+								t.Fatal(backend, err)
 							}
 						}
 						var owner, fingerprint string
@@ -160,6 +187,31 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 			var name string
 			if err := db.SQL.QueryRow("SELECT name FROM managed_containers WHERE id='kept-container'").Scan(&name); err != nil || name != "kept-name" {
 				t.Fatal("unsupported data changed", name, err)
+			}
+		})
+	}
+}
+
+func TestDRAMMountMigrationRollback(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "alpha-updater")
+	writeFile(t, binary, buildTarget(t))
+	for _, entry := range []string{"--database-only", "_migrate"} {
+		t.Run(entry, func(t *testing.T) {
+			db := nodeServicesOldDatabase(t, "worker", 41)
+			if _, err := db.SQL.Exec(`CREATE TRIGGER fail_dram_upgrade BEFORE UPDATE ON node_service_settings BEGIN SELECT RAISE(ABORT,'injected DRAM upgrade failure'); END;`); err != nil {
+				t.Fatal(err)
+			}
+			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil {
+				t.Fatal("upgrade failure ignored")
+			}
+			assertVersion(t, db, 41)
+			var count int
+			if err := db.SQL.QueryRow("SELECT count(*) FROM pragma_table_info('node_service_mounts') WHERE name='service'").Scan(&count); err != nil || count != 0 {
+				t.Fatal("partial migration survived", count, err)
+			}
+			var socket string
+			if err := db.SQL.QueryRow("SELECT socket_path FROM node_service_mounts").Scan(&socket); err != nil || socket != "/run/kept.sock" {
+				t.Fatal("mount lost", socket, err)
 			}
 		})
 	}

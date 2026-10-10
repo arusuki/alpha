@@ -36,6 +36,11 @@ func TestDockerContainerUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(stage, "dram-bwd"), binary)
+	managerBuild := exec.CommandContext(ctx, "go", "build", "-o", filepath.Join(stage, "rootless-docker"), "../../cmd/rootless-docker")
+	managerBuild.Env = append(os.Environ(), "CGO_ENABLED=0")
+	if raw, err := managerBuild.CombinedOutput(); err != nil {
+		t.Fatalf("build manager: %v: %s", err, raw)
+	}
 	manifest, err := os.ReadFile("../../deploy/updater-services.json")
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +88,12 @@ func TestDockerContainerUpdate(t *testing.T) {
 	if err = os.WriteFile(filepath.Join(data, "service-settings"), saved, 0644); err != nil {
 		t.Fatal(err)
 	}
-	config := map[string]any{"services": map[string]any{"dram-bw": map[string]any{"image": oldTag, "container_name": project, "network_mode": "none", "restart": "unless-stopped", "user": fmt.Sprintf("0:%d", os.Getgid()), "labels": map[string]string{"project-alpha.service": "dram-bw"}, "environment": map[string]string{"LITERAL": "literal$$secret"}, "volumes": []string{data + ":/run/dram-bw"}, "logging": map[string]any{"driver": "json-file", "options": map[string]string{"max-size": "10m", "max-file": "3"}}, "command": []string{"--backend", "mock", "--interval-us", "1000", "--socket", "/run/dram-bw/control.sock"}}}}
+	// Docker creates root-owned bind directories; source settings remain intact.
+	if raw, err := exec.CommandContext(ctx, "docker", "run", "--rm", "--network=none", "-v", data+":/data", "alpine:latest", "chown", "0:0", "/data").CombinedOutput(); err != nil {
+		t.Fatalf("prepare directory: %v: %s", err, raw)
+	}
+
+	config := map[string]any{"services": map[string]any{"dram-bw": map[string]any{"image": oldTag, "container_name": project, "network_mode": "none", "privileged": true, "restart": "unless-stopped", "user": fmt.Sprintf("0:%d", os.Getgid()), "labels": map[string]string{"project-alpha.service": "dram-bw"}, "environment": map[string]string{"LITERAL": "literal$$secret"}, "volumes": []string{data + ":/run/dram-bw", filepath.Join(dir, "manager") + ":/run/dram-bw-manager", filepath.Join(dir, "state") + ":/var/lib/dram-bw-manager"}, "logging": map[string]any{"driver": "json-file", "options": map[string]string{"max-size": "10m", "max-file": "3"}}, "command": []string{"--backend", "mock", "--interval-us", "1000", "--socket", "/run/dram-bw/control.sock"}}}}
 	if err = WriteJSON(file, config); err != nil {
 		t.Fatal(err)
 	}
@@ -95,6 +105,7 @@ func TestDockerContainerUpdate(t *testing.T) {
 			t.Error(err)
 		}
 		_, _ = run(cleanup, endpoint, []string{"image", "rm", oldTag}, nil)
+		_ = exec.CommandContext(cleanup, "docker", "run", "--rm", "--network=none", "-v", dir+":/test", "alpine:latest", "chown", "-R", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "/test").Run()
 	})
 	if _, err = run(ctx, endpoint, append(slices.Clone(compose), "up", "-d", "--no-build", "--pull", "never"), nil); err != nil {
 		t.Fatal(err)
@@ -128,7 +139,7 @@ func TestDockerContainerUpdate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if c.Image == oldImage || c.State.Running != running || !slices.Contains(c.Config.Env, "LITERAL=literal$secret") || c.Config.User != fmt.Sprintf("0:%d", os.Getgid()) || c.Config.Labels["project-alpha.dram-settings"] != "1" {
+		if c.Image == oldImage || c.State.Running != running || !slices.Contains(c.Config.Env, "LITERAL=literal$secret") || c.Config.User != fmt.Sprintf("0:%d", os.Getgid()) || c.Config.Labels["project-alpha.dram-settings"] != "2" {
 			t.Fatalf("deployment changed: %+v", c)
 		}
 		// The persistent generated file must be usable by the next updater run.

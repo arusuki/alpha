@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,13 +28,15 @@ import (
 const controlPath = "/_rootless/control"
 
 type controlRequest struct {
-	Args []string `json:"args"`
+	Args    []string `json:"args"`
+	Service string   `json:"service,omitempty"`
 }
 type controlResponse struct {
 	Output string `json:"output"`
 	Error  string `json:"error,omitempty"`
 }
 type daemon struct {
+	sourceSocket      string // Nonempty for the independent DRAM manager.
 	manager           *manager
 	user              account
 	mu                sync.Mutex
@@ -188,7 +191,18 @@ func (d *daemon) control(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请求格式无效", http.StatusBadRequest)
 		return
 	}
+	service := "rootless-docker"
+	if d.sourceSocket != "" {
+		service = "dram-bw"
+	}
+	if request.Service != "" && request.Service != service {
+		http.Error(w, "管理 socket 对应的服务不匹配，请检查节点服务配置", http.StatusBadRequest)
+		return
+	}
 	o, err := parseOptions(request.Args)
+	if err == nil && d.sourceSocket != "" && !slices.Contains([]string{"add", "remove", "list", "bindings", "status"}, o.Command) {
+		err = errors.New("DRAM 管理接口只支持挂载、撤销、查询与状态")
+	}
 	if err == nil && o.Help {
 		err = errors.New("请在客户端查看 --help")
 	}
@@ -229,9 +243,13 @@ func (d *daemon) control(w http.ResponseWriter, r *http.Request) {
 	case "bindings":
 		err = json.NewEncoder(&output).Encode(d.bindingStatuses())
 	case "status":
-		err = d.manager.verifyDaemon(d.user)
+		err = d.verifySource()
 		if err == nil {
-			fmt.Fprintf(&output, "管理服务运行中；rootless dockerd 已验证。\n数据：%s\n关联：%d\n", layout(d.user).Data, len(d.store.Bindings))
+			if d.sourceSocket != "" {
+				fmt.Fprintf(&output, "DRAM 采集 socket 已验证：%s\n关联：%d\n", d.source(), len(d.store.Bindings))
+			} else {
+				fmt.Fprintf(&output, "管理服务运行中；rootless dockerd 已验证。\n数据：%s\n关联：%d\n", layout(d.user).Data, len(d.store.Bindings))
+			}
 		}
 	case "proxy":
 		err = d.manager.configureProxy(d.user, o)
@@ -241,7 +259,7 @@ func (d *daemon) control(w http.ResponseWriter, r *http.Request) {
 	case "restart":
 		_, err = d.manager.systemctl(d.user, "restart", serviceName)
 		if err == nil {
-			err = d.manager.verifyDaemon(d.user)
+			err = d.verifySource()
 		}
 		if err == nil {
 			err = d.reconcile("", "")

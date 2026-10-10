@@ -1,4 +1,5 @@
 CREATE TABLE node_service_mounts (
+ service TEXT NOT NULL DEFAULT 'rootless-docker' CHECK(service IN ('rootless-docker','dram-bw')),
  container_id TEXT NOT NULL, endpoint TEXT NOT NULL, daemon TEXT NOT NULL,
  owner TEXT NOT NULL, name TEXT NOT NULL, socket_path TEXT NOT NULL,
  error TEXT NOT NULL DEFAULT '',

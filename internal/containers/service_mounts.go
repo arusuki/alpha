@@ -12,6 +12,7 @@ import (
 )
 
 type ServiceMount struct {
+	Service     string `json:"service"`
 	ContainerID string `json:"container_id"`
 	Endpoint    string `json:"endpoint"`
 	Daemon      string `json:"-"`
@@ -23,6 +24,7 @@ type ServiceMount struct {
 }
 
 type rootlessBinding struct {
+	Service    string `json:"service,omitempty"`
 	Host       string `json:"host"`
 	Container  string `json:"container"`
 	Name       string `json:"name"`
@@ -32,7 +34,7 @@ type rootlessBinding struct {
 }
 
 func (h *Handler) serviceMounts() ([]ServiceMount, error) {
-	rows, err := h.db.SQL.Query("SELECT container_id,endpoint,daemon,owner,name,socket_path,error FROM node_service_mounts ORDER BY owner,name,socket_path")
+	rows, err := h.db.SQL.Query("SELECT service,container_id,endpoint,daemon,owner,name,socket_path,error FROM node_service_mounts ORDER BY owner,name,socket_path")
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +42,7 @@ func (h *Handler) serviceMounts() ([]ServiceMount, error) {
 	out := []ServiceMount{}
 	for rows.Next() {
 		var m ServiceMount
-		if err = rows.Scan(&m.ContainerID, &m.Endpoint, &m.Daemon, &m.Owner, &m.Name, &m.SocketPath, &m.Error); err != nil {
+		if err = rows.Scan(&m.Service, &m.ContainerID, &m.Endpoint, &m.Daemon, &m.Owner, &m.Name, &m.SocketPath, &m.Error); err != nil {
 			return nil, err
 		}
 		m.State = "unknown"
@@ -48,20 +50,20 @@ func (h *Handler) serviceMounts() ([]ServiceMount, error) {
 	}
 	return out, rows.Err()
 }
-func (h *Handler) rootlessBindings(ctx context.Context, c ServiceConfig) ([]rootlessBinding, error) {
-	raw, err := h.rootlessControl(ctx, c.ControlSocket, []string{"bindings"})
+func (h *Handler) serviceBindings(ctx context.Context, c ServiceConfig) ([]rootlessBinding, error) {
+	raw, err := h.mountControl(ctx, c, []string{"bindings"})
 	if err != nil {
 		return nil, err
 	}
 	var out []rootlessBinding
 	if err = json.Unmarshal([]byte(raw), &out); err != nil || out == nil {
-		return nil, errors.New("Rootless 挂载响应无效，请更新节点管理服务")
+		return nil, errors.New("服务挂载响应无效，请更新节点管理服务")
 	}
 	seen := map[string]bool{}
 	for _, b := range out {
 		key := b.Host + "\x00" + b.Container + "\x00" + b.SocketPath
 		if !strings.HasPrefix(b.Host, "unix://") || !cleanPath(strings.TrimPrefix(b.Host, "unix://")) || !fullID.MatchString(b.Container) || !cleanPath(b.SocketPath) || b.SocketPath == "/" || !slices.Contains([]string{"mounted", "waiting", "pending", "missing", "unknown"}, b.State) || seen[key] {
-			return nil, errors.New("Rootless 挂载响应字段无效或重复，原操作记录已保留")
+			return nil, errors.New("服务挂载响应字段无效或重复，原操作记录已保留")
 		}
 		seen[key] = true
 	}
@@ -75,7 +77,7 @@ func (h *Handler) rememberMountError(m ServiceMount, e error) error {
 	if e != nil {
 		detail = e.Error()
 	}
-	_, err := h.db.SQL.Exec("UPDATE node_service_mounts SET error=? WHERE endpoint=? AND container_id=? AND socket_path=?", detail, m.Endpoint, m.ContainerID, m.SocketPath)
+	_, err := h.db.SQL.Exec("UPDATE node_service_mounts SET error=? WHERE service=? AND endpoint=? AND container_id=? AND socket_path=?", detail, m.Service, m.Endpoint, m.ContainerID, m.SocketPath)
 	return errors.Join(e, err)
 }
 func (h *Handler) revokeServiceMounts(ctx context.Context, current, next ServiceConfig, all bool) error {
@@ -85,6 +87,9 @@ func (h *Handler) revokeServiceMounts(ctx context.Context, current, next Service
 	}
 	var revoked []ServiceMount
 	for _, m := range mounts {
+		if m.Service != current.mountService() {
+			continue
+		}
 		if all || !slices.Contains(next.Users, m.Owner) || next.SocketPath != m.SocketPath {
 			revoked = append(revoked, m)
 		}
@@ -92,7 +97,7 @@ func (h *Handler) revokeServiceMounts(ctx context.Context, current, next Service
 	if len(revoked) == 0 {
 		return nil
 	}
-	bindings, err := h.rootlessBindings(ctx, current)
+	bindings, err := h.serviceBindings(ctx, current)
 	if err != nil {
 		return fmt.Errorf("无法核实已有挂载，记录已保留；请恢复管理服务后重试：%w", err)
 	}
@@ -105,14 +110,14 @@ func (h *Handler) revokeServiceMounts(ctx context.Context, current, next Service
 				e = errors.New("Docker daemon 身份改变，拒绝卸载")
 			}
 			if e == nil {
-				_, e = h.rootlessControl(ctx, current.ControlSocket, []string{"remove", "--host", m.Endpoint, m.ContainerID, "--socket-path", m.SocketPath})
+				_, e = h.mountControl(ctx, current, []string{"remove", "--host", m.Endpoint, m.ContainerID, "--socket-path", m.SocketPath})
 			}
 			if e != nil {
 				errs = append(errs, h.rememberMountError(m, e))
 				continue
 			}
 		}
-		if _, e := h.db.SQL.Exec("DELETE FROM node_service_mounts WHERE endpoint=? AND container_id=? AND socket_path=?", m.Endpoint, m.ContainerID, m.SocketPath); e != nil {
+		if _, e := h.db.SQL.Exec("DELETE FROM node_service_mounts WHERE service=? AND endpoint=? AND container_id=? AND socket_path=?", m.Service, m.Endpoint, m.ContainerID, m.SocketPath); e != nil {
 			errs = append(errs, e)
 		}
 	}
@@ -135,7 +140,7 @@ func (h *Handler) attachServiceMounts(ctx context.Context, c ServiceConfig, reco
 		if !slices.Contains(c.Users, r.Owner) || !r.Initialized {
 			continue
 		}
-		m := ServiceMount{ContainerID: r.ID, Endpoint: r.Endpoint, Daemon: r.Daemon, Owner: r.Owner, Name: r.Name, SocketPath: c.SocketPath}
+		m := ServiceMount{Service: c.mountService(), ContainerID: r.ID, Endpoint: r.Endpoint, Daemon: r.Daemon, Owner: r.Owner, Name: r.Name, SocketPath: c.SocketPath}
 		// The transaction serializes the journal against ownership updates, including
 		// updates through the separate storage API. Triggers protect it thereafter.
 		err := h.db.Transaction(func(tx *sql.Tx) error {
@@ -146,8 +151,18 @@ func (h *Handler) attachServiceMounts(ctx context.Context, c ServiceConfig, reco
 			if owner != r.Owner {
 				return errors.New("容器使用者已改变，请刷新后重试")
 			}
-			_, e := tx.Exec("INSERT INTO node_service_mounts(container_id,endpoint,daemon,owner,name,socket_path) VALUES(?,?,?,?,?,?) ON CONFLICT(endpoint,container_id,socket_path) DO NOTHING", r.ID, r.Endpoint, r.Daemon, r.Owner, r.Name, c.SocketPath)
-			return e
+			_, e := tx.Exec("INSERT INTO node_service_mounts(service,container_id,endpoint,daemon,owner,name,socket_path) VALUES(?,?,?,?,?,?,?) ON CONFLICT(endpoint,container_id,socket_path) DO NOTHING", c.mountService(), r.ID, r.Endpoint, r.Daemon, r.Owner, r.Name, c.SocketPath)
+			if e != nil {
+				return e
+			}
+			var service string
+			if e = tx.QueryRow("SELECT service FROM node_service_mounts WHERE endpoint=? AND container_id=? AND socket_path=?", r.Endpoint, r.ID, c.SocketPath).Scan(&service); e != nil {
+				return e
+			}
+			if service != c.mountService() {
+				return errors.New("目标路径已被其他服务使用，请选择不同的 socket 路径")
+			}
+			return nil
 		})
 		if err != nil {
 			errs = append(errs, err)
@@ -155,7 +170,7 @@ func (h *Handler) attachServiceMounts(ctx context.Context, c ServiceConfig, reco
 		}
 		_, err = h.verify(ctx, r)
 		if err == nil {
-			_, err = h.rootlessControl(ctx, c.ControlSocket, []string{"add", "--host", r.Endpoint, r.ID, "--socket-path", c.SocketPath})
+			_, err = h.mountControl(ctx, c, []string{"add", "--host", r.Endpoint, r.ID, "--socket-path", c.SocketPath})
 		}
 		if err = h.rememberMountError(m, err); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", r.Name, err))
@@ -183,7 +198,16 @@ func (h *Handler) containerServiceResult(ctx context.Context, id string, result 
 }
 
 func (h *Handler) reconcileRunningService(ctx context.Context, id string) error {
-	c, err := h.serviceConfig(rootlessService)
+	var errs []error
+	for _, name := range []string{rootlessService, "dram-bw"} {
+		if err := h.reconcileNamedService(ctx, name, id); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", name, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+func (h *Handler) reconcileNamedService(ctx context.Context, name, id string) error {
+	c, err := h.serviceConfig(name)
 	if err != nil {
 		return err
 	}
@@ -191,7 +215,7 @@ func (h *Handler) reconcileRunningService(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
-	if len(c.Users) == 0 && len(mounts) == 0 {
+	if len(c.Users) == 0 && !slices.ContainsFunc(mounts, func(m ServiceMount) bool { return m.Service == name }) {
 		return nil
 	}
 	var selected []Record
@@ -213,11 +237,11 @@ func (h *Handler) reconcileRunningService(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
-	service, err := h.resolveService(ctx, cfg.Endpoint, rootlessService)
+	service, err := h.resolveService(ctx, cfg.Endpoint, name)
 	if err != nil {
 		return err
 	}
-	if err := serviceStateError(service, rootlessService); err != nil {
+	if err := serviceStateError(service, name); err != nil {
 		return err
 	}
 	if !service.State.Running {
@@ -234,16 +258,14 @@ func (h *Handler) servicesView(ctx context.Context) (any, error) {
 		Config ServiceConfig `json:"config"`
 	}
 	services := []view{}
-	var rootlessRunning bool
+	running := map[string]bool{}
 	for _, status := range h.ServiceStatuses(ctx) {
 		c, err := h.serviceConfig(status.Name)
 		if err != nil {
 			return nil, err
 		}
 		services = append(services, view{status, c})
-		if status.Name == rootlessService {
-			rootlessRunning = status.State == "running"
-		}
+		running[status.Name] = status.State == "running"
 	}
 	mounts, err := h.serviceMounts()
 	if err != nil {
@@ -260,38 +282,45 @@ func (h *Handler) servicesView(ctx context.Context) (any, error) {
 		}
 	}
 	external := []rootlessBinding{}
-	detail := ""
-	if rootlessRunning {
-		c, err := h.serviceConfig(rootlessService)
+	errorsByService := map[string]string{}
+	for _, name := range []string{rootlessService, "dram-bw"} {
+		if !running[name] {
+			errorsByService[name] = "服务未运行，无法核实实时挂载；以下保留操作记录。"
+			continue
+		}
+		c, err := h.serviceConfig(name)
 		if err != nil {
 			return nil, err
 		}
 		query, stop := context.WithTimeout(ctx, 10*time.Second)
-		bindings, e := h.rootlessBindings(query, c)
+		bindings, e := h.serviceBindings(query, c)
 		stop()
 		if e != nil {
-			detail = e.Error()
-		} else {
-			for i := range mounts {
-				mounts[i].State = "pending"
-				for _, b := range bindings {
-					if sameBinding(b, mounts[i]) {
-						mounts[i].State = b.State
-						mounts[i].Error = b.Error
-						break
-					}
-				}
+			errorsByService[name] = e.Error()
+			continue
+		}
+		for i := range mounts {
+			if mounts[i].Service != name {
+				continue
 			}
+			mounts[i].State = "pending"
 			for _, b := range bindings {
-				if !slices.ContainsFunc(mounts, func(m ServiceMount) bool { return sameBinding(b, m) }) {
-					external = append(external, b)
+				if sameBinding(b, mounts[i]) {
+					mounts[i].State = b.State
+					mounts[i].Error = b.Error
+					break
 				}
 			}
 		}
-	} else {
-		detail = "Rootless 管理服务未运行，无法核实实时挂载；以下保留操作记录。"
+		for _, b := range bindings {
+			if !slices.ContainsFunc(mounts, func(m ServiceMount) bool { return m.Service == name && sameBinding(b, m) }) {
+				b.Service = name
+				external = append(external, b)
+			}
+		}
 	}
-	return map[string]any{"services": services, "mounts": mounts, "external_mounts": external, "mount_error": detail, "candidates": candidates}, nil
+
+	return map[string]any{"services": services, "mounts": mounts, "external_mounts": external, "mount_errors": errorsByService, "candidates": candidates}, nil
 }
 
 func (h *Handler) checkServiceMounts(id string) error {

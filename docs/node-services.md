@@ -16,6 +16,24 @@ DRAM 循环重启时，可在页面停止服务，也可直接修正参数并保
 
 已有部署需使用更新后的 `ctools/dram-bw/Dockerfile` 重新构建并部署 `dram-bw` 镜像。接口检查镜像能力标签及启动入口，不支持网页参数的旧镜像会提示更新；配置保留在数据库，可在部署完成后重新保存或启动服务重试下发。下发失败、重启失败或启动后立即退出都会显示错误；运行状态仍以服务容器观测为准。
 
+## DRAM 的授权与挂载
+
+DRAM 与 Rootless Docker 分别设置使用者列表、节点管理 socket 和容器内采集 socket 路径。DRAM 默认不授权任何使用者；默认管理路径为 `/run/dram-bw-manager/control.sock`，容器内采集路径为 `/run/dram-bw/control.sock`。勾选使用者并保存后，只挂载到此节点已接管、已初始化且归属该使用者的容器。未创建或未启动的容器会在就绪后应用；不会为挂载而启动用户容器。
+
+DRAM 镜像内的独立管理进程复用热挂载与身份校验逻辑，不启动或依赖 Rootless Docker 引擎。业务容器只得到采集 socket，管理接口与 `/run/dram-bw/service-settings` 均不会挂入。采样 socket 保留 `0660` 和部署时的 `DRAM_BW_GID`；容器内非 root 客户端还需匹配该组。数据表示宿主机总带宽，不是单个容器独占带宽。撤销挂载阻止后续通过该路径连接，不回收客户端已经获得的连接或共享内存。
+
+管理 socket 所在目录为 `/run/dram-bw-manager`，持久化挂载记录保存在 `/var/lib/dram-bw-manager`。worker 服务账号需属于部署的授权组；管理 socket 权限等同宿主机管理员。采集、管理和记录目录应由 root 所有，不能由组或其他用户写入。Compose 使用 `privileged`、`pid: host`、`userns_mode: host`；无需共享 IPC namespace。普通用户日常通过网页操作，无需 sudo。
+
+取消授权或更换容器内路径时，先撤销旧挂载；有记录的容器在撤销完成前不能转交、删除或解除接管。挂载失败保留记录和错误，可用“重试应用挂载”恢复。停止服务会撤销网页管理的挂载，启动后按保存的选择恢复。服务正常退出还会卸载命令行关联，保留其关联记录供下次启动恢复。容器启动、恢复以及采集 socket 重建由 Docker 事件和文件事件驱动，不使用定时健康检查。只支持本机 rootful Docker、无 userns-remap 的目标容器及 Linux 5.6+ x86_64/aarch64。
+
+两个服务独立显示挂载状态和错误；同一容器内的目标路径不能被两个服务共用。命令行管理 DRAM 关联时，设置 `ROOTLESS_CONTROL_SOCKET=/run/dram-bw-manager/control.sock`，使用 `rootless-docker add/remove/bindings`；`add/remove` 需显式指定 `--socket-path /run/dram-bw/control.sock`。DRAM 管理接口只接受挂载、撤销和查询，不接受引擎或代理操作。
+
+总控与 worker 的业务协议同步更新，需使用匹配的构建。已有部署需要更新主程序及 Rootless 管理镜像，并重建 DRAM 服务镜像；发布更新器会自动打包采集与管理二进制，补齐所需 namespace 和管理目录挂载，保留已有部署参数、采集配置与数据。手动部署时沿用原来的 GID、环境文件和 Compose override，从仓库根目录执行：
+
+```bash
+DRAM_BW_GID=<原授权组数字GID> docker compose -f deploy/services.yaml up -d --build --no-deps dram-bw
+```
+
 ## Rootless Docker 的挂载范围
 
 每个节点独立设置管理 socket 路径、容器内业务 socket 路径和使用者列表。默认管理路径为 `/run/rootless-docker/control.sock`，容器内路径为 `/var/run/docker.sock`，可一键恢复默认值；路径须包含 socket 文件名。默认不选择任何使用者。worker 服务账号需能访问本机 rootful Docker 与 Rootless 管理 socket；按 [Rootless Docker 部署说明](rootless-docker.md) 设置授权组。普通业务容器只得到 rootless dockerd 的业务 socket，不得到管理 socket。
@@ -50,6 +68,21 @@ ROOTLESS_DOCKER_GID=<原授权组数字GID> docker compose -f deploy/services.ya
 
 使用额外环境文件或 override 的部署需在命令中沿用对应的 `--env-file`、`-f` 参数，并确认 override 未指向旧源码的构建目录。更新会短暂停止 rootless 引擎，已有账户、Docker 数据及关联记录保留；不需要删除 `bindings.json` 或清空 worker 数据库。更新后使用 `rootless-docker bindings`（自定义管理路径时设置 `ROOTLESS_CONTROL_SOCKET=<路径>`）验证，再回到网页刷新并重试应用挂载。若仍报告未知命令，检查所配置的管理 socket 是否连接到了其他旧 daemon。
 
-DRAM 配置不使用 Rootless 挂载接口；“修改容器归属、删除或解除接管前，请先取消服务挂载”是 Rootless 页面固定说明，不表示发现了残留记录。
+DRAM 与 Rootless 挂载分别记录服务归属；“修改容器归属、删除或解除接管前，请先取消服务挂载”适用于两种服务。
 
-服务配置和网页挂载操作记录保存在 worker 数据库。初始化和 updater 使用同一 schema；control、registry 同步推进数据库版本但不创建 worker 专用表。正常发布更新自动迁移数据库。仅在手动安装程序后单独维护数据库时，停止使用该数据目录的服务，执行 `alpha-updater --database-only --data-dir <原目录>`。目标版本查看 `alpha-updater --help`，支持窗口查看生成的 `internal/platform/upgrade_history.json`；完整操作见 [更新器说明](updater.md)。升级保留已有容器记录、使用者、密钥、服务重启策略和挂载授权；已有 DRAM 服务配置原地补齐采集参数默认值。
+服务配置和网页挂载操作记录保存在 worker 数据库。初始化和 updater 使用同一 schema；control、registry 同步推进数据库版本但不创建 worker 专用表。正常发布更新自动迁移数据库。仅在手动安装程序后单独维护数据库时，停止使用该数据目录的服务，执行 `alpha-updater --database-only --data-dir <原目录>`。目标版本查看 `alpha-updater --help`，支持窗口查看生成的 `internal/platform/upgrade_history.json`；完整操作见 [更新器说明](updater.md)。升级保留已有容器记录、使用者、密钥、服务重启策略和挂载授权；已有 DRAM 服务配置原地补齐授权路径，保留采集参数；原有挂载记录归入 Rootless Docker，DRAM 不会自动获得任何使用者授权。
+
+## 授权挂载验证
+
+后端和升级器回归：`go test ./internal/containers ./internal/rootless ./internal/updater`。浏览器回归：`python3 tests/test_node_services_browser.py`（需要 Playwright）。
+
+真实 DRAM 挂载测试使用独立容器和临时目录，验证默认不授权、样本读取、重复挂载、停止容器、容器与服务重启恢复，以及撤销。需已有 Docker 权限和本地 `alpine:latest` 镜像，从仓库根目录执行：
+
+```bash
+mkdir -p /tmp/alpha-dram-access
+CGO_ENABLED=0 go build -o /tmp/alpha-dram-access/rootless-docker ./cmd/rootless-docker
+make -C ctools/dram-bw BUILD=/tmp/alpha-dram-access LDFLAGS=-static \
+  /tmp/alpha-dram-access/dram-bwd /tmp/alpha-dram-access/dram-bw-consume
+DRAM_TEST_BIN_DIR=/tmp/alpha-dram-access python3 tests/test_dram_mounts_compose.py
+ALPHA_UPDATER_DOCKER_TEST=1 go test ./internal/updater -run '^TestDockerContainerUpdate$' -v
+```

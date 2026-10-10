@@ -101,6 +101,9 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 		}
 		return nil, nil
 	}
+	if args[0] == "exec" {
+		return nil, nil
+	}
 	if args[0] == "image" {
 		return []byte(f.next + "\n"), nil
 	}
@@ -169,13 +172,13 @@ func TestContainerUpdatePreservesDeployment(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := doc["services"].(map[string]any)["dram-bw"].(map[string]any)
-	if spec["image"] != f.next || spec["user"] != "0:1005" || spec["restart"] != "on-failure:3" || spec["privileged"] != true || spec["network_mode"] != "none" || spec["build"] != nil || spec["logging"] == nil || spec["volumes"] == nil {
+	if spec["image"] != f.next || spec["user"] != "0:1005" || spec["restart"] != "on-failure:3" || spec["privileged"] != true || spec["network_mode"] != "none" || spec["build"] != nil || spec["logging"] == nil || spec["volumes"] == nil || spec["pid"] != "host" || spec["userns_mode"] != "host" {
 		t.Fatal(spec)
 	}
 	if spec["environment"].(map[string]any)["TOKEN"] != "literal$$secret" {
 		t.Fatal("Compose would interpolate a literal dollar", spec)
 	}
-	if spec["entrypoint"].([]any)[1] != "--settings" || spec["labels"].(map[string]any)["project-alpha.dram-settings"] != "1" {
+	if spec["entrypoint"].([]any)[1] != "--dram-daemon" || spec["labels"].(map[string]any)["project-alpha.dram-settings"] != "2" {
 		t.Fatal("old DRAM entrypoint retained", spec)
 	}
 	if err = p.verify(context.Background(), db, f.run); err != nil {
@@ -362,5 +365,22 @@ func TestRootlessUpdateVerifiesBindings(t *testing.T) {
 				t.Fatal(got, want)
 			}
 		})
+	}
+}
+
+func TestServiceInspectionMountOrderDoesNotInvalidatePreparation(t *testing.T) {
+	f, db, stage := newDockerFixture(t)
+	f.container["Mounts"] = []any{map[string]any{"Type": "bind", "Source": "/a", "Destination": "/a"}, map[string]any{"Type": "bind", "Source": "/b", "Destination": "/b"}}
+	p, err := prepareContainers(context.Background(), db, stage, f.run, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(f.container["Mounts"].([]any))
+	if err = p.verify(context.Background(), db, f.run); err != nil {
+		t.Fatal("mount reordering rejected", err)
+	}
+	f.container["Mounts"].([]any)[0].(map[string]any)["Source"] = "/changed"
+	if err = p.verify(context.Background(), db, f.run); err == nil {
+		t.Fatal("changed mount accepted")
 	}
 }

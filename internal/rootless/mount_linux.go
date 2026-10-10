@@ -147,7 +147,7 @@ func attachSocket(pid int, source, destination string, owner uint32, receipt *mo
 		return err
 	}
 	if sourceStat.Mode&unix.S_IFMT != unix.S_IFSOCK || sourceStat.Uid != owner {
-		return errors.New("源必须是 docker-rootless 拥有的 Unix socket。")
+		return errors.New("源必须是指定服务用户拥有的 Unix socket。")
 	}
 	if err = unix.Fstat(ns, &nsStat); err != nil {
 		return err
