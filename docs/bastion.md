@@ -20,7 +20,7 @@
 
 生成操作只创建候选密钥，不切换当前身份。新密钥保存在 control 数据目录的 `control-ssh/<名称>-<随机目录>/id_ed25519`，目录 `0700`、私钥 `0600`，不会覆盖已有密钥；下载仅提供公钥。点击「校验并启用所选密钥」后持久生效，无需重启。更换身份前先在全部 share node 运行 `share-node --add-control-file <候选公钥文件>` 追加授权；保存时对所有已配置节点（包括停用节点）执行只读 `inspect`，任一 SSH 或协议校验失败均保留原配置。不要在新身份验证成功前撤销旧公钥；追加授权和重复初始化均保留原有管理公钥。
 
-主控 SSH 配置使用版本号防止覆盖他人修改，仅管理员可读取或更改。新增持久配置使用数据库格式 32；旧数据目录会明确报版本不匹配，按项目约定需使用新数据目录，程序不会自动迁移或删除旧数据。
+主控 SSH 配置使用版本号防止覆盖他人修改，仅管理员可读取或更改。持久配置随数据库在支持窗口内原地升级，保留已有数据；支持范围和操作见[更新器说明](updater.md)。
 
 在 **share node 本机** 执行：
 
@@ -31,7 +31,7 @@ sudo ./project-alpha share-node \
   --status-port 9765
 ```
 
-管理公钥现在选填。可在初始化命令中加 `--control-key-file /tmp/control-service.pub`，也可初始化后单独追加：
+管理公钥选填。可在初始化命令中加 `--control-key-file /tmp/control-service.pub`，也可初始化后单独追加：
 
 ```sh
 sudo ./project-alpha share-node --add-control-file /tmp/control-service.pub

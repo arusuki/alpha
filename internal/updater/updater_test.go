@@ -73,9 +73,12 @@ func writeFile(t *testing.T, path string, b []byte) {
 	}
 }
 func buildTarget(t *testing.T) []byte {
+	return buildTargetVersion(t, "v0.6.0")
+}
+func buildTargetVersion(t *testing.T, version string) []byte {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "alpha-updater")
-	cmd := exec.Command("go", "build", "-ldflags=-X project-alpha/internal/buildinfo.Version=v0.6.0", "-o", path, "../../cmd/alpha-updater")
+	cmd := exec.Command("go", "build", "-ldflags=-X project-alpha/internal/buildinfo.Version="+version, "-o", path, "../../cmd/alpha-updater")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build target updater: %v: %s", err, b)
 	}
@@ -152,6 +155,7 @@ func assertVersion(t *testing.T, db *platform.Database, want int) {
 	}
 }
 func TestReleaseUpdateFromV054(t *testing.T) {
+	useDockerProcessFixture(t, noDeployedServices)
 	target := buildTarget(t)
 	g := releaseServer(t, target, false)
 	for _, role := range []string{"control", "worker", "registry", "share-node"} {

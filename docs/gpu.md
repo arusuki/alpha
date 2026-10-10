@@ -8,7 +8,7 @@ worker 服务每 15 秒调用 `nvidia-smi -q -x`，并读取宿主机 `/proc` �
 
 容器 ID 从 cgroup 提取，用户归属来自节点登记的 `owners` 表，容器名称优先使用管理记录，其余通过 `docker ps` 补充。宿主机进程标记 `host:用户名`；未归属容器、不可读进程明确标注，不猜测使用者。历史记录保存采集时的归属，之后修改容器归属不会重写过去的时长。
 
-未归属容器在设备摘要、历史图例、占用色带和时长排行中显示为「未归属容器 · 容器名」，不同容器分别展示，同容器多个进程去重。名称暂不可读时显示容器短 ID。此前仅记录「未归属容器」的历史无法还原容器名，保留原标签，随 72 小时窗口滚动淘汰。
+未归属容器在设备摘要、历史图例、占用色带和时长排行中显示为「未归属容器 · 容器名」，不同容器分别展示，同容器多个进程去重。名称暂不可读时显示容器短 ID。
 
 「进程已运行」从 `/proc/<pid>/stat` 的启动时间计算，表示整个进程的年龄，不表示进入 GPU 的时间。设备「未发现进程」只说明采样时未观测到 GPU 进程，不承诺显存完全空闲或计算任务一定可调度；计算禁用和 MIG 模式单独标注。
 
@@ -28,7 +28,7 @@ NVIDIA 字段和限制参见 [nvidia-smi 官方文档](https://docs.nvidia.com/d
 
 `GET /api/gpu/overview?hours=6&step=60` 提供当前设备、进程、曲线和最近 72h 用户总时长。`hours` 为 0.25–72，`step` 为 15–3600 秒，可用 `end`（Unix 秒）平移。经总控的节点认证代理调用，所有已认证工作台用户可读，无 GPU 修改接口。
 
-数据库版本 36 为 worker 新增 `gpu_intervals` 及到期索引。35 → 36 原地升级保留现有业务数据；control/registry 仅推进版本，不建立节点历史表。升级仍遵守项目的 Git tag 窗口、备份、服务锁和失败回滚规则。
+worker 的 GPU 历史保存在 `gpu_intervals`，到期索引用于清理；control 和 registry 不建立此表。数据库随发布更新原地升级，支持范围和故障恢复见[更新器说明](updater.md)。
 
 验证：`go test -race ./internal/gpu ./internal/app ./internal/platform ./internal/cluster ./cmd/alpha-updater`；浏览器回归 `python3 tests/test_gpu_browser.py` 使用模拟 GPU 数据验证布局和交互。
 

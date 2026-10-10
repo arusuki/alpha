@@ -86,7 +86,9 @@ func (d *Database) BackupDatabase(destination string) error {
 
 // UpgradeDatabase uses the same transaction as normal startup, but never creates
 // a database. A supplied lock can be inherited by a release's migration process.
-func UpgradeDatabase(directory, role string, lock *os.File) error {
+// beforeCommit validates the release deployment while database changes can
+// still be rolled back. Database-only maintenance passes nil.
+func UpgradeDatabase(directory, role string, lock *os.File, beforeCommit func() error) error {
 	db, err := OpenExistingDatabase(directory, false)
 	if err != nil {
 		return err
@@ -121,7 +123,15 @@ func UpgradeDatabase(directory, role string, lock *os.File) error {
 	if role != current {
 		return fmt.Errorf("data directory belongs to %s, not %s", current, role)
 	}
-	return db.Transaction(func(tx *sql.Tx) error { return upgradeDatabase(tx, version) })
+	return db.Transaction(func(tx *sql.Tx) error {
+		if err := upgradeDatabase(tx, version); err != nil {
+			return err
+		}
+		if beforeCommit != nil {
+			return beforeCommit()
+		}
+		return nil
+	})
 }
 
 func upgradeDatabase(tx *sql.Tx, version int) error {

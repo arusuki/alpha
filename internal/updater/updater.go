@@ -63,7 +63,8 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		return service(ctx, args[1], out)
 	}
 	// Private protocol used only by a verified release with the service lock
-	// inherited on fd 3. It never downloads, installs files or starts services.
+	// inherited on fd 3. Validate release containers before committing the
+	// database; the installer owns container deployment and rollback.
 	if len(args) > 0 && args[0] == "_migrate" {
 		if len(args) != 3 {
 			return fmt.Errorf("invalid migration arguments")
@@ -73,7 +74,11 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return fmt.Errorf("missing inherited service lock")
 		}
 		defer lock.Close()
-		return platform.UpgradeDatabase(args[2], args[1], lock)
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		return migrateRelease(ctx, args[1], args[2], filepath.Dir(executable), lock, runDocker, out)
 	}
 	p := flag.NewFlagSet("alpha-updater", flag.ContinueOnError)
 	p.SetOutput(out)
@@ -225,7 +230,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		if _, err := backupDatabase(db, out); err != nil {
 			return err
 		}
-		if err := platform.UpgradeDatabase(o.directory, o.role, lock); err != nil {
+		if err := platform.UpgradeDatabase(o.directory, o.role, lock, nil); err != nil {
 			return err
 		}
 		fmt.Fprintf(out, "数据库已原地升级：%d → %d\n", schema, platform.DatabaseVersion)
@@ -416,8 +421,9 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			if queryErr != nil || after != schema {
 				return fmt.Errorf("%w: process error %v, schema %d -> %d, query error %v: %s", errMigrationUncertain, e, schema, after, queryErr, b)
 			}
-			return fmt.Errorf("release database migration failed: %w: %s", e, b)
+			return fmt.Errorf("release migration failed: %w: %s", e, b)
 		}
+		fmt.Fprint(out, string(b))
 		return nil
 	}
 	commit := func() error {

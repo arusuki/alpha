@@ -97,7 +97,7 @@ Docker 可写层条目保留报告中的物理路径作为确认范围与结果�
 
 分组计划以 `report_plan` 事件持久化，包含报告 `scope`、本次 `concurrency` 上限和每组的稳定 ID、序号；容器组带 `containers`，Host 组带 `directories`。`group_state` 标记组的开始和结束。模型与工具事件显式携带 `group_id`，分组状态文字 `group_status` 和分组结果 `group_report` 使用 `{group_id, text}`，不依赖事件相邻关系。并行事件交错、分页及 SSE 重连均按明确 ID 恢复归属；工具调用以组 ID 与 `call_id` 联合关联。最终报告和后续追问在分组之外。
 
-持久化事件与清理工作流格式由当前数据库版本校验；不迁移旧事件、不推断旧分组。旧数据目录会被版本校验拒绝，需使用新的数据目录；不删除或覆盖已有数据。
+持久化事件与清理工作流格式由数据库版本校验。数据库随发布更新在支持窗口内原地升级并保留数据；窗口外明确报错，不删除或覆盖已有数据。支持范围与操作见[更新器说明](updater.md)。
 
 消息角色包括 `report_plan`、`group_state`、`group_status`、`user`、`status`、预载 `tool_result`、`model_request`、`model_delta`、`model_response`、`tool_start`、`tool_end`、`note`、分组结果 `group_report` 和最终 `assistant`。模型事件通过 `request_id` 关联，工具执行通过 `call_id` 关联；分片与最终回复使用不同角色，追问只读取完成的用户/助手消息。失败、停止或重启后，已经保存的公开内容仍可回看，并标明未完成。
 

@@ -255,16 +255,16 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		}
 		ref := image.Image
 		if ref == "" {
-			hash, err := fileHash(filepath.Join(stage, image.Binary))
-			if err != nil {
-				return nil, err
+			hash, hashErr := fileHash(filepath.Join(stage, image.Binary))
+			if hashErr != nil {
+				return nil, hashErr
 			}
 			ref = "project-alpha-" + image.Name + ":update-" + hash[:16]
 			var input bytes.Buffer
 			tw := tar.NewWriter(&input)
-			binary, err := os.ReadFile(filepath.Join(stage, image.Binary))
-			if err != nil {
-				return nil, err
+			binary, readErr := os.ReadFile(filepath.Join(stage, image.Binary))
+			if readErr != nil {
+				return nil, readErr
 			}
 			for _, entry := range []struct {
 				name string

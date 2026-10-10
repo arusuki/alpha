@@ -26,6 +26,7 @@ type dockerFixture struct {
 	old, next          string
 	fail, rollbackFail bool
 	duplicate, denied  bool
+	buildFail          bool
 }
 
 func noDeployedServices(_ context.Context, _ string, args []string, _ []byte) ([]byte, error) {
@@ -82,6 +83,9 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 		return marshal([]any{f.container})
 	}
 	if args[0] == "build" {
+		if f.buildFail {
+			return nil, errors.New("injected build failure")
+		}
 		if !bytes.Contains(input, []byte("FROM scratch")) || !bytes.Contains(input, []byte("dram binary")) {
 			f.t.Fatal("missing offline build context")
 		}
@@ -92,6 +96,9 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 	}
 	if args[0] == "compose" {
 		if slices.Contains(args, "config") {
+			if !slices.Contains(args, "/deploy/override.yaml") {
+				return os.ReadFile(args[slices.Index(args, "-f")+1])
+			}
 			if !slices.Contains(args, "/deploy/.env") || !slices.Contains(args, "/deploy/override.yaml") {
 				f.t.Fatal("lost deployment inputs", args)
 			}
@@ -117,6 +124,9 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 			f.container["Image"] = image
 			f.container["Id"] = strings.Repeat("e", 64)
 			f.container["State"] = map[string]any{"Status": "created", "Running": false}
+			current := f.container["Config"].(map[string]any)
+			current["Entrypoint"] = spec["entrypoint"]
+			current["Labels"].(map[string]string)["com.docker.compose.project.config_files"] = path
 			if image == f.next && f.fail || image == f.old && f.rollbackFail {
 				return nil, errors.New("injected recreate failure")
 			}
@@ -185,16 +195,17 @@ func TestContainerUpdatePreservesDeployment(t *testing.T) {
 }
 
 func TestContainerFailuresAndDrift(t *testing.T) {
-	for _, mode := range []string{"denied", "duplicate", "drift", "recreate", "rollback", "migration", "running"} {
+	for _, mode := range []string{"denied", "duplicate", "build", "drift", "recreate", "rollback", "migration", "running"} {
 		t.Run(mode, func(t *testing.T) {
 			f, db, stage := newDockerFixture(t)
 			f.denied = mode == "denied"
 			f.duplicate = mode == "duplicate"
+			f.buildFail = mode == "build"
 			if mode == "running" {
 				f.container["State"] = map[string]any{"Status": "running", "Running": true}
 			}
 			p, err := prepareContainers(context.Background(), db, stage, f.run, io.Discard)
-			if f.denied || f.duplicate {
+			if f.denied || f.duplicate || f.buildFail {
 				if err == nil {
 					t.Fatal("invalid deployment accepted")
 				}
