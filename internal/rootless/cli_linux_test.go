@@ -12,12 +12,12 @@ import (
 )
 
 func TestCLIArguments(t *testing.T) {
-	for _, args := range [][]string{{"init"}, {"proxy", "--http-proxy", ""}, {"proxy", "--clear", "--disable-host-loopback"}, {"add", "container", "--host", "unix:///tmp/docker.sock", "--socket-path", "/run/custom.sock"}, {"add", "--socket-path=/run/custom.sock", "container"}, {"docker", "--", "exec", "-it", "c", "sh"}, {"test", "exec", "my-test"}, {"--help"}, {"add", "--help"}} {
+	for _, args := range [][]string{{"daemon"}, {"proxy", "--http-proxy", ""}, {"proxy", "--clear", "--disable-host-loopback"}, {"add", "container", "--host", "unix:///tmp/docker.sock", "--socket-path", "/run/custom.sock"}, {"add", "--socket-path=/run/custom.sock", "container"}, {"docker", "--", "exec", "-it", "c", "sh"}, {"test", "exec", "my-test"}, {"remove", "container"}, {"daemon", "--host-namespaces", "--socket-gid", "1005"}, {"list"}, {"--help"}, {"add", "--help"}} {
 		if _, err := parseOptions(args); err != nil {
 			t.Errorf("%q: %v", args, err)
 		}
 	}
-	for _, args := range [][]string{nil, {"unknown"}, {"add"}, {"add", "a", "b"}, {"status", "unexpected"}, {"init", "--clear"}, {"proxy", "--clear", "--http-proxy", ""}, {"init", "--allow-host-loopback", "--disable-host-loopback"}, {"proxy", "--http-proxy"}, {"add", "c", "--host", "ssh://host"}, {"add", "c", "--socket-path", "/run/../docker.sock"}, {"test", "up", "-invalid"}, {"proxy", "--http-proxy", "http://secret@host:65536"}} {
+	for _, args := range [][]string{nil, {"unknown"}, {"add"}, {"add", "a", "b"}, {"status", "unexpected"}, {"daemon", "--clear"}, {"proxy", "--clear", "--http-proxy", ""}, {"daemon", "--allow-host-loopback", "--disable-host-loopback"}, {"proxy", "--http-proxy"}, {"add", "c", "--host", "ssh://host"}, {"add", "c", "--socket-path", "/run/../docker.sock"}, {"test", "up", "-invalid"}, {"proxy", "--http-proxy", "http://secret@host:65536"}} {
 		if _, err := parseOptions(args); err == nil {
 			t.Errorf("accepted %q", args)
 		} else if strings.Contains(err.Error(), "secret") {
@@ -164,29 +164,17 @@ func TestProxyServiceLifecycle(t *testing.T) {
 		})
 	}
 }
-func TestInitDoesNotRestartWithoutExplicitChanges(t *testing.T) {
-	m, u := testManager(t)
-	for _, change := range []bool{false, true} {
-		var commands []string
-		m.run = func(args, env []string, d time.Duration, check bool) (result, error) {
-			commands = append(commands, strings.Join(args, " "))
-			b, _ := json.Marshal(daemonInfo{SecurityOptions: []string{"name=rootless"}, DockerRootDir: layout(u).Data})
-			return result{Out: string(b)}, nil
+func TestServiceRequiresManagerLease(t *testing.T) {
+	_, u := testManager(t)
+	unit := unitText(u)
+	for _, want := range []string{"--internal-supervisor", "/run/rootless-docker/lease.sock", "Restart=no", "KillMode=mixed", "Delegate=yes"} {
+		if !strings.Contains(unit, want) {
+			t.Fatal("missing lifecycle property", want)
 		}
-		o := options{}
-		if change {
-			o.Proxies = map[string]string{"http-proxy": ""}
-		}
-		if err := m.enableService(u, o); err != nil {
-			t.Fatal(err)
-		}
-		all := strings.Join(commands, "\n")
-		if change {
-			if !strings.Contains(all, "restart "+serviceName) || strings.Contains(all, "enable --now") {
-				t.Fatal(all)
-			}
-		} else if !strings.Contains(all, "enable --now "+serviceName) || strings.Contains(all, "restart") {
-			t.Fatal(all)
+	}
+	for _, bad := range []string{"WantedBy=", "Restart=always"} {
+		if strings.Contains(unit, bad) {
+			t.Fatal("independent service lifetime", bad)
 		}
 	}
 }
@@ -225,13 +213,35 @@ func TestTestContainerOwnershipAndCleanup(t *testing.T) {
 					return result{}, nil
 				}
 			}
-			err := m.testContainer([]string{"cleanup"})
+			d := &daemon{manager: m, stateFile: t.TempDir() + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{
+				{Host: testHost, Container: "cid", Name: "rootless-cli-test", SocketPath: "/sock"},
+				{Host: testHost, Container: "other", Name: "other", SocketPath: "/sock"},
+				{Host: "unix:///other.sock", Container: "cid", Name: "remote", SocketPath: "/sock"},
+			}}}
+			if err := d.save(); err != nil {
+				t.Fatal(err)
+			}
+			err := d.testContainer([]string{"cleanup"})
 			if (err != nil) != (kind == "foreign" || kind == "daemon-error" || kind == "rootless") {
 				t.Fatal(err)
 			}
 			removed := strings.Contains(strings.Join(calls, "\n"), "rm --force")
 			if removed != (kind == "owned") {
 				t.Fatal(calls)
+			}
+			saved, err := loadBindings(d.stateFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 3
+			if kind == "owned" {
+				want = 2
+				if saved.Bindings[0].Container != "other" || saved.Bindings[1].Host != "unix:///other.sock" {
+					t.Fatal("cleanup removed another container's binding", saved)
+				}
+			}
+			if len(saved.Bindings) != want || strings.Count(strings.Join(calls, "\n"), "container ls") > 1 {
+				t.Fatal("cleanup repeated lookup or lost bindings", calls, saved)
 			}
 		})
 	}
@@ -259,7 +269,7 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 				return []byte("0 0 4294967295"), nil
 			}
 			source := layout(u).Socket
-			writeTestFile(t, source, "", 0600)
+			socketFile(t, source)
 			state := containerState{Pid: os.Getpid(), Running: true, StartedAt: "start"}
 			switch kind {
 			case "paused":
@@ -275,6 +285,7 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 			inspectCount := 0
 			m.worker = func(r workerRequest, asUser bool) error {
 				attached = true
+				json.NewEncoder(m.out).Encode(mountReceipt{Namespace: 1, Device: 2, Inode: 3, MountID: "4"})
 				if asUser || r.Action != "attach" || r.PID != state.Pid || r.Source != source || r.Destination != "/run/custom.sock" {
 					t.Fatal(r, asUser)
 				}
@@ -282,7 +293,7 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 					if err := os.Rename(source, source+".old"); err != nil {
 						t.Fatal(err)
 					}
-					writeTestFile(t, source, "", 0600)
+					socketFile(t, source)
 				}
 				return nil
 			}
@@ -317,13 +328,17 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 				b, _ := json.Marshal(obj)
 				return result{Out: string(b)}, nil
 			}
-			err := m.add(u, options{Container: "-container", Host: testHost, SocketPath: "/run/custom.sock"})
+			d := &daemon{manager: m, user: u, bootID: "boot", stateFile: t.TempDir() + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
+			err := d.add(options{Container: "-container", Host: testHost, SocketPath: "/run/custom.sock"})
 			if (err != nil) != (kind != "ok") {
 				t.Fatal(kind, err)
 			}
 			wantAttach := kind == "ok" || kind == "socket-replaced" || kind == "container-restarted"
 			if attached != wantAttach {
 				t.Fatal("unexpected attach", kind, attached)
+			}
+			if kind == "ok" && inspectCount != 2 {
+				t.Fatal("add should inspect once before and once after mounting", inspectCount)
 			}
 		})
 	}

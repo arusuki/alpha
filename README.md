@@ -123,7 +123,7 @@ The detailed guides are currently available in Chinese.
 | Scan results, directory exploration, and incremental updates | [Records and exploration](docs/records.md) |
 | Agent reports and cleanup | [Agent API](docs/agent.md) |
 | Public registration, backups, and deployment | [Running and configuration](docs/operations.md) |
-| The standalone rootless Docker tool | [Rootless Docker](docs/rootless-docker.md) |
+| Rootless Docker daemon/client | [Rootless Docker](docs/rootless-docker.md) |
 | The standalone C DRAM bandwidth sampler | [dram-bw](ctools/dram-bw/README.md) |
 | Tests, benchmarks, and code structure | [Development and verification](docs/development.md) |
 

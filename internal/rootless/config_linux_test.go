@@ -306,6 +306,13 @@ func TestInstalledConfigValidators(t *testing.T) {
 	allow := true
 	mustPrepare(t, m, u, options{Proxies: map[string]string{"http-proxy": "http://user:p%40ss@proxy.example:7890", "https-proxy": "http://proxy.example:7890", "no-proxy": "localhost,127.0.0.1,.internal"}, AllowLoopback: &allow})
 	p := layout(u)
+	// The production supervisor is installed only when the daemon starts. Use
+	// this executable for systemd's path validation without installing anything.
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, p.Unit, strings.ReplaceAll(readTestFile(t, p.Unit), supervisorPath, binary), 0600)
 	for _, cmd := range [][]string{{"sh", "-n", p.Base + "/launch.sh"}, {"dockerd", "--validate", "--config-file", p.Config + "/daemon.json"}, {"systemd-analyze", "--user", "verify", p.Unit}} {
 		out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput()
 		if err != nil || strings.Contains(string(out), "Operation not permitted") {

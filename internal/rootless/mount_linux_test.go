@@ -177,9 +177,18 @@ func TestRealSocketMounts(t *testing.T) {
 	if os.Geteuid() != 0 || mapping == "0 0 4294967295" {
 		t.Fatal("must run in an isolated user/mount namespace")
 	}
-	for _, kind := range []string{"existing", "missing", "shared", "nonempty", "wrong-owner", "source-symlink"} {
+	for _, kind := range []string{"existing", "missing", "shared", "shared-source", "nonempty", "wrong-owner", "source-symlink"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
+			if kind == "shared-source" {
+				if err := unix.Mount(dir, dir, "", unix.MS_BIND, ""); err != nil {
+					t.Fatal(err)
+				}
+				defer unix.Unmount(dir, unix.MNT_DETACH)
+				if err := unix.Mount("", dir, "", unix.MS_SHARED, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
 			root := dir + "/rootfs"
 			for _, sub := range []string{"run", "var"} {
 				if err := os.MkdirAll(root+"/"+sub, 0755); err != nil {
@@ -265,8 +274,9 @@ func TestRealSocketMounts(t *testing.T) {
 				}
 				source = link
 			}
-			attach := func() error {
-				r := workerRequest{Action: "attach", User: account{UID: owner}, PID: target.Process.Pid, Source: source, Destination: "/var/run/docker.sock"}
+			var receipt mountReceipt
+			callWorker := func(r workerRequest, response any) error {
+				r.PID, r.Destination = target.Process.Pid, "/var/run/docker.sock"
 				data, _ := json.Marshal(r)
 				cmd := exec.Command(os.Args[0], "-test.run=^TestMountHelperProcess$")
 				cmd.Env = append(os.Environ(), "ROOTLESS_TEST_HELPER=attach")
@@ -275,7 +285,21 @@ func TestRealSocketMounts(t *testing.T) {
 				if e != nil {
 					return fmt.Errorf("%w: %s", e, out)
 				}
+				if response != nil {
+					return json.Unmarshal(out, response)
+				}
 				return nil
+			}
+			attach := func() error {
+				return callWorker(workerRequest{Action: "attach", User: account{UID: owner}, Source: source}, &receipt)
+			}
+			detach := func(r mountReceipt) error {
+				return callWorker(workerRequest{Action: "detach", Receipt: &r}, nil)
+			}
+			verify := func(r mountReceipt) (bool, error) {
+				var mounted bool
+				err := callWorker(workerRequest{Action: "verify-mount", Receipt: &r}, &mounted)
+				return mounted, err
 			}
 			before := count()
 			if kind == "shared" || kind == "nonempty" || kind == "wrong-owner" || kind == "source-symlink" {
@@ -304,6 +328,9 @@ func TestRealSocketMounts(t *testing.T) {
 				t.Fatal("expected one new mount")
 			}
 			probe(listener)
+			if err = checkMountInfo(receipt.MountID, readTestFile(t, fmt.Sprintf("/proc/%d/mountinfo", target.Process.Pid))); err != nil {
+				t.Fatal("injected mount inherited shared propagation", err)
+			}
 			if err = attach(); err != nil {
 				t.Fatal(err)
 			}
@@ -317,7 +344,84 @@ func TestRealSocketMounts(t *testing.T) {
 					t.Fatal("underlying socket replaced")
 				}
 			}
+			foreign := receipt
+			// A different mount still present in this namespace cannot authorize
+			// unmounting the socket visible at the destination.
+			foreign.MountID = strings.Fields(readTestFile(t, fmt.Sprintf("/proc/%d/mountinfo", target.Process.Pid)))[0]
+			if err = detach(foreign); err == nil {
+				t.Fatal("unmounted an unowned mount")
+			}
+			if count() != before+1 {
+				t.Fatal("rejected detach changed mounts")
+			}
+			if mounted, err := verify(receipt); err != nil || !mounted {
+				t.Fatal("live mount not verified", mounted, err)
+			}
+			// A mount covering the recorded one must remain untouched. The old
+			// mount is still in mountinfo even though it is not at the path's top.
+			replacementSource := dir + "/replacement.sock"
+			replacement := socketListener(t, replacementSource)
+			defer replacement.Close()
+			var replacementReceipt mountReceipt
+			mountReplacement := func() error {
+				return callWorker(workerRequest{Action: "attach", User: account{UID: owner}, Source: replacementSource}, &replacementReceipt)
+			}
+			if err = mountReplacement(); err != nil {
+				t.Fatal(err)
+			}
+			if err = detach(receipt); err == nil {
+				t.Fatal("detached a replacement covering the recorded mount")
+			}
+			if _, err = verify(receipt); err == nil || count() != before+2 {
+				t.Fatal("covered mount was mistaken for a completed detach", err)
+			}
+			probe(replacement)
+			if err = detach(replacementReceipt); err != nil {
+				t.Fatal(err)
+			}
+			if err = detach(receipt); err != nil {
+				t.Fatal(err)
+			}
+			if count() != before {
+				t.Fatal("detach did not restore mount count")
+			}
+			if err = detach(receipt); err != nil {
+				t.Fatal("cannot replay detach after a crash before saving", err)
+			}
+			if count() != before {
+				t.Fatal("replayed detach changed the underlying mount")
+			}
+			if mounted, err := verify(receipt); err != nil || mounted {
+				t.Fatal("completed detach still reported as mounted", mounted, err)
+			}
+			// Even if another mount appears after removal, replaying the old
+			// receipt must leave that replacement and its socket usable.
+			if err = mountReplacement(); err != nil {
+				t.Fatal(err)
+			}
+			err = detach(receipt)
+			if count() != before+1 {
+				t.Fatal("replayed detach touched a later replacement", err)
+			}
+			// Linux may reuse the mount ID immediately. In that case the inode
+			// mismatch must remain an error; it must never authorize removal.
+			if (err != nil) != (receipt.MountID == replacementReceipt.MountID) {
+				t.Fatal("unexpected replacement identity result", receipt, replacementReceipt, err)
+			}
+			probe(replacement)
+			if err = detach(replacementReceipt); err != nil {
+				t.Fatal(err)
+			}
+			if original != nil {
+				probe(original)
+			}
+			if err = attach(); err != nil {
+				t.Fatal(err)
+			}
 			listener.Close()
+			if err = detach(receipt); err != nil {
+				t.Fatal("cannot detach unlinked source", err)
+			}
 			listener = socketListener(t, source)
 			if err = attach(); err != nil {
 				t.Fatal(err)

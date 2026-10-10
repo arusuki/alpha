@@ -61,7 +61,7 @@ Docker 清理回归：`PROJECT_ALPHA_TEST_OVERLAY_CLEANUP=1 python3 tests/test_c
 
 - `cmd/project-alpha`：程序入口，处理进程信号并启动应用。
 - `cmd/alpha-updater`、`internal/updater`：独立测试环境更新器；按角色校验并安装 GitHub release，调用目标更新器原地升级数据库。用法见 [测试环境更新器](updater.md)。
-- `cmd/rootless-docker`、`internal/rootless`：独立 rootless Docker 管理命令、socket 热挂载和交互测试容器；不接入 Web。
+- `cmd/rootless-docker`、`internal/rootless`：rootless Docker daemon/client、host 用户服务生命周期监督、socket 挂载/卸载及事件恢复；部署见 [rootless Docker](rootless-docker.md)。
 - `ctools/dram-bw`：独立 C DRAM 带宽采集服务、客户端库、命令行示例和 perf 对照脚本；用法见 [dram-bw](../ctools/dram-bw/README.md)。
 - `internal/app`：命令分发、模块装配和 HTTP 服务生命周期。
 - `internal/cluster`：节点注册与身份核验、总控代理、权限授权、跨节点容器统计和 API-only worker 入口。

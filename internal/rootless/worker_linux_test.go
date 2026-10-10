@@ -16,7 +16,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if len(os.Args) == 2 && os.Args[1] == "--internal-worker" {
+	if len(os.Args) > 1 && (os.Args[1] == "--internal-worker" || os.Args[1] == "--internal-supervisor") {
 		os.Exit(Main(os.Args[1:]))
 	}
 	os.Exit(m.Run())
@@ -28,22 +28,22 @@ func TestConfigurationWorkerReexec(t *testing.T) {
 	_, u := testManager(t)
 	// Execute the real re-exec protocol with the current unprivileged account.
 	// Production starts this same worker with docker-rootless credentials.
-	if err := runWorker(workerRequest{Action: "prepare", User: u}, false); err != nil {
+	if err := newManager().worker(workerRequest{Action: "prepare", User: u}, false); err != nil {
 		t.Fatal(err)
 	}
 	cfg := readConfig(t, u)
 	if cfg["data-root"] != layout(u).Data {
 		t.Fatal(cfg)
 	}
-	if err := runWorker(workerRequest{Action: "show-proxy", User: u}, false); err != nil {
+	if err := newManager().worker(workerRequest{Action: "show-proxy", User: u}, false); err != nil {
 		t.Fatal(err)
 	}
 	bad := u
 	bad.UID++
-	if err := runWorker(workerRequest{Action: "prepare", User: bad}, false); err == nil {
+	if err := newManager().worker(workerRequest{Action: "prepare", User: bad}, false); err == nil {
 		t.Fatal("worker accepted mismatched credentials")
 	}
-	if err := runWorker(workerRequest{Action: "unknown", User: u}, false); err == nil {
+	if err := newManager().worker(workerRequest{Action: "unknown", User: u}, false); err == nil {
 		t.Fatal("worker accepted unknown operation")
 	}
 }
@@ -145,7 +145,7 @@ func TestWorkerPrivateExecutableHelper(t *testing.T) {
 	config := options{AllowLoopback: &allow, Proxies: map[string]string{
 		"http-proxy": "http://10.0.2.2:13099", "https-proxy": "http://10.0.2.2:13099", "no-proxy": "localhost,127.0.0.1",
 	}}
-	if err = runWorker(workerRequest{Action: "prepare", User: u, Options: config}, true); err != nil {
+	if err = newManager().worker(workerRequest{Action: "prepare", User: u, Options: config}, true); err != nil {
 		t.Fatal(err)
 	}
 	if enabled, err := networkSettings(u); err != nil || !enabled {
@@ -167,18 +167,18 @@ func TestWorkerPrivateExecutableHelper(t *testing.T) {
 			t.Fatalf("configuration written with wrong credentials: %s uid=%d gid=%d", file, owner.Uid, owner.Gid)
 		}
 	}
-	if err = runWorker(workerRequest{Action: "show-proxy", User: u}, true); err != nil {
+	if err = newManager().worker(workerRequest{Action: "show-proxy", User: u}, true); err != nil {
 		t.Fatal(err)
 	}
 	// Refuse an invalid target before accessing configuration, including reads.
 	invalid := u
 	invalid.UID = 0
-	if err = runWorker(workerRequest{Action: "show-proxy", User: invalid}, true); err == nil {
+	if err = newManager().worker(workerRequest{Action: "show-proxy", User: invalid}, true); err == nil {
 		t.Fatal("accepted root target")
 	}
 	invalid = u
 	invalid.Groups = []uint32{0}
-	if err = runWorker(workerRequest{Action: "show-proxy", User: invalid}, true); err == nil {
+	if err = newManager().worker(workerRequest{Action: "show-proxy", User: invalid}, true); err == nil {
 		t.Fatal("kept root supplementary group")
 	}
 	if os.Geteuid() != 0 || os.Getegid() != 0 {

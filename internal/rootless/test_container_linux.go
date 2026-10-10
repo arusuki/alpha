@@ -4,9 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
-
-	"golang.org/x/sys/unix"
+	"time"
 )
 
 const testLabel = "io.rootless-docker.cli-test"
@@ -34,14 +34,15 @@ func (m *manager) testLookup(name string) (string, error) {
 	}
 	return "", nil
 }
-func (m *manager) testUp(u account, name string) (string, error) {
+func (d *daemon) testUp(name string) (string, error) {
+	m, u := d.manager, d.user
 	r, err := m.docker(u, "", "info", "--format", "{{.ID}}")
 	if err != nil {
 		return "", err
 	}
 	expected := strings.TrimSpace(r.Out)
 	if expected == "" {
-		return "", errors.New("无法获取 rootless daemon ID；请先执行 rootless-docker init。")
+		return "", errors.New("无法获取 rootless daemon ID；请先启动 rootless-docker daemon。")
 	}
 	cid, err := m.testLookup(name)
 	if err != nil {
@@ -68,7 +69,7 @@ func (m *manager) testUp(u account, name string) (string, error) {
 			}
 		}
 	}
-	if err = m.add(u, options{Container: cid, Host: testHost, SocketPath: "/var/run/docker.sock"}); err != nil {
+	if err = d.add(options{Container: cid, Host: testHost, SocketPath: "/var/run/docker.sock"}); err != nil {
 		fmt.Fprintf(m.errOut, "挂载失败。修复后重新执行 test up；也可用 test cleanup 删除测试容器 %s。\n", name)
 		return "", err
 	}
@@ -87,7 +88,8 @@ func (m *manager) testUp(u account, name string) (string, error) {
 	fmt.Fprint(m.out, r.Out)
 	return cid, nil
 }
-func (m *manager) testContainer(args []string) error {
+func (d *daemon) testContainer(args []string) error {
+	m := d.manager
 	name := "rootless-cli-test"
 	if len(args) == 2 {
 		name = args[1]
@@ -114,31 +116,22 @@ func (m *manager) testContainer(args []string) error {
 		}
 		fmt.Fprint(m.out, r.Out)
 		fmt.Fprintf(m.out, "已删除测试容器 %s。\n", name)
-		return nil
+		// Docker has removed the container and its mount namespace. Remove
+		// its saved associations once, without inspecting the deleted ID.
+		d.store.Bindings = slices.DeleteFunc(d.store.Bindings, func(b binding) bool {
+			return b.Host == testHost && b.Container == cid
+		})
+		return d.save()
 	}
-	u, err := lookupAccount()
-	if err != nil {
-		return err
-	}
-	cid, err := m.testUp(u, name)
+	cid, err := d.testUp(name)
 	if err != nil {
 		return err
 	}
 	switch args[0] {
-	case "exec":
-		fmt.Fprintln(m.out, "已进入测试终端，可执行 docker version、docker ps、docker run --rm hello-world；exit 退出。")
-		cmd := []string{"docker", "--host", testHost, "exec", "-i"}
-		_, e1 := unix.IoctlGetTermios(0, unix.TCGETS)
-		_, e2 := unix.IoctlGetTermios(1, unix.TCGETS)
-		if e1 == nil && e2 == nil {
-			cmd = append(cmd, "-t")
-		}
-		cmd = append(cmd, "--user", "0", "--env", "DOCKER_HOST="+testHost, "--env", "DOCKER_CONTEXT=", "--env", "DOCKER_TLS_VERIFY=", "--env", "DOCKER_TLS=", "--env", "DOCKER_CERT_PATH=", "--env", "DOCKER_API_VERSION=", cid, "/bin/sh")
-		return execCommand(cmd, rootDockerEnv)
 	case "check":
 		for _, command := range [][]string{{"version"}, {"run", "--rm", "hello-world"}} {
 			cmd := append([]string{"docker", "--host", testHost, "exec", "--user", "0", cid, "docker", "--host", testHost}, command...)
-			r, err := m.run(cmd, rootDockerEnv, 0, true)
+			r, err := m.run(cmd, rootDockerEnv, 120*time.Second, true)
 			fmt.Fprint(m.out, r.Out)
 			fmt.Fprint(m.errOut, r.Err)
 			if err != nil {
@@ -151,5 +144,5 @@ func (m *manager) testContainer(args []string) error {
 }
 
 func (m *manager) testDocker(args ...string) (result, error) {
-	return m.run(append([]string{"docker", "--host", testHost}, args...), rootDockerEnv, 0, true)
+	return m.run(append([]string{"docker", "--host", testHost}, args...), rootDockerEnv, 120*time.Second, true)
 }

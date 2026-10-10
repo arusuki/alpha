@@ -123,10 +123,9 @@ StartLimitBurst=3
 [Service]
 Type=notify
 NotifyAccess=all
-ExecStart=%s/launch.sh
+ExecStart=%s --internal-supervisor /run/rootless-docker/lease.sock %s/launch.sh
 WorkingDirectory=%s
-Restart=always
-RestartSec=3
+Restart=no
 TimeoutStartSec=120
 TimeoutStopSec=90
 KillMode=mixed
@@ -138,9 +137,7 @@ UMask=0077
 StandardOutput=append:%s/dockerd.log
 StandardError=append:%s/dockerd.log
 
-[Install]
-WantedBy=default.target
-`, p.Base, u.Home, p.Log, p.Log)
+`, supervisorPath, p.Base, u.Home, p.Log, p.Log)
 }
 
 // O_EXCL protects temporary files from symlinks; rename replaces a final symlink

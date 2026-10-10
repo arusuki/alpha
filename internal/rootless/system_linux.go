@@ -35,7 +35,7 @@ func layout(u account) paths {
 func lookupAccount() (account, error) {
 	u, err := user.Lookup(accountName)
 	if err != nil {
-		return account{}, errors.New("用户 docker-rootless 不存在，请先执行 init。")
+		return account{}, errors.New("用户 docker-rootless 不存在，请先启动 rootless-docker daemon。")
 	}
 	uid, err := strconv.ParseUint(u.Uid, 10, 32)
 	if err != nil {
@@ -111,6 +111,7 @@ type result struct {
 }
 type runner func([]string, []string, time.Duration, bool) (result, error)
 type manager struct {
+	ctx         context.Context
 	run         runner
 	worker      func(workerRequest, bool) error
 	out, errOut io.Writer
@@ -118,13 +119,24 @@ type manager struct {
 }
 
 func newManager() *manager {
-	return &manager{run: runCommand, worker: runWorker, out: os.Stdout, errOut: os.Stderr, readUIDMap: func(pid int) ([]byte, error) { return os.ReadFile(fmt.Sprintf("/proc/%d/uid_map", pid)) }}
+	m := &manager{run: runCommand, out: os.Stdout, errOut: os.Stderr, readUIDMap: func(pid int) ([]byte, error) { return os.ReadFile(fmt.Sprintf("/proc/%d/uid_map", pid)) }}
+	m.worker = func(r workerRequest, asUser bool) error {
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		return runWorkerContext(ctx, r, asUser, m.out, m.errOut)
+	}
+	return m
 }
 func runCommand(args, env []string, timeout time.Duration, check bool) (result, error) {
-	ctx, cancel := context.WithCancel(context.Background())
+	return runCommandContext(context.Background(), args, env, timeout, check)
+}
+func runCommandContext(parent context.Context, args, env []string, timeout time.Duration, check bool) (result, error) {
+	ctx, cancel := context.WithCancel(parent)
 	if timeout > 0 {
 		cancel()
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		ctx, cancel = context.WithTimeout(parent, timeout)
 	}
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -162,8 +174,8 @@ func runCommand(args, env []string, timeout time.Duration, check bool) (result, 
 func (m *manager) userRun(u account, args []string, timeout time.Duration, check bool) (result, error) {
 	return m.run(userCommand(u, args...), nil, timeout, check)
 }
-func (m *manager) systemctl(u account, check bool, args ...string) (result, error) {
-	return m.userRun(u, append([]string{"systemctl", "--user", "--no-pager"}, args...), 150*time.Second, check)
+func (m *manager) systemctl(u account, args ...string) (result, error) {
+	return m.userRun(u, append([]string{"systemctl", "--user", "--no-pager"}, args...), 150*time.Second, true)
 }
 func dockerArgs(u account, host string, args ...string) []string {
 	if host != "" {
@@ -226,9 +238,24 @@ type workerRequest struct {
 	PID                 int
 	Source, Destination string
 	DropPrivileges      bool
+	Receipt             *mountReceipt
 }
 
-func runWorker(req workerRequest, asUser bool) error {
+func (m *manager) workerResult(req workerRequest, value any) error {
+	var output bytes.Buffer
+	previous := m.out
+	m.out = &output
+	defer func() { m.out = previous }()
+	if err := m.worker(req, false); err != nil {
+		return err
+	}
+	if err := json.Unmarshal(output.Bytes(), value); err != nil {
+		return fmt.Errorf("挂载工作进程响应无效：%w", err)
+	}
+	return nil
+}
+
+func runWorkerContext(ctx context.Context, req workerRequest, asUser bool, out, errOut io.Writer) error {
 	// Execute while still privileged. Dropping credentials in SysProcAttr would
 	// require the service account to have execute permission on the binary itself,
 	// even through an inherited FD (e.g. a root-owned 0700 deployment fails).
@@ -238,10 +265,10 @@ func runWorker(req workerRequest, asUser bool) error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command("/proc/self/exe", "--internal-worker")
+	cmd := exec.CommandContext(ctx, "/proc/self/exe", "--internal-worker")
 	cmd.Stdin = bytes.NewReader(data)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout = out
+	cmd.Stderr = errOut
 	if asUser {
 		cmd.Env = userEnv(req.User)
 	}
@@ -272,14 +299,28 @@ func workerMain() error {
 			return newManager().prepareFiles(r.User, r.Options)
 		}
 		return showProxy(r.User, os.Stdout)
-	case "attach":
+	case "attach", "detach", "verify-mount":
 		if os.Geteuid() != 0 {
 			return errors.New("热挂载需要 root 权限")
 		}
 		if err := validateContainerPath(r.Destination); err != nil {
 			return err
 		}
-		return attachSocket(r.PID, r.Source, r.Destination, r.User.UID, os.Stdout)
+		if r.Action == "detach" || r.Action == "verify-mount" {
+			if r.Receipt == nil {
+				return errors.New("卸载缺少挂载身份")
+			}
+			mounted, err := checkSocketMount(r.PID, r.Destination, *r.Receipt, r.Action == "detach")
+			if err != nil || r.Action == "detach" {
+				return err
+			}
+			return json.NewEncoder(os.Stdout).Encode(mounted)
+		}
+		var receipt mountReceipt
+		if err := attachSocket(r.PID, r.Source, r.Destination, r.User.UID, &receipt); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(receipt)
 	default:
 		return errors.New("未知内部操作")
 	}

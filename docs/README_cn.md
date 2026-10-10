@@ -117,7 +117,7 @@ cd project-alpha_v0.7.2_linux_amd64
 | 扫描记录、目录探索与增量更新 | [记录读取与探索](records.md) |
 | Agent 报告与诊断清理 | [Agent API](agent.md) |
 | 公网注册、数据备份与服务部署 | [运行与配置](operations.md) |
-| 独立 rootless Docker 工具 | [rootless Docker](rootless-docker.md) |
+| rootless Docker daemon/client | [rootless Docker](rootless-docker.md) |
 | 独立 C DRAM 带宽采集工具 | [dram-bw](../ctools/dram-bw/README.md) |
 | 测试、性能基准与代码结构 | [开发与验证](development.md) |
 

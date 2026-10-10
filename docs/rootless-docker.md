@@ -1,200 +1,161 @@
 # rootless-docker
 
-在 Linux 宿主机创建专用用户 `docker-rootless`，运行独立的 rootless dockerd，并把它的 Unix socket 热挂载到已有容器。作为独立的 Go 命令集成到 project-alpha，不接入 Web，也不使用平台数据库。运行时不依赖 Python。
+独立的 daemon/client 工具：管理 daemon 在 privileged 容器或宿主机前台运行，在宿主机以专用用户 `docker-rootless` 启动 rootless dockerd。client 通过 Unix socket 请求挂载、卸载、重启或配置代理。管理 daemon 停止时，rootless dockerd 也停止；镜像、容器和卷保留。不使用平台数据库。
 
-在项目根目录构建：
+## 部署
 
-```bash
-go build -o bin/rootless-docker ./cmd/rootless-docker
-./bin/rootless-docker --help
-```
-
-配置子进程先启动，再将全部线程的 UID/GID 与附加组切换为专用用户，完成降权后才读写配置；二进制无需向专用用户开放执行权限。热挂载在单独的挂载工作进程中执行。部署时可将二进制安装到 `/usr/local/bin/rootless-docker`。
-
-## 使用
-
-需要宿主机运行 systemd，已安装 Docker Engine、`docker-ce-rootless-extras`、`uidmap`、`slirp4netns`、`iptables` 和用户 D-Bus。`add` 需要 x86_64/aarch64 Linux 5.6+。Ubuntu/Debian 已配置 Docker 官方软件源时：
+需要 Linux 宿主机运行 systemd，已安装 Docker Engine、`docker-ce-rootless-extras`、`uidmap`、`slirp4netns`、`iptables` 和用户 D-Bus。热挂载支持 x86_64/aarch64 Linux 5.6+。在已配置 Docker 官方软件源的 Ubuntu/Debian 上：
 
 ```bash
 sudo apt-get install uidmap dbus-user-session slirp4netns iptables docker-ce-rootless-extras
 
-sudo ./bin/rootless-docker init
-sudo ./bin/rootless-docker add <容器名或ID>
+go build -o bin/rootless-docker ./cmd/rootless-docker
+./bin/rootless-docker --help
+
+# 只启动这个服务，不启动同一文件中的 Tetragon / DRAM 服务。
+ROOTLESS_DOCKER_GID=$(id -g) docker compose -f deploy/services.yaml up -d --build rootless-docker
+./bin/rootless-docker status
 ```
 
-`init` 在用户不存在时创建无登录权限的用户，使用现有用户时保留其家目录与 UID，并检查该用户不属于 `root`/`docker` 组；检查或补充分配不与现有范围冲突的 65536 个 subordinate UID/GID。随后创建用户级 `docker-rootless.service`，启用 linger，启动服务并验证实际 daemon 的 rootless 标记和数据目录。可重复执行；不会自动重启已经运行的 daemon。
+[`deploy/services.yaml`](../deploy/services.yaml) 中的 `rootless-docker` 使用 `privileged`、`pid: host`、宿主机 user/cgroup namespace，绑定 `/run/rootless-docker`。静态 Go 二进制进入宿主机 mount/network namespace 和根目录后重新执行，使用宿主机的 Docker、RootlessKit、systemd 和账户信息。镜像不自动安装宿主机软件包。外层 Docker 必须是 rootful Docker。
 
-`add` 的目标容器必须正在运行，且属于本机 rootful Docker。目前不支持目标容器启用 `userns-remap`。默认挂到 `/var/run/docker.sock`；如果原来已有 socket，会在容器的挂载命名空间内覆盖它，不删除或改写原 socket。
+`ROOTLESS_DOCKER_GID` 是**宿主机**授权组的数字 GID，默认为 0。控制 socket `/run/rootless-docker/control.sock` 为 `0660 root:<GID>`；获授权的 client 无需 sudo。访问此管理 socket 的权限等同宿主机管理员，不应把它暴露给普通业务容器。业务容器只获得独立 rootless dockerd 的 socket。
+
+也可在宿主机前台运行：
 
 ```bash
-# 容器中需已有 Docker CLI；用 root 用户验证 socket 访问权限
-sudo docker --host unix:///var/run/docker.sock exec -u 0 <容器名> \
-  docker --host unix:///var/run/docker.sock info
-
-# 自定义容器内路径，或指定目标容器所在的本地 daemon
-sudo ./bin/rootless-docker add <容器名> --socket-path /run/rootless-docker.sock
-sudo ./bin/rootless-docker add <容器名> --host unix:///另一个本地/docker.sock
-
-# 直接管理独立 daemon，CLI 参数原样传递
-sudo ./bin/rootless-docker docker ps -a
-sudo ./bin/rootless-docker docker run --rm hello-world
-sudo ./bin/rootless-docker status
-sudo ./bin/rootless-docker logs
-sudo ./bin/rootless-docker stop
-sudo ./bin/rootless-docker start
-sudo ./bin/rootless-docker restart
+sudo ./bin/rootless-docker daemon --socket-gid "$(id -g)"
+# Ctrl-C / SIGTERM 停止管理服务和 dockerd。
 ```
 
-## Registry 拉取代理
+每台宿主机只允许一个管理 daemon。首次启动创建无登录 shell 的 `docker-rootless` 用户，检查专用家目录、账户组及 65536 个 subordinate UID/GID，生成用户级 `docker-rootless.service`，启用用户 linger。已有用户的 UID、家目录及数据保留。每次启动会停止本工具已有的用户服务、取消其独立开机启动，再由本次管理 daemon 启动；同名非本工具服务会明确报错。
 
-配置 rootless dockerd 的代理（Docker Engine 23.0+）。将下面的 `192.168.1.10:7890` 换成 rootless 网络中可访问的 HTTP 代理地址：
+## client
 
 ```bash
-# 已初始化的服务：保存代理配置，并自动重启 rootless daemon
-sudo ./bin/rootless-docker proxy \
-  --http-proxy http://192.168.1.10:7890 \
-  --https-proxy http://192.168.1.10:7890 \
-  --no-proxy localhost,127.0.0.1,.internal
+./bin/rootless-docker add my-container --socket-path /run/rootless-docker.sock
+./bin/rootless-docker list
+./bin/rootless-docker remove my-container --socket-path /run/rootless-docker.sock
 
-# 也可以在首次初始化时配置，参数与 proxy 相同
-sudo ./bin/rootless-docker init \
-  --http-proxy http://192.168.1.10:7890 \
-  --https-proxy http://192.168.1.10:7890
-
-sudo ./bin/rootless-docker proxy                         # 查看已保存配置，隐藏认证信息
-sudo ./bin/rootless-docker proxy --http-proxy ''           # 仅清除 HTTP 代理
-sudo ./bin/rootless-docker proxy --clear                  # 清除全部代理并重启
-
-# 验证 rootless daemon 的 registry 拉取
-sudo ./bin/rootless-docker docker pull hello-world
-sudo ./bin/rootless-docker test check                         # 自动重新挂载并验证容器内 CLI
+./bin/rootless-docker status
+./bin/rootless-docker logs
+./bin/rootless-docker restart
+./bin/rootless-docker docker ps -a
+./bin/rootless-docker docker run --rm hello-world
 ```
 
-代理保存在用户家目录下的 `.docker-rootless/config/daemon.json` 的 `proxies` 字段，作用于 daemon 的镜像拉取/推送。`HTTPS` registry 通常也使用 `http://` 的代理 URL，通过 CONNECT 隧道连接。未指定的字段保持原值；不带代理参数重新执行 `init` 会保留已有代理。更新前会调用 `dockerd --validate` 校验候选配置，校验失败保留原配置。查看命令显示的是已保存配置，不表示代理连通性检查。
+`add` / `remove` 默认容器内路径为 `/var/run/docker.sock`，可用 `--host unix:///其他本地/docker.sock` 选择本机 rootful Docker。客户端在其他容器中运行时，将管理 socket **所在目录**挂入，并通过 `ROOTLESS_CONTROL_SOCKET=/挂载目录/control.sock` 指定路径；需要匹配授权 GID。`docker` 子命令使用客户端本地 Docker CLI，管理服务将 Docker API 转发到 rootless dockerd，支持交互、流式输出及原 CLI 退出状态。
 
-设置、清除代理或带代理参数执行 `init` 会重启 rootless daemon；已有容器需重新执行 `add`，或通过 `rootless-docker test exec/check` 自动重新挂载。启动脚本清除继承的代理环境变量，以此配置文件为准。
-
-本工具使用独立 RootlessKit 网络，并默认禁止访问宿主机回环地址。若代理监听在宿主机的 **`127.0.0.1:13099`**，执行：
+容器内使用业务 socket：
 
 ```bash
-sudo ./bin/rootless-docker proxy --allow-host-loopback \
-  --http-proxy http://10.0.2.2:13099 \
-  --https-proxy http://10.0.2.2:13099 \
-  --no-proxy localhost,127.0.0.1,.internal
-
-sudo ./bin/rootless-docker docker pull hello-world
-# 如需在测试容器内验证，此命令会重新挂载 socket
-sudo ./bin/rootless-docker test check
+DOCKER_HOST=unix:///run/rootless-docker.sock docker info
 ```
 
-在本工具使用的 slirp4netns 默认网络里，`10.0.2.2` 用于访问宿主机的 IPv4 回环地址；rootless 中的 `localhost` / `127.0.0.1` 指向 rootless 网络自身。代理需监听宿主机 IPv4 `127.0.0.1`，仅监听 IPv6 `::1` 不适用。
+目标容器无需重启、无需 privileged，也不需要包含 shell 或 mount 命令。目标容器必须正在运行且未暂停，暂不支持 userns-remap。socket 保持 `0660`，默认目标容器 root 可访问；非 root 进程需要匹配 socket 的 GID。工具不会修改已有进程的附加组、`DOCKER_HOST` 或 Docker context。
 
-`--allow-host-loopback` 会放开 rootless 网络对宿主机回环服务的访问，**不限于 13099 端口**。设置保存在 `.docker-rootless/config/rootlesskit.json`，以后执行 `init` 或修改代理时会保留；`proxy` 可查看该设置。可用 `sudo ./bin/rootless-docker proxy --disable-host-loopback` 恢复禁止访问。`--clear` 只清除代理地址；若同时恢复默认网络限制，使用 `sudo ./bin/rootless-docker proxy --clear --disable-host-loopback`。`init` 也接受这两个网络选项。
+## 生命周期与挂载恢复
 
-此配置只作用于独立 rootless daemon；`test` 子命令创建 CLI 容器时，`docker:28-cli` 镜像仍由 root dockerd 拉取。
+- 管理 daemon 正常停止时，先卸载记录的 socket 挂载，再停止用户服务；保留账户、配置、关联和 Docker 数据。
+- 用户服务中的非 root supervisor 持有与管理 daemon 的 Unix 控制连接。管理容器被 SIGKILL、OOM 或强制移除后，连接断开，supervisor 停止 dockerd；用户服务配置为 `Restart=no`。此机制不依赖定时健康检查。
+- 强制终止无法运行管理 daemon 的挂载清理，目标容器可能暂时留下不可连接的旧 socket。下次启动根据持久化记录卸载旧挂载并恢复。
+- 关联按 Docker endpoint、**完整容器 ID**和目标路径保存。目标容器重启后，通过 Docker 事件恢复挂载；事件连接重建和管理 daemon 启动时也会核对状态。容器删除后，同名新建容器需要重新 `add`。
+- `restart` 或修改代理后自动更新关联的 socket。恢复错误保存在 `list` 输出中，不会静默删除关联；修复原因后重新 `add`。
+- `remove` 只卸载记录的挂载并删除关联，校验宿主机启动 ID、容器启动时间、PID、mount namespace、socket inode 和 mount ID。若卸载完成后进程中断，恢复时确认原 mount ID 已从该 namespace 消失即可继续，不卸载当前路径上的其他挂载。删除关联写盘失败时保留可重试的内存记录，修复存储后可重新执行 `remove`。原文件保留；工具为挂载创建的空占位文件也保留。不会删除目标容器已有文件。
+- 卸载不会终止已经建立的 socket 连接。已连接的客户端需自行断开；停止 dockerd 则会断开其 API 连接。
 
-参考：[Docker daemon 代理配置](https://docs.docker.com/engine/daemon/proxy/)、[slirp4netns 宿主机回环访问](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md#filtering-connections)。
+事件订阅由管理 daemon 直接通过 Unix socket 上的 Docker HTTP API 建立，不启动常驻 `docker events` 子进程。没有关联时不订阅，删除某个 endpoint 的最后一个关联后关闭对应连接，删除全部关联后也关闭 rootless 订阅。连接正常时阻塞等待事件，仅在断线后每秒重试；没有定时健康检查。目标订阅负责首次恢复，rootless 连接重建只处理 socket 已变化或缺失的挂载记录。无关容器事件不执行恢复，状态未变化时不重写记录或执行 fsync。
 
-## 交互测试容器
+这些热挂载不写入 Docker 创建配置，`docker inspect` 的 `Mounts` 不会列出它们。新注入的 socket 挂载设为 private，不继承宿主机源挂载的共享传播；目标路径上的共享传播挂载会被拒绝。只读根文件系统需要预先准备目标文件或选择可写路径。获得业务 socket 的容器可以管理该 rootless daemon 下的全部容器和卷；bind mount 的源路径按宿主机文件系统解释，并受 `docker-rootless` 用户权限限制。
 
-`rootless-docker test` 使用含 Docker CLI 的 [Docker 官方镜像](https://github.com/docker-library/docs/blob/master/docker/README.md)，在 root dockerd 下创建普通测试容器，再调用本项目的 `add` 热挂载 rootless socket。默认镜像为 `docker:28-cli`。
+停止与启动管理容器：
 
 ```bash
-# 首次配置独立 daemon；已初始化可跳过
-sudo ./bin/rootless-docker init
-
-sudo ./bin/rootless-docker test up       # 创建并挂载，验证 daemon ID
-sudo ./bin/rootless-docker test exec     # 进入 sh；也可直接执行此命令，自动创建并挂载
-
-# 在容器终端中执行
-docker version
-docker ps
-docker run --rm hello-world
-exit
-
-# 或自动执行 Docker CLI / hello-world 检查
-sudo ./bin/rootless-docker test check
-sudo ./bin/rootless-docker test cleanup
+docker compose -f deploy/services.yaml stop rootless-docker
+docker compose -f deploy/services.yaml start rootless-docker
 ```
 
-默认测试容器名为 `rootless-cli-test`。各命令都可追加自定义容器名，例如 `sudo ./bin/rootless-docker test exec my-cli-test`，随后用 `sudo ./bin/rootless-docker test cleanup my-cli-test` 清理。自定义镜像可用 `sudo ROOTLESS_TEST_IMAGE=docker:28-cli ./bin/rootless-docker test up`；镜像需包含 `/bin/sh`、`tail` 和 Docker CLI。
+Compose 设置 `stop_grace_period: 120s`，允许服务完成正常退出。`restart: unless-stopped` 作用于管理容器；手工停止后，用户服务不会自行开机启动。
 
-`up`、`exec`、`check` 会重新挂载 socket，因此能恢复容器或 daemon 重启后失效的挂载。同名的非本工具容器会被拒绝操作。挂载或验证失败时保留带标记的测试容器，便于重试或执行 `cleanup`。
+## registry 代理
 
-`cleanup` 仅删除带有本工具标记的 CLI 测试容器及其匿名卷，不删除镜像缓存，不停止 rootless daemon。`check` 创建的 `hello-world` 容器通过 `--rm` 自动删除；在交互终端中手工创建的其他容器、卷等资源需要自行清理。首次拉取镜像需要能访问镜像仓库。
+Docker Engine 23.0+ 支持保存 daemon 代理配置，用于镜像拉取和推送：
 
-## 存放位置与隔离
+```bash
+./bin/rootless-docker proxy --http-proxy http://192.168.1.10:7890 \
+  --https-proxy http://192.168.1.10:7890 --no-proxy localhost,127.0.0.1,.internal
+./bin/rootless-docker proxy                    # 隐藏 URL 认证信息
+./bin/rootless-docker proxy --http-proxy ''    # 只清除 HTTP 代理
+./bin/rootless-docker proxy --clear
+```
 
-默认家目录是 `/home/docker-rootless`；若用户已存在，使用 passwd 记录的家目录。以下路径均相对于该家目录：
+未指定字段保持不变；不带代理选项启动 daemon 会保留已有代理。保存前用 `dockerd --validate` 校验，失败保留原配置。启动脚本清除继承的代理环境变量，以 `daemon.json` 为准。HTTPS registry 通常也使用 `http://` 代理，通过 CONNECT 隧道访问。
 
-| 路径 | 内容 |
+访问只监听宿主机 IPv4 回环地址的代理：
+
+```bash
+./bin/rootless-docker proxy --allow-host-loopback \
+  --http-proxy http://10.0.2.2:13099 --https-proxy http://10.0.2.2:13099
+./bin/rootless-docker proxy --clear --disable-host-loopback
+```
+
+slirp4netns 中的 `10.0.2.2` 指向宿主机 IPv4 回环地址，rootless 中的 `127.0.0.1` 指向自身。该选项放开所有宿主机回环服务，不限于代理端口；仅监听 IPv6 `::1` 不适用。`daemon` 也接受这些代理和回环参数。
+
+## 数据与权限
+
+默认家目录 `/home/docker-rootless`；已有用户使用 passwd 记录中的家目录：
+
+| 位置 | 用途 |
 | --- | --- |
-| `.docker-rootless/data/` | 镜像、容器、卷及由该 dockerd 自行启动的 containerd 数据 |
-| `.docker-rootless/config/daemon.json` | 独立 daemon 配置 |
-| `.docker-rootless/config/rootlesskit.json` | 宿主机回环访问设置 |
-| `.docker-rootless/run/` | socket、PID、exec-root、RootlessKit 状态 |
-| `.docker-rootless/tmp/` | dockerd 临时文件 |
-| `.docker-rootless/log/dockerd.log` | daemon 标准输出和错误日志 |
-| `.docker-rootless/client/` | 此用户的 Docker CLI 配置 |
-| `.docker-rootless/cache/` | 缓存 |
-| `.docker-rootless/launch.sh` | 服务启动脚本 |
-| `.config/systemd/user/docker-rootless.service` | 用户级 systemd 服务 |
+| `~/.docker-rootless/data/` | 镜像、容器、卷及独立 containerd 数据 |
+| `~/.docker-rootless/config/daemon.json` | Docker 配置及代理 |
+| `~/.docker-rootless/config/rootlesskit.json` | 回环访问设置 |
+| `~/.docker-rootless/run/` | 业务 socket、PID、RootlessKit 和 exec-root |
+| `~/.docker-rootless/log/dockerd.log` | dockerd 标准输出和错误 |
+| `~/.docker-rootless/client/`、`cache/`、`tmp/` | 专用 CLI 配置、缓存和临时文件 |
+| `~/.docker-rootless/launch.sh` | 降权后的启动脚本 |
+| `~/.config/systemd/user/docker-rootless.service` | 受管理 daemon 生命周期约束的用户服务 |
+| `/run/rootless-docker/` | root 所有的控制 socket 和锁；lease socket 仅专用用户可连接 |
+| `/usr/local/libexec/rootless-docker/supervisor` | root 所有的生命周期监督程序；启动前校验专用用户可执行 |
+| `/var/lib/rootless-docker/bindings.json` | root 所有、权限 0600 的关联及挂载身份记录 |
 
-工具不修改系统 Docker 的配置、数据目录、socket、服务或 CLI context，也不把此用户加入 `docker` 组。RootlessKit 提供独立的用户、挂载和网络命名空间；dockerd 自行启动 containerd，不接入系统 containerd。只通过宿主机 Docker 查询目标容器，然后在目标容器内增加挂载。
+记录损坏或格式不匹配时明确报错，保留原文件，不自动重建。专用家目录不得位于 NFS。账户数据库、subuid/subgid、linger、用户 D-Bus 和 cgroup 仍使用宿主机设施。工具不修改系统 Docker 的配置、数据目录、服务或 CLI context，不把专用用户加入 root/docker 组。
 
-创建用户必需的 `/etc/passwd`、`/etc/shadow`、`/etc/group`、`/etc/subuid`、`/etc/subgid` 以及 systemd linger、用户 D-Bus、cgroup 属于系统账户/服务管理设施，不能搬进家目录。Docker 持久化数据和工具管理文件放在家目录；systemd 本身仍可能记录服务生命周期日志。不要把家目录放在 NFS 上。
-
-## 热挂载的边界
-
-- 不重建、不重启目标容器，也不要求容器内有 shell 或 `mount`。挂载不会写入 Docker 的容器创建配置，所以 `docker inspect` 的 `Mounts` 不会列出它。
-- **目标容器重启、重建或 rootless dockerd 重启后，需要重新执行 `add`。** 相同 socket 重复执行不会叠加挂载；daemon 重启后会先解除失效的旧 socket 挂载，再挂载新 socket。
-- 如果需要挂载随容器启动自动恢复，应在创建容器时使用 Docker/Compose 声明挂载；本工具的 `add` 专用于已有运行容器。
-- socket 权限保持 `0660`；默认允许目标容器的 root 用户访问。非 root 应用需具备对应 socket GID 的组权限；工具不会将 socket 改成 `0666`，也不会修改运行中进程的附加组。
-- 既有进程若已连上旧 socket，需主动断开重连。工具不会修改容器现有进程的 `DOCKER_HOST` 或 Docker context；客户端应显式使用上面示例中的 `--host`。
-- 获得 socket 的容器可以管理这个 rootless daemon 下的所有容器和卷。它创建的是独立 daemon 下的容器，bind mount 的源路径按宿主机文件系统解释，受 `docker-rootless` 用户权限限制。
-- `add` 会拒绝共享传播的目标挂载，避免新增挂载传播回宿主机。容器根文件系统只读且目标路径不存在时，需先准备目标文件或选择可写路径。
-- 普通 daemon 日志集中写入 `dockerd.log`；长期使用可自行配置轮转。容器日志默认使用 Docker 的 `local` 驱动。
-
-修改 `.docker-rootless/config/daemon.json` 后执行 `restart`。可添加镜像源、DNS 等设置；保持 `data-root`、`exec-root`、`pidfile`、`hosts`、`rootless`、`group` 的隔离配置不变，不指定外部 `containerd`。
+rootless dockerd 自行启动 containerd，不接入系统 containerd。修改 `daemon.json` 后可执行 `restart`；保持 `data-root`、`exec-root`、`pidfile`、`hosts`、`rootless`、`group` 的隔离配置不变，不指定外部 containerd。日志集中写入 `dockerd.log`，可自行配置轮转。
 
 ## 验证
 
-以下命令在项目根目录执行。普通回归测试无需 root、Docker daemon 或 systemd：
-
 ```bash
-go test ./internal/rootless ./cmd/rootless-docker
-```
-
-使用本机已安装的 dockerd、systemd 校验临时生成的配置（不启动服务）：
-
-```bash
+go test -race ./internal/rootless ./cmd/rootless-docker
 ROOTLESS_INTEGRATION=1 go test ./internal/rootless -run '^TestInstalledConfigValidators$' -v
-```
 
-真实网络测试只使用临时回环监听端口，需要当前用户可运行 RootlessKit：
-
-```bash
-ROOTLESS_NETWORK_INTEGRATION=1 go test ./internal/rootless -run '^TestRealHostLoopback$' -v
-```
-
-真实降权测试通过 RootlessKit 的 subordinate UID/GID 映射运行，覆盖 `0700` 二进制、配置文件属主及多个 Go 线程的权限清除。只使用临时目录，不创建宿主机用户或服务；不要作为宿主机 root 运行：
-
-```bash
-go test -c -o /tmp/project-alpha-rootless.test ./internal/rootless
-ROOTLESS_WORKER_INTEGRATION=1 rootlesskit \
-  /tmp/project-alpha-rootless.test -test.run '^TestWorkerPrivilegeIntegration$' -test.v
-```
-
-也可使用 `CGO_ENABLED=0 go test -c ...` 构建测试程序，验证不依赖 libc 的降权路径。
-
-真实 socket 挂载测试只使用临时目录及隔离的 user/mount namespace，不操作 Docker 或创建系统用户；不要直接作为宿主机 root 运行：
-
-```bash
 go test -c -o /tmp/project-alpha-rootless.test ./internal/rootless
 ROOTLESS_MOUNT_INTEGRATION=1 unshare --user --map-root-user --mount --fork \
   /tmp/project-alpha-rootless.test -test.run '^TestRealSocketMounts$' -test.v
 ```
 
-挂载测试覆盖已有 socket、缺少目标文件、重复挂载、源 socket 重建，以及共享传播、非空文件、源符号链接和错误属主的拒绝行为。真实 Docker 全流程通过上文 `test up/exec/check/cleanup` 手动执行。
+挂载测试在隔离 user/mount namespace 中验证实际 socket 通信、重复挂载、卸载恢复原文件、失效 socket 清理、共享传播拒绝及错误身份拒绝，不修改宿主机账户或服务。协议测试使用临时 Unix socket，覆盖 HTTP 事件订阅、断线恢复、删除最后一个关联后关闭连接、重复操作不写盘及写入失败后重试；生命周期测试覆盖控制连接断开、终止信号、子进程失败和超时终止。
 
-实现依据：[Docker rootless 前提条件](https://docs.docker.com/engine/security/rootless/)、[用户级服务及目录说明](https://docs.docker.com/engine/security/rootless/tips/)、[dockerd 参数](https://docs.docker.com/reference/cli/dockerd/)、[内置 containerd](https://docs.docker.com/engine/daemon/embedded-containerd/)。
+两个临时容器之间的 namespace 切换、保持 cgroup 归属、重新执行，以及真实 UID 65534 supervisor 与 root 控制 socket 的断连退出，可用以下命令验证。它不使用宿主机 PID namespace、根目录或服务，需要本地已有 `alpine:latest`：
+
+```bash
+CGO_ENABLED=0 go test -c -o /tmp/project-alpha-rootless-static.test ./internal/rootless
+ROOTLESS_TEST_BINARY=/tmp/project-alpha-rootless-static.test python3 tests/test_rootless_isolated.py
+```
+
+完整 Compose/宿主机联动测试为显式选择执行的 `tests/test_rootless_compose.py`。它要求宿主机已有空闲的本工具 rootless 服务、构建好的镜像，以及由 `ROOTLESS_ORIGINAL_BINARY` 和 `ROOTLESS_CLIENT_BINARY` 指定的原 CLI 与新 CLI；设置 `ROOTLESS_HOST_INTEGRATION=1` 执行。测试会备份配置及原有 socket 挂载，实际启停服务并发送 SIGKILL，最后恢复原服务、挂载并核对已有容器、镜像、卷及 daemon ID；运行中的 rootless 工作负载和已有管理 daemon 会被拒绝。
+
+已在 Linux 5.15、Docker 28.0.1 的宿主机通过完整联动测试，覆盖 `/run` 为 noexec 和宿主机源挂载具有共享传播的环境，以及目标容器重启、client 或外部 systemctl 重启 dockerd、正常停止和 SIGKILL 后恢复挂载，并确认事件订阅不启动 Docker CLI 子进程。测试结束后原服务、配置及已有业务 socket 挂载已恢复，原 Docker 数据清单核对一致。
+
+运行管理服务后，可用官方 `docker:28-cli` 镜像创建普通 CLI 测试容器：
+
+```bash
+./bin/rootless-docker test up
+./bin/rootless-docker test check
+./bin/rootless-docker test exec
+./bin/rootless-docker test cleanup
+```
+
+`test exec` 使用客户端的宿主机 Docker 权限打开交互终端；其他测试操作通过管理 API。`cleanup` 只删除带本工具标签的测试容器及其匿名卷，不清理镜像和 rootless 数据。可追加自定义测试容器名。首次拉取镜像需要仓库网络访问。
+
+参考：[Docker rootless 前提](https://docs.docker.com/engine/security/rootless/)、[用户服务与资源限制](https://docs.docker.com/engine/security/rootless/tips/)、[daemon 代理](https://docs.docker.com/engine/daemon/proxy/)、[slirp4netns 回环访问](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md#filtering-connections)。

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode"
@@ -19,50 +20,60 @@ const systemPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 var proxyKeys = []string{"http-proxy", "https-proxy", "no-proxy"}
 
 type options struct {
-	Command       string
-	Proxies       map[string]string
-	Clear         bool
-	AllowLoopback *bool
-	Container     string
-	Host          string
-	SocketPath    string
-	Args          []string
-	Help          bool
+	Command        string
+	Proxies        map[string]string
+	Clear          bool
+	AllowLoopback  *bool
+	Container      string
+	Host           string
+	SocketPath     string
+	ControlSocket  string
+	HostNamespaces bool
+	SocketGID      int
+	Args           []string
+	Help           bool
 }
 
-const usage = `独立 rootless Docker 管理工具（宿主机 sudo 运行）
+const usage = `rootless Docker daemon/client 管理工具
 用法：rootless-docker <命令> [参数]
 
-  init       创建 docker-rootless 用户，配置并启动用户级服务
-  proxy      查看/设置 registry 代理；修改后重启服务
-  add        热挂载 socket 到已有运行容器
-  start      启动独立 rootless 服务
-  stop       停止独立 rootless 服务
-  restart    重启独立 rootless 服务
-  status     查看独立 rootless 服务
-  logs       持续显示 daemon 日志（最后 100 行）
-  docker     原样传递后续参数给独立 daemon 的 Docker CLI
-  test       管理交互测试容器：up|exec|check|cleanup [容器名]
+  daemon     启动管理服务及宿主机 rootless dockerd；退出时停止 dockerd
+  add        热挂载 socket 到已有运行容器，并保存关联
+  remove     卸载本工具的 socket 挂载并删除关联
+  list       查看关联和最近的恢复错误
+  proxy      查看/设置 registry 代理；修改后重启并恢复挂载
+  restart    重启 rootless dockerd 并恢复挂载
+  status     查看管理服务和 rootless dockerd 状态
+  logs       持续显示 dockerd 日志（最后 100 行）
+  docker     使用本地 Docker CLI 连接管理服务转发的 rootless API
+  test       管理测试容器：up|exec|check|cleanup [容器名]
 
-init / proxy：
-  --http-proxy URL       HTTP 代理；空字符串清除该项
-  --https-proxy URL      HTTPS 代理，通常也是 http:// 地址
-  --no-proxy DOMAINS     不走代理的域名/IP，逗号分隔
-  --allow-host-loopback  允许经 10.0.2.2 访问宿主机回环服务（不限于代理端口）
-  --disable-host-loopback 恢复禁止访问宿主机回环服务
+客户端通过 ROOTLESS_CONTROL_SOCKET 指定管理 socket，默认：
+  /run/rootless-docker/control.sock
+管理 socket 为 0660；获授权用户无需 sudo，权限等同宿主机管理员。
+
+daemon：
+  --host-namespaces     在 privileged + pid:host 容器中进入宿主机环境
+  --socket-gid GID      管理 socket 的宿主机授权组（默认 0）
+  --http-proxy URL / --https-proxy URL / --no-proxy DOMAINS
+  --allow-host-loopback / --disable-host-loopback
 proxy：
-  --clear               清除全部代理并重启；保留网络设置
-add <容器名或ID>：
-  --host URI            本机 rootful Docker（默认 unix:///var/run/docker.sock）
-  --socket-path PATH    容器内路径（默认 /var/run/docker.sock）
+  --http-proxy URL      HTTP 代理；空字符串清除该项
+  --https-proxy URL     HTTPS registry 代理
+  --no-proxy DOMAINS    不走代理的域名/IP，逗号分隔
+  --allow-host-loopback 允许 rootless 网络访问宿主机回环服务
+  --disable-host-loopback 禁止访问宿主机回环服务
+  --clear              清除代理；保留网络设置
+add / remove <容器名或ID>：
+  --host URI           本机 rootful Docker（默认 unix:///var/run/docker.sock）
+  --socket-path PATH   容器内路径（默认 /var/run/docker.sock）
 
-test：默认容器名 rootless-cli-test，默认镜像 docker:28-cli。
-  ROOTLESS_TEST_IMAGE 可指定包含 Docker CLI、sh、tail 的镜像。
-  up 创建/启动并挂载；exec 进入 sh；check 运行 hello-world；cleanup 删除测试容器。
+test：默认 rootless-cli-test；exec 还需客户端能访问宿主机 Docker。
+管理服务生命周期由前台进程或 Docker Compose start/stop 控制。
 `
 
 func parseOptions(args []string) (options, error) {
-	o := options{Proxies: map[string]string{}, Host: "unix:///var/run/docker.sock", SocketPath: "/var/run/docker.sock"}
+	o := options{ControlSocket: controlSocket(), Proxies: map[string]string{}, Host: "unix:///var/run/docker.sock", SocketPath: "/var/run/docker.sock"}
 	if len(args) == 0 {
 		return o, errors.New("需要指定命令；使用 --help 查看用法")
 	}
@@ -78,7 +89,7 @@ func parseOptions(args []string) (options, error) {
 			o.Args = o.Args[1:]
 		}
 		return o, nil
-	case "init", "proxy", "add", "start", "stop", "restart", "status", "logs", "test":
+	case "daemon", "proxy", "add", "remove", "list", "restart", "status", "logs", "test":
 	default:
 		return o, fmt.Errorf("未知命令：%s", o.Command)
 	}
@@ -96,8 +107,29 @@ func parseOptions(args []string) (options, error) {
 		if !positional && strings.HasPrefix(arg, "-") {
 			key, value, hasValue := strings.Cut(arg, "=")
 			switch key {
+			case "--host-namespaces":
+				if o.Command != "daemon" || hasValue {
+					return o, fmt.Errorf("不支持参数：%s", key)
+				}
+				o.HostNamespaces = true
+			case "--socket-gid":
+				if o.Command != "daemon" {
+					return o, fmt.Errorf("不支持参数：%s", key)
+				}
+				if !hasValue {
+					i++
+					if i == len(args) {
+						return o, errors.New("--socket-gid 缺少值")
+					}
+					value = args[i]
+				}
+				gid, err := strconv.ParseUint(value, 10, 31)
+				if err != nil {
+					return o, errors.New("--socket-gid 必须是非负整数")
+				}
+				o.SocketGID = int(gid)
 			case "--allow-host-loopback", "--disable-host-loopback":
-				if (o.Command != "init" && o.Command != "proxy") || hasValue {
+				if (o.Command != "daemon" && o.Command != "proxy") || hasValue {
 					return o, fmt.Errorf("不支持参数：%s", key)
 				}
 				b := key == "--allow-host-loopback"
@@ -112,7 +144,7 @@ func parseOptions(args []string) (options, error) {
 				o.Clear = true
 			case "--http-proxy", "--https-proxy", "--no-proxy", "--host", "--socket-path":
 				proxy := key != "--host" && key != "--socket-path"
-				if (proxy && o.Command != "init" && o.Command != "proxy") || (!proxy && o.Command != "add") {
+				if (proxy && o.Command != "daemon" && o.Command != "proxy") || (!proxy && o.Command != "add" && o.Command != "remove") {
 					return o, fmt.Errorf("不支持参数：%s", key)
 				}
 				if !hasValue {
@@ -151,9 +183,9 @@ func parseOptions(args []string) (options, error) {
 		return o, errors.New("--clear 不能与 --http-proxy、--https-proxy 或 --no-proxy 同时使用。")
 	}
 	switch o.Command {
-	case "add":
+	case "add", "remove":
 		if len(o.Args) != 1 {
-			return o, errors.New("add 需要一个容器名或 ID")
+			return o, errors.New("add/remove 需要一个容器名或 ID")
 		}
 		o.Container = o.Args[0]
 	case "test":
@@ -242,38 +274,49 @@ func validContainerName(s string) bool {
 	return s != ""
 }
 
-// Main returns the command's exit code; exec-based commands preserve the CLI's
-// terminal, streaming I/O, signals and exit status.
+func controlSocket() string {
+	if path := os.Getenv("ROOTLESS_CONTROL_SOCKET"); path != "" {
+		return path
+	}
+	return runtimeDirectory + "/control.sock"
+}
+
+// Main keeps interactive Docker execution on the client, never in the daemon.
 func Main(args []string) int {
+	var err error
 	if len(args) == 1 && args[0] == "--internal-worker" {
-		if err := workerMain(); err != nil {
+		err = workerMain()
+	} else if len(args) == 3 && args[0] == "--internal-supervisor" {
+		err = supervise(args[1], args[2])
+	} else {
+		var o options
+		o, err = parseOptions(args)
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "错误：", err)
-			return 1
+			return 2
 		}
-		return 0
+		if o.Help {
+			fmt.Print(usage)
+			return 0
+		}
+		if !filepath.IsAbs(o.ControlSocket) || len(o.ControlSocket) >= 108 {
+			err = errors.New("管理 socket 必须是有效绝对路径，长度小于 108 字节")
+		} else if o.Command == "daemon" {
+			if os.Geteuid() != 0 {
+				err = errors.New("daemon 需要宿主机 root 权限或 privileged 容器")
+			} else if o.HostNamespaces {
+				err = enterHost(args)
+			} else {
+				os.Setenv("PATH", systemPath)
+				err = runDaemon(o)
+			}
+		} else {
+			err = runClient(o, args)
+		}
 	}
-	o, err := parseOptions(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "错误：", err)
-		return 2
-	}
-	if o.Help {
-		fmt.Print(usage)
-		return 0
-	}
-	if os.Geteuid() != 0 {
-		fmt.Fprintln(os.Stderr, "错误：请在宿主机使用 sudo 运行本工具。")
 		return 1
 	}
-	if err = os.Setenv("PATH", systemPath); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 1
-	}
-	m := newManager()
-	code, err := m.execute(o)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "错误：", err)
-		return 1
-	}
-	return code
+	return 0
 }
