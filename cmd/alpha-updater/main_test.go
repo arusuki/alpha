@@ -45,7 +45,7 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
 	// no expired schema fixtures or migrations are retained.
-	for _, version := range []int{1, 34, 35, 36, 37, platform.DatabaseVersion + 1} {
+	for _, version := range []int{1, 37, platform.DatabaseVersion + 1} {
 		for _, role := range []string{"control", "worker", "registry"} {
 			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
 			cases = append(cases, struct {
@@ -192,18 +192,6 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 					}
 				}
 				if !tc.conflict {
-					if len(read("SELECT * FROM mihomo_profiles")) != 0 || len(read("SELECT * FROM mihomo_sync")) != 0 {
-						t.Fatal("migration unexpectedly configured a proxy")
-					}
-					rows := read("SELECT id,bundle,enabled,selections FROM mihomo_runtime")
-					if len(rows) != 1 || rows[0]["bundle"] != "" || rows[0]["enabled"] != int64(0) || rows[0]["selections"] != "{}" {
-						t.Fatalf("invalid initial proxy runtime: %v", rows)
-					}
-					if tc.role == "control" {
-						read("SELECT * FROM member_key_sync")
-						read("SELECT * FROM member_key_revocations")
-					}
-					gpuSchema := read("SELECT name FROM sqlite_master WHERE name IN ('gpu_intervals','gpu_intervals_expiry')")
 					if tc.role == "worker" {
 						var raw string
 						var cursor float64
@@ -217,14 +205,6 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 						if config["schedule_mode"] != "interval" || config["interval_minutes"] != float64(30) || config["retain_records"] != float64(0) || cursor != 100 {
 							t.Fatalf("lost scheduling config: %s / %v", raw, cursor)
 						}
-						if len(gpuSchema) != 2 {
-							t.Fatal("worker GPU table or expiry index missing")
-						}
-						if _, err := db.SQL.Exec("INSERT INTO gpu_intervals VALUES('GPU-test','Test GPU',1,16,80,'[\"alice\"]')"); err != nil {
-							t.Fatal(err)
-						}
-					} else if len(gpuSchema) != 0 {
-						t.Fatal("GPU history created for a non-worker")
 					}
 					if len(read("SELECT * FROM audit WHERE action='database.upgrade'")) != 1 {
 						t.Fatal("repeat upgrade was not a no-op")

@@ -30,8 +30,6 @@ worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器
 
 镜像 ID 和生成配置都一致的服务跳过重建。Rootless 的更新验收直接访问其宿主机管理 socket。
 
-`v0.8.0-rc5` 的发布包包含支持理论峰值自动估算的 DRAM 采集器，worker 完整更新会一并部署。已有采集设置原样保留：正数参考峰值继续使用；未指定或为 `0` 时，Rome 根据 SMBIOS 或平台规格自动估算，mock 和自定义事件仍需手动峰值。此变更不修改数据库结构，也不占用数据库升级窗口名额。估算来源、假设和限制见 [DRAM 参考说明](../ctools/dram-bw/docs/reference.md#参考峰值自动估算)。
-
 更新器保留旧镜像及部署文档。容器重建失败或数据库迁移事务失败时尝试恢复旧容器镜像和原启停状态。容器回滚失败时保留 `.alpha-update-pending` 及其中的 `container_plan` 路径，主程序保持停止；按部署计划和更新日志人工核对。中断恢复时可用计划目录内的 `*-before.json` 恢复旧服务，或 `*-after.json` 完成新服务部署，必须结合数据库提交状态决定。不要删除仍被容器 Compose 标签引用的 `.alpha-service-deploy-*` 目录；后续更新从这些文件读取当前部署参数，手动运行旧 Compose 文件可能重新部署旧镜像。
 
 主程序和容器版本不一致时，可在停止 worker 主程序后仅同步同版本容器，不替换程序或修改数据库：
@@ -47,16 +45,7 @@ worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器
 
 安装进程负责容器部署和回滚。目标包中的 `_migrate` 继承服务锁，在数据库事务提交前校验 worker 容器：从暂存发布包提取镜像描述，匹配已安装程序的哈希，并核对本地镜像和部署配置。校验不构建或拉取镜像，不重建或启停容器；不匹配时回滚数据库事务并明确报错。`--database-only` 不执行容器校验或同步。
 
-首次切换到 `v0.8.0-rc4.1` 引导机制时，`rc3.2` 及以前的 worker updater 无法解析当前容器清单，必须先手动 bootstrap；使用外置 updater 路径的节点也应先替换配置指定的 updater，避免旧安装器只更新程序目录中的副本。停止主程序，将已校验的目标发布包中的 `bin/alpha-updater` 安装到更新设置指定的路径，再用该命令发起完整更新。程序安装目录由 `--bin-dir` 指定，不能指向解压目录。例如：
-
-```bash
-# 以服务账号执行，路径按实际部署调整；程序目录须可写。
-install -m 0755 /tmp/rc4.1/bin/alpha-updater /opt/project-alpha/bin/alpha-updater
-/opt/project-alpha/bin/alpha-updater --data-dir /var/lib/project-alpha-worker \
-  --bin-dir /opt/project-alpha/bin --tag v0.8.0-rc4.1 --prerelease
-```
-
-成功后按原配置启动主程序。无需更换数据目录或单独执行 `--database-only`。存在 `.alpha-update-pending` 时，先按故障恢复流程核对。
+旧 updater 不支持引导协议或当前服务清单时，先停止主程序，将已校验的目标发布包内 `bin/alpha-updater` 安装到更新设置指定的路径，再用它发起完整更新；`--bin-dir` 指向实际程序安装目录。成功后按原配置启动，存在 `.alpha-update-pending` 时先按故障恢复流程核对。
 
 `--data-dir` 默认读取 `PROJECT_ALPHA_DATA_DIR`，否则为 `data`。`--bin-dir` 默认是当前更新器所在目录；若从临时下载目录运行，务必指定实际安装目录。只接受已有常规二进制文件；安装目标是符号链接时明确拒绝，请传入真实安装目录。
 

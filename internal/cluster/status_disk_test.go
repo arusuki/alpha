@@ -34,7 +34,7 @@ func TestMemberDiskProxyAccessBoundary(t *testing.T) {
 	add(t, f, w, server, "Disk node")
 	query := "?node_id=" + w.ID + "&container=mine&path=%2Fdata&offset=50"
 	requireStatus(t, selfCall(f, "GET", path+query, token, nil), 200)
-	for _, bad := range []string{"", "?node_id=bad", query + "&node_id=" + w.ID, query + "&owner=bob", query + "&url=http://other", query + "&%ZZ=1"} {
+	for _, bad := range []string{"", "?node_id=bad", query + "&node_id=" + w.ID, query + "&owner=bob", query + "&hours=72", query + "&url=http://other", query + "&%ZZ=1"} {
 		requireStatus(t, selfCall(f, "GET", path+bad, token, nil), 400)
 	}
 	requireStatus(t, selfCall(f, "GET", path+"?node_id="+strings.Repeat("f", 32), token, nil), 404)

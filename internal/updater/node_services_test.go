@@ -11,11 +11,7 @@ import (
 
 func nodeServicesOldDatabase(t *testing.T, role string, version int) *platform.Database {
 	t.Helper()
-	base := version
-	if base > 38 {
-		base = 38
-	}
-	db := scheduledAnalysisOldDatabase(t, role, base)
+	db := scheduledAnalysisOldDatabase(t, role)
 	if version >= 39 {
 		var query string
 		switch role {
@@ -82,6 +78,22 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 							t.Fatal(err)
 						}
 						assertVersion(t, db, platform.DatabaseVersion)
+					}
+					if role == "worker" {
+						var root, owner, state string
+						var enabled, interval, revision, historyEnabled int
+						if err := db.SQL.QueryRow("SELECT json_extract(value,'$.root[0]'),json_extract(value,'$.auto_agent_analyze'),json_extract(value,'$.interval_minutes'),revision,analysis_user_id FROM settings").Scan(&root, &enabled, &interval, &revision, &owner); err != nil || root != "/kept" || enabled != 0 || interval != 60 || owner != "" || revision < 13 {
+							t.Fatalf("settings changed: %s %d %d %d %s: %v", root, enabled, interval, revision, owner, err)
+						}
+						if err := db.SQL.QueryRow("SELECT analysis_status,json_extract(config,'$.auto_agent_analyze') FROM jobs WHERE id='kept-scan'").Scan(&state, &historyEnabled); err != nil || state != "" || historyEnabled != 0 {
+							t.Fatalf("old scan changed or queued: %s %d %v", state, historyEnabled, err)
+						}
+					} else if role == "control" {
+						var content string
+						var scheduled int
+						if err := db.SQL.QueryRow("SELECT m.content,s.scheduled_job_id IS NOT NULL FROM agent_sessions s JOIN agent_messages m ON m.session_id=s.id JOIN agent_reports r ON r.message_id=m.id WHERE s.id='kept-session'").Scan(&content, &scheduled); err != nil || content != "existing report" || scheduled != 0 {
+							t.Fatalf("report changed: %s %d %v", content, scheduled, err)
+						}
 					}
 					var tables int
 					if err := db.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('node_service_settings','node_service_mounts')").Scan(&tables); err != nil {

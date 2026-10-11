@@ -97,10 +97,10 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 		return 0, nil, httpapi.NewError(403, "登录会话与页面使用者不匹配，请打开本人的状态页")
 	}
 	if parts[2] == "/gpu" {
-		return h.memberGPU(r, platform.User{ID: id, Username: "member:" + username, Role: "viewer"})
+		return h.memberQuery(r, platform.User{ID: id, Username: "member:" + username, Role: "viewer"}, "/api/gpu/overview", "GPU", "hours", "step", "end")
 	}
 	if parts[2] == "/disk" {
-		return h.memberDisk(r, platform.User{ID: id, Username: "member:" + username, Role: "viewer"})
+		return h.memberQuery(r, platform.User{ID: id, Username: "member:" + username, Role: "viewer"}, "/api/member-disk", "磁盘", "container", "path", "offset")
 	}
 	if parts[2] == "/logout" {
 		return 200, map[string]bool{"ok": true}, store.Logout(token)
