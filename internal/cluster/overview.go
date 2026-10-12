@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"project-alpha/internal/assistant"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/registry"
 )
@@ -42,6 +43,10 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 	defer cancel()
 	out := make([]NodeStatus, len(nodes))
 	var wg sync.WaitGroup
+	var assistantHealth *assistant.Health
+	if user.Role == "admin" && h.Assistant != nil {
+		wg.Go(func() { health := h.Assistant.Health(ctx); assistantHealth = &health })
+	}
 	slots := make(chan struct{}, 8)
 	for i, n := range nodes {
 		wg.Go(func() {
@@ -144,5 +149,5 @@ func (h *Control) overview(r *http.Request, user platform.User) (int, any, error
 		owners = append(owners, s)
 	}
 	sort.Slice(owners, func(i, j int) bool { return owners[i].Username < owners[j].Username })
-	return 200, map[string]any{"nodes": out, "members": owners, "online": online, "container_count": total, "partial": workerPartial, "checked_at": platform.Now()}, nil
+	return 200, map[string]any{"nodes": out, "members": owners, "online": online, "container_count": total, "partial": workerPartial, "checked_at": platform.Now(), "assistant_health": assistantHealth}, nil
 }

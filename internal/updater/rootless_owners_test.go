@@ -15,7 +15,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{38, 39, 40, 41, 42, 43, 44} {
+			for _, version := range []int{39, 40, 41, 42, 43, 44} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := nodeServicesOldDatabase(t, role, min(version, 41))
 					if version >= 42 {

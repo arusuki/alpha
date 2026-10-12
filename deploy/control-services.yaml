@@ -1,0 +1,32 @@
+# Run on the control host, using its existing ordinary service account.
+# Create AGNO_SOCKET_DIR owned by that account before starting Compose.
+name: project-alpha-control-services
+services:
+  agno:
+    build:
+      context: ..
+      dockerfile: deploy/agno.Dockerfile
+    image: "${AGNO_IMAGE:-project-alpha-agno:local}"
+    user: "${AGNO_UID:?Set AGNO_UID to the control service uid}:${AGNO_GID:?Set AGNO_GID to the control service gid}"
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 10s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Preserve existing Agent endpoints, including host loopback model gateways.
+    # The service only listens on its Unix socket; it has no TCP listener.
+    network_mode: host
+    pids_limit: 64
+    mem_limit: 1g
+    labels:
+      project-alpha.service: agno
+    volumes:
+      - type: bind
+        source: "${AGNO_SOCKET_DIR:-/var/lib/project-alpha-control/agno}"
+        target: /run/agno
+        bind:
+          create_host_path: false
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,mode=1777
+    # Health is requested by the control, not a separate timer or model request.

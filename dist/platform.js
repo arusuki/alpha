@@ -26,6 +26,7 @@ function showAuth(setup,error='') {
   window.UpdatesUI?.reset();
   window.MihomoUI?.reset();
   window.AgentUI?.reset();
+  window.AssistantUI?.reset();
   window.ProcessUI?.reset();
   window.GPUUI?.reset();
   window.ContainersUI?.reset();
@@ -57,6 +58,7 @@ async function enter(session,restorePage=false) {
   window.UpdatesUI?.reset();
   window.MihomoUI?.reset();
   window.AgentUI?.reset();
+  window.AssistantUI?.reset();
   window.ProcessUI?.reset();
   window.GPUUI?.reset();
   window.ContainersUI?.reset();
@@ -348,16 +350,16 @@ function loadSnapshotChanges() {
 $('cancelResultLoading').addEventListener('click',cancelResultLoading);
 $('resultLoadingDialog').addEventListener('cancel',e=>{e.preventDefault();cancelResultLoading();});
 function showPage(page,navigate=true) {
-  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','gpus','containers','services','bastion','members','agent-settings','update-settings','mihomo','settings','cluster','allocations'].includes(page))return;
-  if(['services','scan-settings','agent-settings','update-settings','mihomo','cleanup','bastion','members'].includes(page) && platform.user.role!=='admin')return;
-  const central=['cluster','allocations','bastion','members','agent-settings','update-settings','mihomo','settings'].includes(page);
+  if(!platform.user || !['dashboard','overview','history','cleanup','scan-settings','processes','gpus','containers','services','bastion','members','agent-settings','assistant','update-settings','mihomo','settings','cluster','allocations'].includes(page))return;
+  if(['services','scan-settings','agent-settings','assistant','update-settings','mihomo','cleanup','bastion','members'].includes(page) && platform.user.role!=='admin')return;
+  const central=['cluster','allocations','bastion','members','agent-settings','assistant','update-settings','mihomo','settings'].includes(page);
   if(platform.nodeID&&central){window.location.href='/#'+page;return;}
   if(!platform.nodeID&&!central)return;
   const changed=platform.page!==page;
   platform.page=page;
   $('console').dataset.page=page;
   const storage=['overview','history','cleanup','scan-settings'].includes(page);
-  const headings={services:['NODE / SERVICES','节点服务','管理节点服务的启停、独立配置与使用者容器挂载。'],mihomo:['CLUSTER / PROXY','代理管理','统一管理订阅、模板和各节点的 mihomo 服务。'],gpus:['GPU / MONITORING','GPU 管理','查看 GPU 状态、进程归属和最近 72 小时的使用记录。'],'update-settings':['SYSTEM / UPDATES','更新设置','统一配置更新器、HTTP 代理和 GitHub webhook，查看版本及更新状态。'],bastion:['CLUSTER / SHARE NODES','Share node 管理','按节点查看连接信息、账号、公钥池和使用者资源。'],cluster:['CLUSTER OVERVIEW','集群总控','查看节点状态，进入每台主机的工作台。'],allocations:['CLUSTER / USER CONTAINERS','使用者容器','按使用者查看各节点的容器归属与数量。'],members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，为空间分析准备好你的 Agent。'],settings:['WORKSPACE / SETTINGS','设置','配置总控访问地址，管理工作台账号与权限。']};
+  const headings={assistant:['AGENT / OPERATIONS','运维助理','跨节点巡检、连续对话与长期记忆。'],services:['NODE / SERVICES','节点服务','管理节点服务的启停、独立配置与使用者容器挂载。'],mihomo:['CLUSTER / PROXY','代理管理','统一管理订阅、模板和各节点的 mihomo 服务。'],gpus:['GPU / MONITORING','GPU 管理','查看 GPU 状态、进程归属和最近 72 小时的使用记录。'],'update-settings':['SYSTEM / UPDATES','更新设置','统一配置更新器、HTTP 代理和 GitHub webhook，查看版本及更新状态。'],bastion:['CLUSTER / SHARE NODES','Share node 管理','按节点查看连接信息、账号、公钥池和使用者资源。'],cluster:['CLUSTER OVERVIEW','集群总控','查看节点状态，进入每台主机的工作台。'],allocations:['CLUSTER / USER CONTAINERS','使用者容器','按使用者查看各节点的容器归属与数量。'],members:['CLUSTER / MEMBERS','集群使用者','配置登记信息，管理使用者与注册名额。'],containers:['CONTAINER MANAGEMENT','容器管理','创建工作环境，管理容器运行状态。'],cleanup:['STORAGE / DIAGNOSTIC CLEANUP','诊断清理','读取完整报告，逐项核对并清理目录。'],dashboard:['WORKSPACE OVERVIEW','总面板','主机的每个侧面，都在这里。'],overview:['STORAGE / SPACE USAGE','空间用量','从整盘到目录，看清空间的去向。'],history:['STORAGE / SCAN HISTORY','扫描记录','回看每次扫描，掌握空间变化。'],'scan-settings':['STORAGE / CONFIGURATION','扫描配置','按主机需要，定义扫描范围与节奏。'],processes:['PROCESS MANAGEMENT','进程管理','追踪活动进程，看清容器内的运行关系。'],'agent-settings':['AGENT / CONFIGURATION','Agent 设置','连接模型服务，供运维助理与空间分析使用。'],settings:['WORKSPACE / SETTINGS','设置','配置总控访问地址，管理工作台账号与权限。']};
   $('pageEyebrow').textContent=headings[page][0];$('pageTitle').textContent=headings[page][1];
   $('pageDescription').textContent=headings[page][2];$('moduleCrumb').textContent=storage?'存储':headings[page][1];
   document.title=`project alpha · ${headings[page][1]}`;
@@ -373,6 +375,7 @@ function showPage(page,navigate=true) {
   if(page==='settings')window.SettingsUI.open();
   if(page==='update-settings')window.UpdatesUI?.open();
   if(page==='mihomo')window.MihomoUI?.open();else window.MihomoUI?.leave();
+  if(page==='assistant')window.AssistantUI?.open();
   if(page==='agent-settings')window.SettingsUI.openModel();
   if(page==='dashboard')window.DashboardUI?.render();
   if(page==='containers')window.ContainersUI?.open();

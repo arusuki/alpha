@@ -1,0 +1,10 @@
+**
+!runtime/
+!runtime/agno/
+!runtime/agno/requirements.txt
+!runtime/agno/runtime.py
+!runtime/agno/service.py
+!deploy/
+!deploy/agno.Dockerfile
+!runtime/agno/mcp_runtime.py
+!runtime/agno/mcp-requirements.txt

@@ -36,16 +36,16 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		tables     []string
 		conflict   bool
 	}{
-		{"control", cluster.Initialize, 38, "", []string{"members", "member_invitations"}, false},
-		{"worker", app.Initialize, 38, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
-		{"registry", registry.Initialize, 38, "", []string{"registry_control", "registry_sessions"}, false},
-		{"control", cluster.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"members", "mihomo_runtime"}, true},
-		{"worker", app.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"managed_containers", "mihomo_runtime"}, true},
-		{"registry", registry.Initialize, 38, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"registry_sessions", "mihomo_runtime"}, true},
+		{"control", cluster.Initialize, 39, "", []string{"members", "member_invitations"}, false},
+		{"worker", app.Initialize, 39, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"registry", registry.Initialize, 39, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"members", "mihomo_runtime"}, true},
+		{"worker", app.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"managed_containers", "mihomo_runtime"}, true},
+		{"registry", registry.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"registry_sessions", "mihomo_runtime"}, true},
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
 	// no expired schema fixtures or migrations are retained.
-	for _, version := range []int{1, 37, platform.DatabaseVersion + 1} {
+	for _, version := range []int{1, 38, platform.DatabaseVersion + 1} {
 		for _, role := range []string{"control", "worker", "registry"} {
 			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
 			cases = append(cases, struct {
@@ -88,7 +88,7 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.role == "worker" && tc.version >= 38 {
+				if tc.role == "worker" && tc.version >= 39 {
 					_, err = db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.interval_minutes',30,'$.schedule_mode','interval'),schedule_last_run=100;
 INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
 INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
@@ -97,40 +97,24 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
-				if tc.version >= 38 && tc.version < 39 {
-					switch tc.role {
-					case "worker":
-						_, err = db.SQL.Exec(`ALTER TABLE settings DROP COLUMN analysis_user_id;
-ALTER TABLE jobs DROP COLUMN analysis_user_id;
-ALTER TABLE jobs DROP COLUMN analysis_status;
-ALTER TABLE jobs DROP COLUMN analysis_error;
-UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
-					case "control":
-						_, err = db.SQL.Exec("DROP INDEX idx_agent_scheduled; ALTER TABLE agent_sessions DROP COLUMN scheduled_job_id")
-					}
-					if err != nil {
-						t.Fatal(err)
-					}
-				}
-
-				if tc.role == "worker" && tc.version >= 38 && tc.version < 45 {
+				if tc.role == "worker" && tc.version >= 39 && tc.version < 45 {
 					if _, err = db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 						t.Fatal(err)
 					}
 				}
 
-				if tc.role == "worker" && tc.version >= 38 && tc.version < 40 {
+				if tc.role == "worker" && tc.version >= 39 && tc.version < 40 {
 					if _, err = db.SQL.Exec("DROP TRIGGER service_mount_owner; DROP TRIGGER service_mount_release; DROP TABLE node_service_mounts; DROP TABLE node_service_settings"); err != nil {
 						t.Fatal(err)
 					}
 				}
 
-				if tc.role == "control" && tc.version >= 38 && tc.version < 44 {
+				if tc.role == "control" && tc.version >= 39 && tc.version < 44 {
 					if _, err = db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if tc.role == "control" && tc.version >= 38 && tc.version < 43 {
+				if tc.role == "control" && tc.version >= 39 && tc.version < 43 {
 					if _, err = db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
 						t.Fatal(err)
 					}
@@ -196,12 +180,6 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 				var version int
 				if err = db.SQL.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != wantVersion {
 					t.Fatalf("schema %d, want %d: %v", version, wantVersion, err)
-				}
-				if !tc.conflict && tc.role == "worker" {
-					for _, row := range before["jobs"] {
-						row["analysis_user_id"], row["analysis_status"], row["analysis_error"] = "", "", ""
-						row["config"] = `{"auto_agent_analyze":false}`
-					}
 				}
 				for _, table := range tables {
 					if !reflect.DeepEqual(before[table], read("SELECT * FROM "+table+" ORDER BY 1")) {

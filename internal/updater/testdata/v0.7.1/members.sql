@@ -1,4 +1,4 @@
--- Source: v0.6.0 internal/members/schema.sql (schema 38).
+-- Source: v0.7.1 internal/members/schema.sql (schema 39).
 CREATE TABLE member_registration_schema (
  id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL, fields TEXT NOT NULL
 );

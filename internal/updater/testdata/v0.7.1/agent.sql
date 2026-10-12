@@ -1,4 +1,4 @@
--- Source: v0.6.0 internal/agent/schema.sql (schema 38).
+-- Source: v0.7.1 internal/agent/schema.sql (schema 39).
 CREATE TABLE agent_settings (
  id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL,
  api_key_ciphertext TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1
@@ -7,8 +7,10 @@ CREATE TABLE agent_sessions (
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), node_id TEXT NOT NULL DEFAULT '', title TEXT NOT NULL,
  status TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL,
  snapshot_id TEXT, active_job_id TEXT, error TEXT, provider TEXT NOT NULL, model TEXT NOT NULL,
+ scheduled_job_id TEXT,
  report_scope TEXT NOT NULL DEFAULT '' CHECK(report_scope IN ('','host','container'))
 );
+CREATE UNIQUE INDEX idx_agent_scheduled ON agent_sessions(node_id,scheduled_job_id,report_scope) WHERE scheduled_job_id IS NOT NULL;
 CREATE INDEX idx_agent_sessions_user ON agent_sessions(node_id,user_id,updated_at DESC);
 CREATE TABLE agent_messages (
  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,

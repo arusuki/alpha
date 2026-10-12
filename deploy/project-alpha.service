@@ -9,6 +9,9 @@ WorkingDirectory=/opt/project-alpha
 ExecStart=/opt/project-alpha/bin/project-alpha --control --data-dir /var/lib/project-alpha-control --host 0.0.0.0 --port 8765
 # Use an existing ordinary service user with SSH access to share nodes.
 User=project-alpha
+# Agno runs in deploy/control-services.yaml on this host.
+Environment=ALPHA_AGNO_SOCKET=/var/lib/project-alpha-control/agno/agno.sock
+ExecStartPre=/usr/bin/mkdir -p /var/lib/project-alpha-control/agno
 UMask=0077
 StateDirectory=project-alpha-control
 StateDirectoryMode=0700

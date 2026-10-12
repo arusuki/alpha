@@ -26,6 +26,10 @@ function configure(){
 }
 function render(){
   const data=state.data;if(!data)return;
+  if($('clusterAssistantHealth')){
+    $('clusterAssistantHealth').textContent=state.refreshFailed?'总控刷新失败，Agno 状态待确认':window.AssistantUI?.healthText(data.assistant_health)||'Agno 状态未知';
+    $('clusterAssistantHealth').dataset.state=state.refreshFailed?'unknown':data.assistant_health?.status||'unknown';
+  }
   $('clusterOnline').textContent=`${data.online} / ${data.nodes.length}`;
   $('clusterContainers').textContent=data.container_count;
   const owners=data.members.filter(m=>m.count&&m.username).length;

@@ -3,3 +3,7 @@
 /data/
 *.test
 coverage.out
+
+# Local optional Agno runtime
+.agno-venv/
+__pycache__/

@@ -50,8 +50,17 @@ jobs:
         run: |
           python3 scripts/test_upgrade_history.py
           go generate ./internal/platform
+      - name: Agno runtime dependencies and tests
+        run: |
+          python3 -m venv .agno-venv
+          .agno-venv/bin/python -m pip install -r runtime/agno/mcp-requirements.txt
+          PYTHONDONTWRITEBYTECODE=1 .agno-venv/bin/python -m unittest discover -s tests -p test_agno_runtime.py
       - name: Go tests
-        run: go test -race ./...
+        run: ALPHA_AGNO_TEST_PYTHON="$GITHUB_WORKSPACE/.agno-venv/bin/python" go test -race ./...
+      - name: Agno container integration
+        run: |
+          docker build -t project-alpha-agno:test -f deploy/agno.Dockerfile .
+          ALPHA_AGNO_TEST_IMAGE=project-alpha-agno:test python3 tests/test_agno_container.py
       - name: Go vet
         run: go vet ./...
       - name: Updater container update and rollback
@@ -151,7 +160,7 @@ jobs:
             check_glibc "$binary"
           done
           cp README.md "$stage/"
-          cp -R docs deploy "$stage/"
+          cp -R docs deploy runtime "$stage/"
           printf 'version=%s\ncommit=%s\nos=linux\narch=%s\ngo=%s\n' \
             "$version" "$GITHUB_SHA" "$GOARCH" "$(go env GOVERSION)" > "$stage/BUILD_INFO"
           tar -C "$RUNNER_TEMP" -czf "release/$package.tar.gz" "$package"

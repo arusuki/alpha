@@ -4,13 +4,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"testing"
 
 	"project-alpha/internal/platform"
 )
 
-func scheduledAnalysisOldDatabase(t *testing.T, role string) *platform.Database {
+func populatedOldDatabase(t *testing.T, role string) *platform.Database {
 	t.Helper()
 	db := oldDatabase(t, role)
 	if role == "worker" {
@@ -18,10 +17,10 @@ func scheduledAnalysisOldDatabase(t *testing.T, role string) *platform.Database 
 			t.Fatal(err)
 		}
 		if _, err := db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.schedule_mode','interval','$.schedule_times',json('[]'),
-'$.schedule_weekdays',json('[0,1,2,3,4,5,6]'),'$.schedule_timezone','UTC','$.retain_records',7);`); err != nil {
+'$.schedule_weekdays',json('[0,1,2,3,4,5,6]'),'$.schedule_timezone','UTC','$.retain_records',7,'$.auto_agent_analyze',json('false'));`); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.root',json('["/kept"]'),'$.interval_minutes',60),revision=12;
+		if _, err := db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.root',json('["/kept"]'),'$.interval_minutes',60),revision=13;
 INSERT INTO jobs(id,status,trigger,created_by,created_at,config) SELECT 'kept-scan','completed','scheduled','scheduler',123,value FROM settings;`); err != nil {
 			t.Fatal(err)
 		}
@@ -56,35 +55,4 @@ func runScheduledMigration(t *testing.T, binary, entry, role string, db *platfor
 		return fmt.Errorf("%w: %s", err, output)
 	}
 	return nil
-}
-
-func TestScheduledAnalysisMigrationRollback(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "alpha-updater")
-	writeFile(t, binary, buildTarget(t))
-	for _, entry := range []string{"--database-only", "_migrate"} {
-		for _, role := range []string{"worker", "control"} {
-			t.Run(entry+"/rollback/"+role, func(t *testing.T) {
-				db := scheduledAnalysisOldDatabase(t, role)
-				var query, check string
-				if role == "worker" {
-					query = "CREATE TRIGGER reject_upgrade BEFORE UPDATE ON settings BEGIN SELECT RAISE(ABORT,'injected migration failure'); END"
-					check = "SELECT count(*) FROM pragma_table_info('jobs') WHERE name='analysis_status'"
-				} else {
-					query = "CREATE INDEX idx_agent_scheduled ON agent_sessions(title)"
-					check = "SELECT count(*) FROM pragma_table_info('agent_sessions') WHERE name='scheduled_job_id'"
-				}
-				if _, err := db.SQL.Exec(query); err != nil {
-					t.Fatal(err)
-				}
-				if err := runScheduledMigration(t, binary, entry, role, db); err == nil {
-					t.Fatal("failed migration succeeded")
-				}
-				assertVersion(t, db, 38)
-				var columns int
-				if err := db.SQL.QueryRow(check).Scan(&columns); err != nil || columns != 0 {
-					t.Fatalf("partial migration not rolled back: %d %v", columns, err)
-				}
-			})
-		}
-	}
 }

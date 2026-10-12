@@ -14,7 +14,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{38, 39, 40, 41, 42, 43} {
+			for _, version := range []int{39, 40, 41, 42, 43} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					base := min(version, 41)
 					db := nodeServicesOldDatabase(t, role, base)
@@ -108,14 +108,14 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			}
 		})
 		t.Run(entry+"/rollback", func(t *testing.T) {
-			db := scheduledAnalysisOldDatabase(t, "control")
+			db := populatedOldDatabase(t, "control")
 			if _, err := db.SQL.Exec("CREATE TRIGGER reject_assistant BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected failure'); END"); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "control", db); err == nil {
 				t.Fatal("migration must fail")
 			}
-			assertVersion(t, db, 38)
+			assertVersion(t, db, 39)
 			var tables int
 			if err := db.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('assistant_sessions','assistant_memories','assistant_settings')").Scan(&tables); err != nil || tables != 0 {
 				t.Fatal("partial schema retained", tables, err)

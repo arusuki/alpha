@@ -11,25 +11,7 @@ import (
 
 func nodeServicesOldDatabase(t *testing.T, role string, version int) *platform.Database {
 	t.Helper()
-	db := scheduledAnalysisOldDatabase(t, role)
-	if version >= 39 {
-		var query string
-		switch role {
-		case "worker":
-			query = `ALTER TABLE settings ADD COLUMN analysis_user_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE jobs ADD COLUMN analysis_user_id TEXT NOT NULL DEFAULT '';
-ALTER TABLE jobs ADD COLUMN analysis_status TEXT NOT NULL DEFAULT '';
-ALTER TABLE jobs ADD COLUMN analysis_error TEXT NOT NULL DEFAULT '';
-UPDATE settings SET value=json_set(value,'$.auto_agent_analyze',json('false')),revision=revision+1;
-UPDATE jobs SET config=json_set(config,'$.auto_agent_analyze',json('false'));`
-		case "control":
-			query = `ALTER TABLE agent_sessions ADD COLUMN scheduled_job_id TEXT;
-CREATE UNIQUE INDEX idx_agent_scheduled ON agent_sessions(node_id,scheduled_job_id,report_scope) WHERE scheduled_job_id IS NOT NULL;`
-		}
-		if _, err := db.SQL.Exec(query + "PRAGMA user_version=39;"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	db := populatedOldDatabase(t, role)
 	if role == "worker" {
 		if _, err := db.SQL.Exec(`INSERT INTO managed_containers VALUES('kept-container','unix:///test.sock','daemon','kept-name','alice','{}','kept-fingerprint','adopt','',1,123)`); err != nil {
 			t.Fatal(err)
@@ -70,7 +52,7 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{38, 39, 40, 41} {
+			for _, version := range []int{39, 40, 41} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := nodeServicesOldDatabase(t, role, version)
 					for range 2 {
@@ -188,14 +170,14 @@ func TestNodeServicesBuiltUpdater(t *testing.T) {
 			}
 		})
 		t.Run(entry+"/unsupported", func(t *testing.T) {
-			db := nodeServicesOldDatabase(t, "worker", 38)
-			if _, err := db.SQL.Exec("PRAGMA user_version=37"); err != nil {
+			db := nodeServicesOldDatabase(t, "worker", 39)
+			if _, err := db.SQL.Exec("PRAGMA user_version=38"); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err == nil || !strings.Contains(err.Error(), "unsupported database version") {
 				t.Fatal("unsupported accepted", err)
 			}
-			assertVersion(t, db, 37)
+			assertVersion(t, db, 38)
 			var name string
 			if err := db.SQL.QueryRow("SELECT name FROM managed_containers WHERE id='kept-container'").Scan(&name); err != nil || name != "kept-name" {
 				t.Fatal("unsupported data changed", name, err)

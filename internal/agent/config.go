@@ -91,6 +91,23 @@ func (d *Store) agentConfig() (Config, int64, error) {
 	return c, revision, err
 }
 
+// RuntimeConfig supplies the current decrypted configuration only to trusted
+// control-side runtimes. It must never be returned from a public HTTP route.
+func (d *Store) RuntimeConfig() (Config, error) {
+	c, _, err := d.agentConfig()
+	if err != nil {
+		return c, err
+	}
+	if err = c.validate(); err != nil {
+		return c, err
+	}
+	if c.Model == "" {
+		return c, httpapi.NewError(409, "请先在 Agent 设置中配置模型")
+	}
+	c.Endpoint, err = c.endpointURL()
+	return c, err
+}
+
 func publicConfig(c Config, revision int64) object {
 	return object{"revision": revision, "value": object{"protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != "", "reasoning_summary": c.ReasoningSummary}}
 }

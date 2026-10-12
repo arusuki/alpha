@@ -1,4 +1,4 @@
--- Source: v0.6.0 internal/cluster/{store,provision}.go (schema 38).
+-- Source: v0.7.1 internal/cluster/{store,provision}.go (schema 39).
 CREATE TABLE cluster_nodes (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, url TEXT NOT NULL UNIQUE,
  token TEXT NOT NULL, created_at REAL NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('worker','registry')),

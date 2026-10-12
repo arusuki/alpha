@@ -115,6 +115,7 @@ cd project-alpha_v0.8.0_linux_amd64
 | Tailscale 分享、跳板公钥与资源回收 | [跳板机与使用者资源](bastion.md) |
 | 空间用量如何计算 | [存储统计口径](accounting.md) |
 | 扫描记录、目录探索与增量更新 | [记录读取与探索](records.md) |
+| 运维助理与长期记忆 | [Agno 运维助理](assistant.md) |
 | Agent 报告与诊断清理 | [Agent API](agent.md) |
 | 公网注册、数据备份与服务部署 | [运行与配置](operations.md) |
 | rootless Docker daemon/client | [rootless Docker](rootless-docker.md) |

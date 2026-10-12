@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"project-alpha/internal/agent"
+	"project-alpha/internal/assistant"
 	"project-alpha/internal/bastion"
 	"project-alpha/internal/httpapi"
 	"project-alpha/internal/members"
@@ -27,6 +28,7 @@ import (
 )
 
 type Control struct {
+	Assistant       *assistant.Handler
 	analysisCancel  context.CancelFunc
 	analysisDone    chan struct{}
 	Mihomo          *mihomo.Control
@@ -82,6 +84,7 @@ func NewControl(db *platform.Database) (*Control, error) {
 	}
 	h := &Control{identity: identity, Updates: updateManager, DB: db, lockfile: lock, agents: map[string]*agent.Handler{}, gates: map[string]*sync.Mutex{}, Members: members.NewHandler(db), transport: transport, client: &http.Client{Transport: transport,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	h.Assistant = assistant.New(db, h.assistantTool)
 	if err := h.initProvision(); err != nil {
 		transport.CloseIdleConnections()
 		lock.Close()
@@ -126,6 +129,9 @@ func (h *Control) Close() {
 		handlers = append(handlers, handler)
 	}
 	h.agentMu.Unlock()
+	if h.Assistant != nil {
+		h.Assistant.Close()
+	}
 	if h.analysisCancel != nil {
 		h.analysisCancel()
 		<-h.analysisDone
@@ -190,6 +196,9 @@ func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 }
 
 func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if strings.HasPrefix(r.URL.Path, "/api/assistant/") {
+		return h.Assistant.Dispatch(w, r, user)
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/mihomo/") {
 		if h.Mihomo == nil {
 			return 0, nil, httpapi.NewError(503, "代理管理未就绪")
