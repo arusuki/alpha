@@ -10,7 +10,11 @@ const fmt = value => {
 };
 const diskFilesystems = DiskCapacity.filesystems;
 const filesystemForPath = (filesystems,path) => typeof path === 'string' ? filesystems.filter(d => path === d.mount || path.startsWith(d.mount.replace(/\/$/,'')+'/')).sort((a,b) => b.mount.length-a.mount.length)[0] : null;
-const dockerFilesystem = data => filesystemForPath(diskFilesystems(data.filesystems),data.docker.root_canonical || data.docker.root);
+const dockerFilesystem = data => {
+  const engines = [data.docker,...(data.docker.rootless ? [data.docker.rootless] : [])];
+  const disks = engines.map(d => filesystemForPath(diskFilesystems(data.filesystems),d.root_canonical || d.root));
+  return disks.every(d => d && d.mount === disks[0]?.mount) ? disks[0] : null;
+};
 const filesystemCapacityNote = filesystems => filesystems.length ? filesystems.map(d => `${d.mount} 可用 ${fmt(d.available)}`).join(' · ') + (filesystems.length > 1 ? '（各文件系统独立，空闲空间不可互用）' : '') : '文件系统可用容量未知';
 const containerStates = {running:'运行中',exited:'已停止',created:'未启动',paused:'已暂停',restarting:'重启中',removing:'移除中',dead:'异常'};
 let snapshot = null, usage = null, selected = null, query = '', ownerFilter = null, stateFilter = 'all', sortOrder = 'total-desc', tablePage = 0;

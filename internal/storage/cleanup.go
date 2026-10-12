@@ -11,6 +11,7 @@ import (
 
 	"project-alpha/internal/fsutil"
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/platform"
 )
 
 // Only the report workflow calls this capability, never a model tool. Serialize
@@ -72,10 +73,29 @@ func (s *Service) deleteReportPaths(ctx context.Context, actor, id string, paths
 				entrances[mount.Path] = true
 			}
 		}
-		liveDockerProtected, err = validateLiveDockerHostPaths(ctx, paths,
-			httpapi.String(snapshot.Docker["endpoint"]), httpapi.String(snapshot.Docker["root_canonical"]), httpapi.String(snapshot.Docker["id"]), entrances, nil)
-		if err != nil {
-			return err
+		engines := dockerEngines(snapshot.Docker)
+		if len(engines) == 0 {
+			engines = []object{{}}
+		}
+		// Recheck the optional service even if it was installed after this snapshot.
+		socket, socketErr := platform.RootlessControlSocket(s.DB.SQL)
+		if socketErr != nil {
+			return socketErr
+		}
+		seen := false
+		for _, engine := range engines {
+			seen = seen || httpapi.String(engine["endpoint"]) == "unix://"+socket
+		}
+		if !seen {
+			engines = append(engines, object{"endpoint": "unix://" + socket})
+		}
+		for _, engine := range engines {
+			protected, checkErr := validateLiveDockerHostPaths(ctx, paths,
+				httpapi.String(engine["endpoint"]), httpapi.String(engine["root_canonical"]), httpapi.String(engine["id"]), entrances, nil)
+			if checkErr != nil {
+				return checkErr
+			}
+			liveDockerProtected = append(liveDockerProtected, protected...)
 		}
 	}
 	config, err := s.DB.config()
@@ -103,7 +123,7 @@ func (s *Service) deleteReportPaths(ctx context.Context, actor, id string, paths
 		request.ProtectedTrees = append(request.ProtectedTrees, liveDockerProtected...)
 	}
 	for _, c := range snapshot.Containers {
-		if c.UpperPath != nil && *c.UpperPath != "" {
+		if !c.Rootless && c.UpperPath != nil && *c.UpperPath != "" {
 			request.Containers = append(request.Containers, cleanupContainer{ID: c.ID, Upper: *c.UpperPath})
 		}
 	}
@@ -136,8 +156,17 @@ func cleanupProtectedPaths(snapshot *Snapshot, dataDir string, excludes []string
 		}
 	}
 	roots := []string{}
-	if root, ok := snapshot.Docker["root"].(string); ok && root != "" {
-		roots = append(roots, root)
+	for _, engine := range dockerEngines(snapshot.Docker) {
+		for _, key := range []string{"root", "root_canonical"} {
+			if root := httpapi.String(engine[key]); root != "" {
+				roots = append(roots, root)
+				// The existing cleanup helper executes only in the rootful daemon. Never
+				// pass rootless layers to it or delete those layers as ordinary host files.
+				if engine["is_rootless"] == true {
+					trees = append(trees, root)
+				}
+			}
+		}
 	}
 	for _, c := range snapshot.Containers {
 		if c.UpperPath != nil && *c.UpperPath != "" {

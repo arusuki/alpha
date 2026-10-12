@@ -24,6 +24,14 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 	}
 	defer tx.Rollback()
 	byID := map[string]cluster.Container{}
+	owners, err := platform.Rows(tx, "SELECT container_id,owner FROM owners")
+	if err != nil {
+		return out, err
+	}
+	ownerMap := map[string]string{}
+	for _, r := range owners {
+		ownerMap[r["container_id"].(string)] = r["owner"].(string)
+	}
 	var raw sql.NullString
 	err = tx.QueryRow(`SELECT j.id,r.metadata FROM jobs j LEFT JOIN snapshot_records r ON r.job_id=j.id
  WHERE j.status='completed' AND j.trigger<>'incremental'
@@ -56,6 +64,7 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 		}
 		out.ObservedAt = snapshot.FinishedAt
 		out.Filesystems = append(out.Filesystems, snapshot.Filesystems...)
+		storage.ApplyContainerOwners(snapshot.Containers, ownerMap)
 		for _, c := range snapshot.Containers {
 			byID[c.ID] = cluster.Container{ID: c.ID, Name: c.Name, Owner: c.Owner, State: c.State, ObservedAt: snapshot.FinishedAt}
 		}
@@ -73,10 +82,7 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 		c.Managed = true
 		byID[id] = c
 	}
-	owners, err := platform.Rows(tx, "SELECT container_id,owner FROM owners")
-	if err != nil {
-		return out, err
-	}
+
 	for _, r := range owners {
 		if c, ok := byID[r["container_id"].(string)]; ok {
 			c.Owner = r["owner"].(string)

@@ -2,10 +2,15 @@
 // Shared by the UI and the background snapshot worker.
 const SnapshotData = (() => {
   function validate(data, report = () => {}) {
-    if (!data || data.schema_version !== 5 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照，请使用新的数据目录重新扫描。');
+    if (!data || data.schema_version !== 6 || !data.tree || !Array.isArray(data.containers) || !Array.isArray(data.resources) || !Array.isArray(data.filesystems) || !Array.isArray(data.warnings)) throw Error('这不是受支持的 project alpha 快照，请使用新的数据目录重新扫描。');
     if (!data.scan || !Number.isSafeInteger(data.scan.omitted_references) || data.scan.omitted_references < 0 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw Error('扫描统计或版本格式无效。');
     if (!data.docker || typeof data.docker !== 'object' || Array.isArray(data.docker) ||
         (Object.keys(data.docker).length && (typeof data.docker.id !== 'string' || !data.docker.id || typeof data.docker.endpoint !== 'string' || !data.docker.endpoint.startsWith('unix:///') || typeof data.docker.root !== 'string' || !data.docker.root.startsWith('/') || typeof data.docker.root_canonical !== 'string' || !data.docker.root_canonical.startsWith('/')))) throw Error('Docker 身份或数据目录格式无效。');
+    if (data.docker.is_rootless !== undefined && typeof data.docker.is_rootless !== 'boolean') throw Error('Docker 引擎类型无效。');
+    if ('rootless' in data.docker) {
+      const d = data.docker.rootless;
+      if (!d || d.rootless || d.is_rootless !== true || !d.id || d.id === data.docker.id || typeof d.endpoint !== 'string' || !d.endpoint.startsWith('unix:///') || typeof d.root !== 'string' || !d.root.startsWith('/') || typeof d.root_canonical !== 'string' || !d.root_canonical.startsWith('/')) throw Error('rootless Docker 身份无效。');
+    }
     report({stage:'validate',done:0,total:null,unit:'节点',detail:'校验目录树结构与空间汇总'});
     const stack = [[data.tree, 0]], paths = new Set(), ids = new Set();
     let count = 0;
@@ -23,6 +28,7 @@ const SnapshotData = (() => {
     for (const r of data.resources) if (!r || typeof r.path !== 'string' || !Array.isArray(r.kinds) || !Array.isArray(r.containers)) throw Error('挂载源格式无效。');
     for (const c of data.containers) {
       if (!c || typeof c.id !== 'string' || ids.has(c.id) || typeof c.name !== 'string' || !Array.isArray(c.mounts) || (c.upper_path != null && typeof c.upper_path !== 'string') || (c.log_path != null && typeof c.log_path !== 'string') || (c.size_rw != null && !bytes(c.size_rw))) throw Error('容器格式无效。');
+      if (c.rootless !== undefined && typeof c.rootless !== 'boolean' || c.origin_container_id !== undefined && (!c.rootless || !/^[a-f0-9]{64}$/.test(c.origin_container_id))) throw Error('容器创建来源格式无效。');
       ids.add(c.id);
       const w = c.writable_layer;
       if (!w || !['complete','partial','unreadable','excluded','unavailable'].includes(w.status) || (w.allocated !== null && !bytes(w.allocated)) || (w.apparent !== null && !bytes(w.apparent)) || typeof w.permission_denied !== 'boolean' || (w.reason != null && typeof w.reason !== 'string')) throw Error('可写层统计格式无效。');

@@ -417,7 +417,11 @@ func RunWorker(ctx context.Context, directory, id string, parent int) error {
 			})
 		}
 	} else {
-		result, err = buildSnapshot(ctx, c, progress)
+		var socket string
+		socket, err = platform.RootlessControlSocket(db.SQL)
+		if err == nil {
+			result, err = buildSnapshot(context.WithValue(ctx, rootlessSocketKey{}, socket), c, progress)
+		}
 	}
 	if err == nil {
 		err = ctx.Err()

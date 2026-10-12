@@ -3,7 +3,6 @@ package gpu
 
 import (
 	"context"
-	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"math"
@@ -205,14 +204,9 @@ func collect(ctx context.Context, db *platform.Database) ([]Device, string, erro
 	}
 	warning := ""
 	if missingNames {
-		socket := "/run/rootless-docker/control.sock"
-		var configured string
-		e := db.SQL.QueryRow("SELECT json_extract(config,'$.control_socket') FROM node_service_settings WHERE name='rootless-docker'").Scan(&configured)
-		if e != nil && e != sql.ErrNoRows {
-			return nil, "", fmt.Errorf("读取 rootless Docker 配置: %w", e)
-		}
-		if configured != "" {
-			socket = configured
+		socket, err := platform.RootlessControlSocket(db.SQL)
+		if err != nil {
+			return nil, "", err
 		}
 		warning = readContainerNames(ctx, devices, names, socket, command)
 		if auditWarning := readContainerOrigins(ctx, devices, ownerMap, socket); auditWarning != "" {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"project-alpha/internal/containerorigin"
 	"slices"
 )
 
@@ -30,6 +31,29 @@ func validateSnapshotDocker(docker object) error {
 	}
 	if _, err := dockerEndpointSocket(endpoint); err != nil {
 		return fmt.Errorf("扫描记录中的 Docker endpoint 无效，请使用新的数据目录重新扫描: %w", err)
+	}
+	if raw, exists := docker["is_rootless"]; exists {
+		if _, ok := raw.(bool); !ok {
+			return fmt.Errorf("Docker 引擎类型无效，请使用新的数据目录重新扫描")
+		}
+	}
+	if raw, exists := docker["rootless"]; exists {
+		nested, ok := raw.(map[string]any)
+		if !ok || len(nested) == 0 || nested["rootless"] != nil || nested["id"] == docker["id"] || nested["is_rootless"] != true {
+			return fmt.Errorf("rootless Docker 身份无效，请使用新的数据目录重新扫描")
+		}
+		if err := validateSnapshotDocker(nested); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSnapshotOrigins(s *Snapshot) error {
+	for _, c := range s.Containers {
+		if c.OriginContainerID != "" && (!c.Rootless || !containerorigin.ValidID(c.OriginContainerID)) {
+			return fmt.Errorf("容器创建来源格式无效，请使用新的数据目录重新扫描")
+		}
 	}
 	return nil
 }
@@ -101,6 +125,9 @@ func (d *Store) storedSnapshot(id string) (*Snapshot, error) {
 		return nil, err
 	}
 	if err := validateSnapshotDocker(result.Docker); err != nil {
+		return nil, err
+	}
+	if err := validateSnapshotOrigins(&result); err != nil {
 		return nil, err
 	}
 	nodes := map[string]*Node{}

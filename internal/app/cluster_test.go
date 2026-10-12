@@ -36,7 +36,7 @@ func TestNodeInventorySelectsLatestCompletedScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.SQL.Close()
-	const metadata = `{"schema_version":5,"tree":{},"finished_at":"2026-09-30T10:00:00Z","containers":[{"id":"latest","name":"latest","owner":"alice","state":"running"}],"filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750}]}`
+	const metadata = `{"schema_version":6,"tree":{},"finished_at":"2026-09-30T10:00:00Z","containers":[{"id":"latest","name":"latest","owner":"alice","state":"running"}],"filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750}]}`
 	old, latest := strings.Repeat("a", 32), strings.Repeat("b", 32)
 	for _, job := range []struct {
 		id, status, trigger string
@@ -52,7 +52,7 @@ func TestNodeInventorySelectsLatestCompletedScan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	writeInventorySnapshot(t, db, old, `{"schema_version":5,"containers":[{"id":"stale"}]}`, true)
+	writeInventorySnapshot(t, db, old, `{"schema_version":6,"containers":[{"id":"stale"}]}`, true)
 	writeInventorySnapshot(t, db, latest, metadata, false)
 	for _, indexed := range []bool{false, true} {
 		if indexed {
@@ -79,7 +79,7 @@ func TestNodeInventoryRejectsUnreadableLatestSnapshot(t *testing.T) {
 	for _, tc := range []struct{ name, raw, message string }{
 		{"missing", "", "该扫描结果文件无法读取"},
 		{"malformed", "{", "该扫描结果文件无法读取"},
-		{"missing tree", `{"schema_version":5}`, "该扫描结果文件无法读取"},
+		{"missing tree", `{"schema_version":6}`, "该扫描结果文件无法读取"},
 		{"unsupported version", `{"schema_version":4,"tree":{}}`, "不支持的扫描结果版本"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -94,7 +94,7 @@ func TestNodeInventoryRejectsUnreadableLatestSnapshot(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			writeInventorySnapshot(t, db, old, `{"schema_version":5}`, true)
+			writeInventorySnapshot(t, db, old, `{"schema_version":6}`, true)
 			if tc.raw != "" {
 				writeInventorySnapshot(t, db, latest, tc.raw, false)
 			}
@@ -131,7 +131,7 @@ func testNodeInventoryOwnership(t *testing.T, indexed bool) {
 		t.Fatalf("empty inventory: %+v %v", initial, err)
 	}
 	id := strings.Repeat("a", 32)
-	metadata := `{"schema_version":5,"tree":{},"finished_at":"2026-09-30T10:00:00Z","filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750},{"mount":"/data","fs":"xfs","total":2000,"used":0},{"mount":"/unknown","fs":"xfs","total":null,"used":null}],"containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
+	metadata := `{"schema_version":6,"tree":{},"finished_at":"2026-09-30T10:00:00Z","filesystems":[{"mount":"/","fs":"ext4","total":1000,"used":750},{"mount":"/data","fs":"xfs","total":2000,"used":0},{"mount":"/unknown","fs":"xfs","total":null,"used":null}],"containers":[{"id":"one","name":"scan-name","owner":"label","state":"running"},{"id":"two","name":"scan-only","owner":"bob","state":"exited"}]}`
 	if _, err = db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',1,2,'{}')", id); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func testNodeInventoryOwnership(t *testing.T, indexed bool) {
 			}
 		}
 		// A later scan still contains the immutable original owner labels.
-		writeInventorySnapshot(t, db, id, `{"schema_version":5,"tree":{},"containers":[{"id":"one","owner":"alice"},{"id":"two","owner":"bob"},{"id":"three","owner":"alice"}]}`, indexed)
+		writeInventorySnapshot(t, db, id, `{"schema_version":6,"tree":{},"containers":[{"id":"one","owner":"alice"},{"id":"two","owner":"bob"},{"id":"three","owner":"alice"}]}`, indexed)
 	}
 }
 
@@ -228,5 +228,38 @@ func TestUnassignPreservesOtherOwnerOverridesAndHistoricalContainers(t *testing.
 	}
 	if err = db.SQL.QueryRow("SELECT owner FROM owners WHERE container_id='reassigned'").Scan(&owner); err != nil || owner != "bob" {
 		t.Fatalf("other ownership %q %v", owner, err)
+	}
+}
+
+func TestNodeInventoryUsesRootlessCreationOwnership(t *testing.T) {
+	db, err := platform.OpenDatabase(t.TempDir(), Initialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	parent, child := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	job := strings.Repeat("e", 32)
+	if _, err = db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',1,2,'{}')", job); err != nil {
+		t.Fatal(err)
+	}
+	metadata := `{"schema_version":6,"tree":{},"containers":[{"id":"` + child + `","name":"child","owner":"forged-label","rootless":true,"origin_container_id":"` + parent + `"}]}`
+	for _, indexed := range []bool{false, true} {
+		writeInventorySnapshot(t, db, job, metadata, indexed)
+		for _, owner := range []string{"alice", "bob", ""} {
+			if _, err = db.SQL.Exec("INSERT INTO owners VALUES(?,?) ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner", parent, owner); err != nil {
+				t.Fatal(err)
+			}
+			inv, err := inventory(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := owner
+			if want == "" {
+				want = "rootless Docker"
+			}
+			if len(inv.Containers) != 1 || inv.Containers[0].Owner != want || inv.Containers[0].Managed {
+				t.Fatalf("inventory used stale or untrusted ownership: %+v", inv)
+			}
+		}
 	}
 }

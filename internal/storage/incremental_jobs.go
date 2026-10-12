@@ -41,6 +41,9 @@ func (d *Store) readSnapshot(id string) (*Snapshot, error) {
 	if err := validateSnapshotDocker(result.Docker); err != nil {
 		return nil, httpapi.NewError(503, err.Error())
 	}
+	if err := validateSnapshotOrigins(&result); err != nil {
+		return nil, err
+	}
 	if err := validateIncrementalNodes(snapshotNodes(result.Tree)); err != nil {
 		return nil, httpapi.NewError(503, err.Error())
 	}

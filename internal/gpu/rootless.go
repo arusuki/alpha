@@ -5,12 +5,13 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"project-alpha/internal/containerorigin"
 	"regexp"
 	"strings"
 	"time"
 )
 
-const rootlessOwner = "rootless Docker"
+const rootlessOwner = containerorigin.RootlessOwner
 
 var userSlicePattern = regexp.MustCompile(`(?:^|/)user-([0-9]+)\.slice/`)
 

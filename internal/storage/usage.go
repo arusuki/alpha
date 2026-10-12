@@ -129,11 +129,8 @@ func buildUsage(s *Snapshot) *usageIndex {
 		}
 	}
 	dockerRoots := dockerRootAliases(defaultDockerDataRoot)
-	if root, ok := s.Docker["root"].(string); ok && filepath.IsAbs(root) {
+	for _, root := range snapshotDockerRoots(s) {
 		dockerRoots = append(dockerRoots, dockerRootAliases(root)...)
-	}
-	if root, ok := s.Docker["root_canonical"].(string); ok && filepath.IsAbs(root) {
-		dockerRoots = append(dockerRoots, root)
 	}
 	for _, r := range s.Resources {
 		for _, kind := range r.Kinds {

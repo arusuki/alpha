@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"project-alpha/internal/containerorigin"
 	"project-alpha/internal/fsutil"
 )
 
@@ -44,16 +45,18 @@ type ContainerMount struct {
 	RW          bool    `json:"rw"`
 }
 type Container struct {
-	ID            string           `json:"id"`
-	Name          string           `json:"name"`
-	State         string           `json:"state"`
-	Image         string           `json:"image"`
-	Owner         string           `json:"owner"`
-	SizeRW        *int64           `json:"size_rw"`
-	UpperPath     *string          `json:"upper_path"`
-	Mounts        []ContainerMount `json:"mounts"`
-	LogPath       *string          `json:"log_path"`
-	WritableLayer *WritableLayer   `json:"writable_layer,omitempty"`
+	Rootless          bool             `json:"rootless,omitempty"`
+	OriginContainerID string           `json:"origin_container_id,omitempty"`
+	ID                string           `json:"id"`
+	Name              string           `json:"name"`
+	State             string           `json:"state"`
+	Image             string           `json:"image"`
+	Owner             string           `json:"owner"`
+	SizeRW            *int64           `json:"size_rw"`
+	UpperPath         *string          `json:"upper_path"`
+	Mounts            []ContainerMount `json:"mounts"`
+	LogPath           *string          `json:"log_path"`
+	WritableLayer     *WritableLayer   `json:"writable_layer,omitempty"`
 }
 type dockerCommand func(context.Context, []string, int) (string, error)
 type workerProcessGroup struct{}
@@ -120,6 +123,10 @@ func dockerEndpointSocket(endpoint string) (string, error) {
 }
 
 func discoverWithProgress(ctx context.Context, label string, timeout int, command dockerCommand, progress func(object) error) (object, []Container, []Resource, []Warning, error) {
+	return discoverEngine(ctx, label, timeout, command, progress, "")
+}
+
+func discoverEngine(ctx context.Context, label string, timeout int, command dockerCommand, progress func(object) error, endpoint string) (object, []Container, []Resource, []Warning, error) {
 	containers := []Container{}
 	resources := []Resource{}
 	warnings := []Warning{}
@@ -158,18 +165,20 @@ func discoverWithProgress(ctx context.Context, label string, timeout int, comman
 	if err := report("正在确认本机 Docker 连接"); err != nil {
 		return fail(err)
 	}
-	endpoint := os.Getenv("DOCKER_HOST")
-	if os.Getenv("DOCKER_CONTEXT") != "" || endpoint == "" {
-		var contexts []struct {
-			Endpoints map[string]struct{ Host string }
+	if endpoint == "" {
+		endpoint = os.Getenv("DOCKER_HOST")
+		if os.Getenv("DOCKER_CONTEXT") != "" || endpoint == "" {
+			var contexts []struct {
+				Endpoints map[string]struct{ Host string }
+			}
+			if err := readJSON([]string{"context", "inspect"}, &contexts); err != nil {
+				return fail(err)
+			}
+			if len(contexts) == 0 {
+				return fail(fmt.Errorf("Docker context not found"))
+			}
+			endpoint = contexts[0].Endpoints["docker"].Host
 		}
-		if err := readJSON([]string{"context", "inspect"}, &contexts); err != nil {
-			return fail(err)
-		}
-		if len(contexts) == 0 {
-			return fail(fmt.Errorf("Docker context not found"))
-		}
-		endpoint = contexts[0].Endpoints["docker"].Host
 	}
 	if _, err := dockerEndpointSocket(endpoint); err != nil {
 		return fail(fmt.Errorf("run on the Docker host with a local unix:// endpoint; remote Docker paths cannot be scanned locally: %w", err))
@@ -182,7 +191,10 @@ func discoverWithProgress(ctx context.Context, label string, timeout int, comman
 	if err := report("正在读取 Docker 存储配置"); err != nil {
 		return fail(err)
 	}
-	var info struct{ ID, DockerRootDir, Driver, ServerVersion string }
+	var info struct {
+		ID, DockerRootDir, Driver, ServerVersion string
+		SecurityOptions                          []string
+	}
 	if err := readJSON([]string{"info", "--format", "{{json .}}"}, &info); err != nil {
 		return fail(err)
 	}
@@ -195,6 +207,10 @@ func discoverWithProgress(ctx context.Context, label string, timeout int, comman
 		if value != "" {
 			metadata[key] = value
 		}
+	}
+	rootless := slices.Contains(info.SecurityOptions, "name=rootless")
+	if rootless {
+		metadata["is_rootless"] = true
 	}
 	index := map[string]int{}
 	resource := func(path, kind, cid string) *string {
@@ -287,7 +303,10 @@ func discoverWithProgress(ctx context.Context, label string, timeout int, comman
 			if c.SizeRW != nil && *c.SizeRW < 0 {
 				c.SizeRW = nil
 			}
-			row := Container{ID: c.ID, Name: strings.TrimLeft(c.Name, "/"), State: c.State.Status, Image: c.Config.Image, Owner: owner, SizeRW: c.SizeRW, UpperPath: resource(upper, "writable", c.ID), Mounts: []ContainerMount{}, LogPath: stringPointer(c.LogPath)}
+			if rootless {
+				owner = containerorigin.RootlessOwner
+			}
+			row := Container{Rootless: rootless, ID: c.ID, Name: strings.TrimLeft(c.Name, "/"), State: c.State.Status, Image: c.Config.Image, Owner: owner, SizeRW: c.SizeRW, UpperPath: resource(upper, "writable", c.ID), Mounts: []ContainerMount{}, LogPath: stringPointer(c.LogPath)}
 			if upper == "" {
 				warnings = append(warnings, Warning{row.Name, "Storage driver does not expose UpperDir; writable layer has Docker SizeRw only (logical bytes), no physical tree"})
 			}

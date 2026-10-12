@@ -585,7 +585,7 @@ func (s *Scanner) filesystems() []object {
 	return result
 }
 
-const snapshotVersion = 5
+const snapshotVersion = 6
 
 type Snapshot struct {
 	Accounting        []InodeRecord                `json:"incremental_accounting,omitempty"`
@@ -606,6 +606,10 @@ type Snapshot struct {
 }
 
 func buildSnapshot(ctx context.Context, c Config, progress func(object) error) (*Snapshot, error) {
+	return buildSnapshotWithDocker(ctx, c, progress, runDocker)
+}
+
+func buildSnapshotWithDocker(ctx context.Context, c Config, progress func(object) error, command dockerCommand) (*Snapshot, error) {
 	progress = mergeScanProgress(progress)
 	metadata := object{}
 	containers := []Container{}
@@ -613,7 +617,7 @@ func buildSnapshot(ctx context.Context, c Config, progress func(object) error) (
 	warnings := []Warning{}
 	if !c.NoDocker {
 		var err error
-		metadata, containers, resources, warnings, err = discoverWithProgress(ctx, c.OwnerLabel, c.DockerTimeout, runDocker, progress)
+		metadata, containers, resources, warnings, err = discoverStorage(ctx, c, command, progress)
 		if err != nil {
 			return nil, err
 		}
@@ -621,8 +625,10 @@ func buildSnapshot(ctx context.Context, c Config, progress func(object) error) (
 	for _, p := range c.Root {
 		resources = append(resources, Resource{fsutil.Canonical(p), []string{"host"}, []string{}})
 	}
-	if p, _ := metadata["root"].(string); c.IncludeDockerRoot && p != "" {
-		resources = append(resources, Resource{fsutil.Canonical(p), []string{"docker-root"}, []string{}})
+	for _, engine := range dockerEngines(metadata) {
+		if p, _ := engine["root"].(string); c.IncludeDockerRoot && p != "" {
+			resources = append(resources, Resource{fsutil.Canonical(p), []string{"docker-root"}, []string{}})
+		}
 	}
 	if len(resources) == 0 {
 		warnings = append(warnings, Warning{"", "No disk paths discovered. Use --root PATH to include host directories."})

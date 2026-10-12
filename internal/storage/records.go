@@ -50,11 +50,7 @@ func (s *Service) ReadSnapshot(id string) (*Snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i := range snapshot.Containers {
-		if owner, ok := owners[snapshot.Containers[i].ID]; ok {
-			snapshot.Containers[i].Owner = owner
-		}
-	}
+	ApplyContainerOwners(snapshot.Containers, owners)
 	return snapshot, nil
 }
 func (s *Service) Snapshot(id string) (object, error) {
@@ -78,15 +74,22 @@ func (s *Service) publicSnapshot(result object, id string, revision int64) (obje
 	if !ok {
 		return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
 	}
-	for _, v := range containers {
+	raw, err := json.Marshal(containers)
+	if err != nil {
+		return nil, err
+	}
+	var rows []Container
+	if err := json.Unmarshal(raw, &rows); err != nil {
+		return nil, err
+	}
+	ApplyContainerOwners(rows, owners)
+	for i, v := range containers {
 		c, ok := v.(map[string]any)
 		if !ok {
 			return nil, httpapi.NewError(503, "该扫描结果文件无法读取")
 		}
 		c["label_owner"] = c["owner"]
-		if owner, ok := owners[httpapi.String(c["id"])]; ok {
-			c["owner"] = owner
-		}
+		c["owner"] = rows[i].Owner
 	}
 	delete(result, "incremental_accounting")
 	result["revision"] = revision

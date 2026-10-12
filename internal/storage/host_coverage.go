@@ -44,10 +44,8 @@ func (t *recordView) hostCoverage(roots, paths []string, offset, limit int) (obj
 		}
 	}
 	dockerRoots := dockerRootAliases(defaultDockerDataRoot)
-	for _, key := range []string{"root", "root_canonical"} {
-		if p, ok := t.snapshot.Docker[key].(string); ok && filepath.IsAbs(p) {
-			dockerRoots = append(dockerRoots, dockerRootAliases(p)...)
-		}
+	for _, root := range snapshotDockerRoots(t.snapshot) {
+		dockerRoots = append(dockerRoots, dockerRootAliases(root)...)
 	}
 	for _, r := range t.snapshot.Resources {
 		for _, kind := range r.Kinds {

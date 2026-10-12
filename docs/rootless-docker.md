@@ -171,3 +171,13 @@ ROOTLESS_TEST_BINARY=/tmp/project-alpha-rootless-static.test python3 tests/test_
 `test exec` 使用客户端的宿主机 Docker 权限打开交互终端；其他测试操作通过管理 API。`cleanup` 只删除带本工具标签的测试容器及其匿名卷，不清理镜像和 rootless 数据。可追加自定义测试容器名。首次拉取镜像需要仓库网络访问。
 
 参考：[Docker rootless 前提](https://docs.docker.com/engine/security/rootless/)、[用户服务与资源限制](https://docs.docker.com/engine/security/rootless/tips/)、[daemon 代理](https://docs.docker.com/engine/daemon/proxy/)、[slirp4netns 回环访问](https://github.com/rootless-containers/slirp4netns/blob/master/slirp4netns.1.md#filtering-connections)。
+
+### 磁盘用量归属
+
+磁盘扫描同时发现当前本机 Docker endpoint 和平台配置的 rootless 管理 socket；两者指向同一 daemon 时只计一次。rootless 服务存在但无法读取容器资源时，扫描明确失败，避免把遗漏的容器数据计作 Host。独立 `scan` 命令使用默认管理 socket；worker 使用节点服务保存的 `control_socket`。
+
+GPU 和磁盘共用可信创建来源解析。磁盘快照记录 rootless 子容器的创建来源容器 ID，读取磁盘列表、成员目录和节点清单时，按来源容器的最新明确归属解析成员。不会采用 rootless 容器自填的 owner 标签或共享 daemon 的 UID；审计缺失或不可读时保留为 `rootless Docker`，审计接口错误另显示警告。成员只能展开当前归属自己的容器。
+
+两个引擎的可写层、日志、卷和 bind 源统一进行 inode 去重；跨引擎共享目录仍按共享资源统计，Docker `SizeRw` 不叠加到物理用量。`--include-docker-root` 包含两个引擎的数据目录；镜像缓存和无容器引用的资源不推断为某个成员。rootless 数据目录不会作为普通 Host 目录删除；现有清理助手尚不支持 rootless 容器内清理。
+
+此变更更新了快照格式；旧快照保持原样，读取时明确提示使用新的数据目录重新扫描。数据库表结构不变。

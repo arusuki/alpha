@@ -167,3 +167,11 @@ run(`platform.user.role='viewer';refreshDirectoryScan()`);
 assert(!element('directorySelection').innerHTML.includes('data-expand-path'));
 assert(element('directoryStatus').innerHTML.includes('管理员'));
 console.log('Live explorer checks passed: direct gray-block scanning, measured child tiles, preserved filters and scroll, viewer permissions.');
+
+// Two Docker engines on different filesystems must not advertise only one's free space.
+run(`sample=JSON.parse(sampleText);sample.docker.root='/data/docker';sample.docker.root_canonical='/data/docker';sample.docker.rootless={id:'rootless',endpoint:'unix:///run/rootless-docker/control.sock',root:'/home/docker-rootless/data',root_canonical:'/home/docker-rootless/data',is_rootless:true};sample.filesystems=[{mount:'/data',total:2000,used:1000,available:1000,scanned:0,unexplained:1000},{mount:'/home',total:3000,used:1000,available:2000,scanned:0,unexplained:1000}];load(sample,'two engines')`);
+assert.equal(run('dockerFilesystem(snapshot)'),null);
+assert(element('storageOverview').innerHTML.includes('按文件系统查看容量与剩余空间'));
+assert.throws(()=>run(`validate({...sample,docker:{...sample.docker,rootless:null}})`));
+assert.throws(()=>run(`validate({...sample,containers:[{...sample.containers[0],rootless:true,origin_container_id:'bad'}]})`));
+assert.throws(()=>run(`validate({...sample,schema_version:5})`));
