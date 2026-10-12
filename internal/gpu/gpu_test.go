@@ -23,7 +23,10 @@ func testMonitor(t *testing.T) *Monitor {
 			return err
 		}
 		_, err := tx.Exec("CREATE TABLE owners(container_id TEXT PRIMARY KEY,owner TEXT); CREATE TABLE managed_containers(id TEXT PRIMARY KEY,name TEXT); CREATE TABLE node_service_settings(name TEXT PRIMARY KEY,config TEXT); INSERT INTO service_identity VALUES(1,'worker','test')")
-		return err
+		if err != nil {
+			return err
+		}
+		return platform.InstallRootlessOwners(tx)
 	})
 	if err != nil {
 		t.Fatal(err)

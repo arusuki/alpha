@@ -252,3 +252,52 @@ func TestRootlessSnapshotOwnersUseLiveOverlay(t *testing.T) {
 		}
 	}
 }
+
+func TestRootlessSnapshotOwnersUseManualBinding(t *testing.T) {
+	p := newTestPlatform(t)
+	parent, child := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	raw, err := os.ReadFile("../../tests/fixtures/snapshot.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snapshot Snapshot
+	if err = json.Unmarshal(raw, &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	snapshot.Containers[1].Rootless = true
+	snapshot.Containers[1].OriginContainerID = ""
+	if _, err := p.db.SQL.Exec("INSERT INTO owners VALUES(?,''); INSERT INTO rootless_container_owners VALUES(?,?,1,'admin')", parent, child, parent); err != nil {
+		t.Fatal(err)
+	}
+	id := strings.Repeat("f", 32)
+	if _, err = p.db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','test',1,2,?)", id, httpapi.JSONText(defaultConfig())); err != nil {
+		t.Fatal(err)
+	}
+	if err = atomicWrite(filepath.Join(p.db.Directory, "results", id, "snapshot.json"), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []string{"alice", "bob", ""} {
+		if err = p.db.setOwner(parent, owner, "test"); err != nil {
+			t.Fatal(err)
+		}
+		want := owner
+		if want == "" {
+			want = containerorigin.RootlessOwner
+		}
+		result, err := p.api.ReadSnapshot(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Containers[1].Owner != want {
+			t.Fatal(result.Containers[1])
+		}
+		exported, err := p.api.Snapshot(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		row := exported["containers"].([]any)[1].(map[string]any)
+		if row["id"] != child || row["owner"] != want {
+			t.Fatal(row)
+		}
+	}
+}

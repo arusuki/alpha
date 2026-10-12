@@ -113,8 +113,25 @@ UPDATE settings SET value=json_remove(value,'$.auto_agent_analyze');`)
 					}
 				}
 
+				if tc.role == "worker" && tc.version >= 38 && tc.version < 45 {
+					if _, err = db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
 				if tc.role == "worker" && tc.version >= 38 && tc.version < 40 {
 					if _, err = db.SQL.Exec("DROP TRIGGER service_mount_owner; DROP TRIGGER service_mount_release; DROP TABLE node_service_mounts; DROP TABLE node_service_settings"); err != nil {
+						t.Fatal(err)
+					}
+				}
+
+				if tc.role == "control" && tc.version >= 38 && tc.version < 44 {
+					if _, err = db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if tc.role == "control" && tc.version >= 38 && tc.version < 43 {
+					if _, err = db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
 						t.Fatal(err)
 					}
 				}

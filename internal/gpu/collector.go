@@ -177,16 +177,9 @@ func collect(ctx context.Context, db *platform.Database) ([]Device, string, erro
 	if err != nil {
 		return nil, "", err
 	}
-	owners, err := platform.Rows(db.SQL, "SELECT o.container_id,o.owner,COALESCE(m.name,'') AS name FROM owners o LEFT JOIN managed_containers m ON m.id=o.container_id")
+	ownerMap, names, err := readContainerOwners(db)
 	if err != nil {
 		return nil, "", err
-	}
-	ownerMap := map[string]string{}
-	names := map[string]string{}
-	for _, r := range owners {
-		id := r["container_id"].(string)
-		ownerMap[id] = r["owner"].(string)
-		names[id] = r["name"].(string)
 	}
 	boot := float64(0)
 	if at := procfs.BootTime("/proc"); !at.IsZero() {
@@ -232,4 +225,19 @@ func applyContainerOwners(devices []Device, names, ownerMap map[string]string) {
 			}
 		}
 	}
+}
+
+func readContainerOwners(db *platform.Database) (map[string]string, map[string]string, error) {
+	owners, err := platform.Rows(db.SQL, `SELECT o.container_id,o.owner,COALESCE(m.name,'') AS name FROM (`+platform.ContainerOwnersSQL+`) o LEFT JOIN managed_containers m ON m.id=o.container_id`)
+	if err != nil {
+		return nil, nil, err
+	}
+	ownerMap := map[string]string{}
+	names := map[string]string{}
+	for _, r := range owners {
+		id := r["container_id"].(string)
+		ownerMap[id] = r["owner"].(string)
+		names[id] = r["name"].(string)
+	}
+	return ownerMap, names, nil
 }

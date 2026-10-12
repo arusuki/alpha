@@ -24,7 +24,7 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 	}
 	defer tx.Rollback()
 	byID := map[string]cluster.Container{}
-	owners, err := platform.Rows(tx, "SELECT container_id,owner FROM owners")
+	owners, err := platform.Rows(tx, platform.ContainerOwnersSQL)
 	if err != nil {
 		return out, err
 	}
@@ -84,7 +84,7 @@ func inventory(db *platform.Database) (cluster.Inventory, error) {
 	}
 
 	for _, r := range owners {
-		if c, ok := byID[r["container_id"].(string)]; ok {
+		if c, ok := byID[r["container_id"].(string)]; ok && c.Managed {
 			c.Owner = r["owner"].(string)
 			byID[c.ID] = c
 		}

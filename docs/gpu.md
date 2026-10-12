@@ -12,6 +12,21 @@ worker 服务每 15 秒调用 `nvidia-smi -q -x`，并读取宿主机 `/proc` �
 
 受管理的 rootless 业务 socket 经创建来源审计代理转发。创建成功后，代理将内核提供的连接 PID/UID、进程启动时刻、来源容器完整 ID 和新容器 ID 保存到 root 所有的记录中；GPU 采集查询管理接口，将来源容器与节点当前 `owners` 登记对应，直接登记的新容器归属仍优先。只认代理记录，不采信请求头、容器 label 或环境变量里的用户名。外层容器多人共用时，只能归属到该容器登记用户，不能区分其中的自然人；未登记、来源不可读、绕过代理或启用前创建的容器继续显示 `rootless Docker`。来源容器被取消归属后，不再推定其新采样归属；已经保存的 GPU 历史不重写。审计接口不可读会显示警告，GPU 采集继续。
 
+管理员也可以为启用来源审计前创建的 rootless 容器登记独立归属。`rootless_container_owners` 保存子容器到主容器的关联，允许多个子容器关联同一个主容器，不占用 `owners` 的一对一名额，也不伪造创建来源审计。GPU 采集、磁盘归属视图及节点清单共用当前关联。GPU 采集优先读取手动关联，使用主容器当前的使用者；主容器取消归属后子容器不再沿用旧用户名，重新分配主容器后跟随新的归属。撤销手动关联后恢复按可信来源推断。修改关联只影响后续采样，历史保持不变。
+
+在 worker 主机运行以下命令（无需停服；旧数据库须先按[更新器说明](updater.md)原地升级，目标版本与支持窗口以命令帮助和生成窗口为准）：
+
+```bash
+# 验证并预览：--all 包括当前 rootless 引擎中已停止的容器。
+project-alpha containers rootless-owner --data-dir ./worker-data --owner luyulei --all --dry-run
+project-alpha containers rootless-owner --data-dir ./worker-data --owner luyulei --all
+# 也可以在所有选项之后提供一个或多个完整容器 ID。
+project-alpha containers rootless-owner --data-dir ./worker-data --list
+project-alpha containers rootless-owner --data-dir ./worker-data --clear <完整容器ID>
+```
+
+登记时验证节点配置的引擎确为 rootless、目标容器属于该引擎、使用者已有主容器。批量操作在同一事务内提交并记录操作者；任一目标无效则整批失败。容器删除后关联仍可查询和手动清除，不自动删除历史或主容器数据。
+
 未归属容器在设备摘要、历史图例、占用色带和时长排行中显示为「未归属容器 · 容器名」，不同容器分别展示，同容器多个进程去重。名称暂不可读时显示容器短 ID。
 
 「进程已运行」从 `/proc/<pid>/stat` 的启动时间计算，表示整个进程的年龄，不表示进入 GPU 的时间。设备「未发现进程」只说明采样时未观测到 GPU 进程，不承诺显存完全空闲或计算任务一定可调度；计算禁用和 MIG 模式单独标注。
@@ -30,7 +45,7 @@ NVIDIA 字段和限制参见 [nvidia-smi 官方文档](https://docs.nvidia.com/d
 
 ## 接口与升级
 
-`GET /api/gpu/overview?hours=6&step=60` 提供当前设备、进程、曲线和最近 72h 用户总时长。`hours` 为 0.25–72，`step` 为 15–3600 秒，可用 `end`（Unix 秒）平移。经总控的节点认证代理调用，所有已认证工作台用户可读，无 GPU 修改接口。
+`GET /api/gpu/overview?hours=6&step=60` 提供当前设备、进程、曲线和最近 72h 用户总时长。`hours` 为 0.25–72，`step` 为 15–3600 秒，可用 `end`（Unix 秒）平移。经总控的节点认证代理调用，所有已认证工作台用户可读。`GET /api/gpu/rootless-owners` 查询手动关联与当前使用者；管理员可用 `PUT` 提交 `{"container_ids":["完整ID"],"owner":"使用者"}` 批量登记，或用 `DELETE` 提交 `{"container_ids":["完整ID"]}` 撤销关联。接口沿用总控管理员认证与 CSRF 校验，每批最多 1000 个容器；不修改 GPU 运行状态或历史记录。
 
 worker 的 GPU 历史保存在 `gpu_intervals`，到期索引用于清理；control 和 registry 不建立此表。数据库随发布更新原地升级，支持范围和故障恢复见[更新器说明](updater.md)。
 

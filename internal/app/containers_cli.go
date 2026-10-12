@@ -40,6 +40,7 @@ func newContainerHandler(db *platform.Database) *containers.Handler {
 		rows, err := platform.Rows(tx, `WITH candidates AS (
  SELECT json_extract(c.value,'$.id') AS id,json_extract(c.value,'$.owner') AS owner
  FROM snapshot_records r,json_each(r.metadata,'$.containers') c
+ WHERE COALESCE(json_extract(c.value,'$.rootless'),0)=0
  UNION ALL SELECT id,owner FROM managed_containers
  UNION ALL SELECT container_id,owner FROM owners
  ) SELECT DISTINCT c.id FROM candidates c
@@ -63,12 +64,17 @@ func newContainerHandler(db *platform.Database) *containers.Handler {
 }
 
 func containersCLI(ctx context.Context, args []string) error {
+	if len(args) > 0 && args[0] == "rootless-owner" {
+		return rootlessOwnersCLI(ctx, args[1:])
+	}
 	if len(args) == 0 || len(args) == 1 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprint(os.Stdout, `用法：
   project-alpha containers import [选项] [容器名或完整 ID ...]
+  project-alpha containers rootless-owner [选项] [完整容器 ID ...]
 
 子命令：
   import  扫描并接管已有 Docker 容器，写入所在节点的 worker 数据目录
+  rootless-owner  独立登记 rootless 子容器归属；使用 --help 查看操作方式
 
 使用 project-alpha containers import --help 查看详细选项和示例。
 `)

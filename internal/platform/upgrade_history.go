@@ -38,6 +38,9 @@ var databaseUpgrades = []databaseUpgrade{
 	{From: 39, To: 40, Apply: upgradeNodeServices},
 	{From: 40, To: 41, Apply: upgradeServiceParameters},
 	{From: 41, To: 42, Apply: upgradeDRAMMounts},
+	{From: 42, To: 43, Apply: upgradeAssistant},
+	{From: 43, To: 44, Apply: upgradeAssistantSettings},
+	{From: 44, To: 45, Apply: upgradeRootlessOwners},
 }
 
 func databaseUpgradePlan(version int) ([]databaseUpgrade, error) {

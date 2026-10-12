@@ -15,6 +15,14 @@ func readContainerOrigins(ctx context.Context, devices []Device, owners map[stri
 			if p.Owner != rootlessOwner || !containerorigin.ValidID(p.ContainerID) {
 				continue
 			}
+			// Explicit bindings also survive an unavailable audit endpoint. Empty
+			// ownership stops inheritance after the primary container is released.
+			if owner, ok := owners[p.ContainerID]; ok {
+				if owner != "" {
+					p.Owner = owner
+				}
+				continue
+			}
 			if len(processes[p.ContainerID]) == 0 {
 				ids = append(ids, p.ContainerID)
 			}

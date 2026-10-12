@@ -42,6 +42,9 @@ type History struct {
 
 func IsRoute(path string) bool { return strings.HasPrefix(path, "/api/gpu/") }
 func (m *Monitor) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if r.URL.Path == "/api/gpu/rootless-owners" {
+		return m.rootlessOwners(w, r, user)
+	}
 	if r.Method != "GET" || r.URL.Path != "/api/gpu/overview" {
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}

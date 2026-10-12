@@ -14,6 +14,9 @@ import (
 )
 
 func Initialize(tx *sql.Tx) error {
+	if err := platform.InstallAssistant(tx); err != nil {
+		return err
+	}
 	if err := agent.Initialize(tx); err != nil {
 		return err
 	}

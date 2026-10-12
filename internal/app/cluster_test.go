@@ -263,3 +263,39 @@ func TestNodeInventoryUsesRootlessCreationOwnership(t *testing.T) {
 		}
 	}
 }
+
+func TestNodeInventoryUsesRootlessManualOwnership(t *testing.T) {
+	db, err := platform.OpenDatabase(t.TempDir(), Initialize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.SQL.Close()
+	parent, child := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	if _, err := db.SQL.Exec("INSERT INTO owners VALUES(?, ''); INSERT INTO rootless_container_owners VALUES(?,?,1,'admin')", parent, child, parent); err != nil {
+		t.Fatal(err)
+	}
+	job := strings.Repeat("e", 32)
+	if _, err = db.SQL.Exec("INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES(?,'completed','manual','admin',1,2,'{}')", job); err != nil {
+		t.Fatal(err)
+	}
+	metadata := `{"schema_version":6,"tree":{},"containers":[{"id":"` + child + `","name":"child","owner":"forged-label","rootless":true}]}`
+	for _, indexed := range []bool{false, true} {
+		writeInventorySnapshot(t, db, job, metadata, indexed)
+		for _, owner := range []string{"alice", "bob", ""} {
+			if _, err = db.SQL.Exec("INSERT INTO owners VALUES(?,?) ON CONFLICT(container_id) DO UPDATE SET owner=excluded.owner", parent, owner); err != nil {
+				t.Fatal(err)
+			}
+			inv, err := inventory(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := owner
+			if want == "" {
+				want = "rootless Docker"
+			}
+			if len(inv.Containers) != 1 || inv.Containers[0].Owner != want || inv.Containers[0].Managed {
+				t.Fatalf("inventory used stale or untrusted ownership: %+v", inv)
+			}
+		}
+	}
+}

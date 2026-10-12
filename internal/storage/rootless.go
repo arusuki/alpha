@@ -118,6 +118,7 @@ func ApplyContainerOwners(rows []Container, owners map[string]string) {
 			if owner := containerorigin.Resolve(c.ID, owners, parents); owner != "" {
 				c.Owner = owner
 			}
+			continue
 		}
 		if owner, ok := owners[c.ID]; ok {
 			c.Owner = owner

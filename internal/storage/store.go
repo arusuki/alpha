@@ -27,7 +27,7 @@ func Initialize(tx *sql.Tx) error {
 	if _, err := tx.Exec("INSERT INTO settings(id,value) VALUES(1,?)", httpapi.JSONText(defaultConfig())); err != nil {
 		return err
 	}
-	return nil
+	return platform.InstallRootlessOwners(tx)
 }
 
 type Settings struct {
@@ -119,7 +119,7 @@ func (d *Store) latest() (*string, error) {
 	return &id, err
 }
 func (d *Store) owners() (map[string]string, error) {
-	items, err := platform.Rows(d.SQL, "SELECT * FROM owners")
+	items, err := platform.Rows(d.SQL, platform.ContainerOwnersSQL)
 	if err != nil {
 		return nil, err
 	}
