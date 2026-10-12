@@ -122,7 +122,7 @@ func TestDetachChecksBootAndContainerIncarnation(t *testing.T) {
 	for _, kind := range []string{"same", "reboot", "restarted", "deleted", "docker-error", "foreign-mount"} {
 		t.Run(kind, func(t *testing.T) {
 			m, u := testManager(t)
-			d := &daemon{manager: m, user: u, bootID: "boot"}
+			d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, bootID: "boot"}
 			b := binding{Host: testHost, Container: "id", BootID: "boot", PID: 42, StartedAt: "first", SocketPath: "/run/socket", Receipt: &mountReceipt{Namespace: 1, Device: 2, Inode: 3, MountID: "4"}}
 			if kind == "reboot" {
 				d.bootID = "new"
@@ -179,7 +179,7 @@ func TestRemovePreservesBindingsOnSaveFailure(t *testing.T) {
 			}
 			dir := t.TempDir()
 			file := dir + "/bindings.json"
-			d := &daemon{manager: m, user: u, stateFile: file, store: bindingStore{Version: 1, Bindings: []binding{}}}
+			d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, stateFile: file, store: bindingStore{Version: 1, Bindings: []binding{}}}
 			for i := 0; i < 3; i++ {
 				d.store.Bindings = append(d.store.Bindings, binding{Host: testHost, Container: fmt.Sprintf("id%d", i), Name: fmt.Sprintf("name%d", i), SocketPath: "/socket"})
 			}
@@ -232,7 +232,8 @@ func TestControlProtocolAndDockerProxy(t *testing.T) {
 	upstream := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "rootless:"+r.URL.Path) })}
 	go upstream.Serve(backend)
 	defer upstream.Close()
-	d := &daemon{manager: m, user: u, ctx: context.Background(), store: bindingStore{Version: 1, Bindings: []binding{}}}
+	d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, ctx: context.Background(), store: bindingStore{Version: 1, Bindings: []binding{}}}
+	d.audit = &creationAudit{store: originStore{directory: t.TempDir()}, bootID: "boot", procRoot: "/proc"}
 	h := d.handler()
 	for _, args := range [][]string{{"daemon"}, {"daemon", "--host-namespaces"}, {"docker", "run", "x"}, {"test", "exec"}, {"add", "c", "--host", "tcp://host"}, {"remove", "c", "--socket-path", "/run/../socket"}} {
 		b, _ := json.Marshal(controlRequest{Args: args})
@@ -416,7 +417,7 @@ func TestBindingsRecoverAfterDaemonSocketAndContainerRestart(t *testing.T) {
 			return errors.New("unexpected worker")
 		}
 	}
-	d := &daemon{manager: m, user: u, bootID: "boot", stateFile: dir + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
+	d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, bootID: "boot", stateFile: dir + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
 	options := options{Host: testHost, Container: "target-name", SocketPath: "/run/socket"}
 	if err = d.add(options); err != nil {
 		t.Fatal(err)
@@ -637,7 +638,7 @@ func TestBindingStatusesVerifyLiveIdentity(t *testing.T) {
 		}
 		return json.NewEncoder(m.out).Encode(mounted)
 	}
-	d := &daemon{manager: m, user: u, bootID: "boot", store: bindingStore{Version: 1, Bindings: []binding{{Host: testHost, Container: "stable-id", Name: "name", SocketPath: "/sock", BootID: "boot", PID: state.Pid, StartedAt: state.StartedAt, Receipt: &mountReceipt{Namespace: 1, Device: uint64(source.Dev), Inode: source.Ino, MountID: "4"}}}}}
+	d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, bootID: "boot", store: bindingStore{Version: 1, Bindings: []binding{{Host: testHost, Container: "stable-id", Name: "name", SocketPath: "/sock", BootID: "boot", PID: state.Pid, StartedAt: state.StartedAt, Receipt: &mountReceipt{Namespace: 1, Device: uint64(source.Dev), Inode: source.Ino, MountID: "4"}}}}}
 	check := func(want string) {
 		t.Helper()
 		before, _ := json.Marshal(d.store)

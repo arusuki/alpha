@@ -4,6 +4,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd/rootless-docker/ cmd/rootless-docker/
 COPY internal/rootless/ internal/rootless/
+COPY internal/containerorigin/ internal/containerorigin/
+COPY internal/procfs/ internal/procfs/
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /rootless-docker ./cmd/rootless-docker
 
 FROM ubuntu:24.04 AS build

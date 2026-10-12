@@ -110,7 +110,7 @@ func TestEventStreamsOwnRecoveryAndStopWithLastBinding(t *testing.T) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	d := &daemon{manager: m, user: u, ctx: ctx, bootID: "boot", stateFile: dir + "/bindings.json",
+	d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, ctx: ctx, bootID: "boot", stateFile: dir + "/bindings.json",
 		store: bindingStore{Version: 1, Bindings: []binding{{Host: host, Container: "target", Name: "target", SocketPath: "/sock",
 			BootID: "boot", PID: 42, StartedAt: "first", Receipt: &mountReceipt{Namespace: 1, Device: uint64(source.Dev), Inode: source.Ino, MountID: "2"}}}}}
 	t.Cleanup(func() { cancel(); d.wg.Wait() })
@@ -206,7 +206,7 @@ func TestFailedEventSubscriptionDoesNotReconcile(t *testing.T) {
 		t.Error("reconciled before successful subscription")
 		return result{}, nil
 	}
-	d := &daemon{manager: m, user: u}
+	d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))

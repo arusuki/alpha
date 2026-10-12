@@ -328,7 +328,7 @@ func TestAddChecksDaemonContainerAndConcurrentRestarts(t *testing.T) {
 				b, _ := json.Marshal(obj)
 				return result{Out: string(b)}, nil
 			}
-			d := &daemon{manager: m, user: u, bootID: "boot", stateFile: t.TempDir() + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
+			d := &daemon{manager: m, user: u, businessSocket: layout(u).Socket, bootID: "boot", stateFile: t.TempDir() + "/bindings.json", store: bindingStore{Version: 1, Bindings: []binding{}}}
 			err := d.add(options{Container: "-container", Host: testHost, SocketPath: "/run/custom.sock"})
 			waiting := kind == "paused" || kind == "stopped" || kind == "restarting"
 			if (err != nil) != (kind != "ok" && !waiting) {

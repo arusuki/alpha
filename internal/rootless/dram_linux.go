@@ -27,7 +27,7 @@ func (d *daemon) source() string {
 	if d.sourceSocket != "" {
 		return d.sourceSocket
 	}
-	return layout(d.user).Socket
+	return d.businessSocket
 }
 func (d *daemon) verifySource() error {
 	if d.sourceSocket == "" {

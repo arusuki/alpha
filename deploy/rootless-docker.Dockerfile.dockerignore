@@ -7,3 +7,7 @@
 !internal
 !internal/rootless
 !internal/rootless/**
+!internal/containerorigin
+!internal/containerorigin/**
+!internal/procfs
+!internal/procfs/**

@@ -19,7 +19,7 @@ ROOTLESS_DOCKER_GID=$(id -g) docker compose -f deploy/services.yaml up -d --buil
 
 [`deploy/services.yaml`](../deploy/services.yaml) 中的 `rootless-docker` 使用 `privileged`、`pid: host`、宿主机 user/cgroup namespace，绑定 `/run/rootless-docker`。静态 Go 二进制进入宿主机 mount/network namespace 和根目录后重新执行，使用宿主机的 Docker、RootlessKit、systemd 和账户信息。镜像不自动安装宿主机软件包。外层 Docker 必须是 rootful Docker。
 
-`ROOTLESS_DOCKER_GID` 是**宿主机**授权组的数字 GID，默认为 0。控制 socket `/run/rootless-docker/control.sock` 为 `0660 root:<GID>`；获授权的 client 无需 sudo。访问此管理 socket 的权限等同宿主机管理员，不应把它暴露给普通业务容器。业务容器只获得独立 rootless dockerd 的 socket。
+`ROOTLESS_DOCKER_GID` 是**宿主机**授权组的数字 GID，默认为 0。控制 socket `/run/rootless-docker/control.sock` 为 `0660 root:<GID>`；获授权的 client 无需 sudo。访问此管理 socket 的权限等同宿主机管理员，不应把它暴露给普通业务容器。业务容器只获得独立 rootless dockerd 的业务审计代理 socket，不能调用管理接口。
 
 也可在宿主机前台运行：
 
@@ -66,6 +66,8 @@ DOCKER_HOST=unix:///run/rootless-docker.sock docker info
 
 事件订阅由管理 daemon 直接通过 Unix socket 上的 Docker HTTP API 建立，不启动常驻 `docker events` 子进程。没有关联时不订阅，删除某个 endpoint 的最后一个关联后关闭对应连接，删除全部关联后也关闭 rootless 订阅。连接正常时阻塞等待事件，仅在断线后每秒重试；没有定时健康检查。目标订阅负责首次恢复，rootless 连接重建只处理 socket 已变化或缺失的挂载记录。无关容器事件不执行恢复，状态未变化时不重写记录或执行 fsync。
 
+这些热挂载的源是 `/run/rootless-docker/docker.sock` 业务审计代理，不直接暴露原始 dockerd socket。已有挂载在管理服务升级重启时按保存的关联原地重新挂载，已有容器、镜像、卷和挂载记录保留。
+
 这些热挂载不写入 Docker 创建配置，`docker inspect` 的 `Mounts` 不会列出它们。新注入的 socket 挂载设为 private，不继承宿主机源挂载的共享传播；目标路径上的共享传播挂载会被拒绝。只读根文件系统需要预先准备目标文件或选择可写路径。获得业务 socket 的容器可以管理该 rootless daemon 下的全部容器和卷；bind mount 的源路径按宿主机文件系统解释，并受 `docker-rootless` 用户权限限制。
 
 停止与启动管理容器：
@@ -76,6 +78,16 @@ docker compose -f deploy/services.yaml start rootless-docker
 ```
 
 Compose 设置 `stop_grace_period: 120s`，允许服务完成正常退出。`restart: unless-stopped` 作用于管理容器；手工停止后，用户服务不会自行开机启动。
+
+## 容器创建来源审计
+
+管理服务在业务 socket 和管理 socket 的 Docker API 转发路径上审计成功的 `POST /containers/create`（含 API 版本前缀）。通过 Unix `SO_PEERCRED` 取得连接进程 PID/UID，并在宿主机 `/proc` 核对有效 UID、进程启动时间及 Docker cgroup 完整 ID；身份信息在接入时固定，不接受客户端自报身份。它记录创建来源，未实现完整 Docker 操作审计或权限隔离。
+
+每个新容器的不可覆盖来源记录保存在 `/var/lib/rootless-docker/origins/<完整容器ID>.json`，目录由 root 所有、权限 `0700`，文件为 `0600`。记录包括格式版本、创建时间、宿主机 boot ID、连接 PID/UID、启动 ticks、来源容器 ID 或无法确认的原因；不记录请求正文、环境变量、命令参数或认证信息。记录跨重启保留，删除容器不删除来源记录。不改变现有 `bindings.json` 格式或平台数据库结构。损坏或版本不匹配的记录明确报错并保留原文件。
+
+只有管理 socket 提供 `GET /_rootless/origins?container_id=<完整ID>`，支持重复参数，每次最多 128 个 ID。业务 socket 拒绝所有 `/_rootless/` 路由。GPU 采集使用此接口关联外层容器的已登记用户，参见 [GPU 监控](gpu.md)。未找到记录表示没有可验证来源，不按名称、label 或共用账号补猜。
+
+代理先保存来源，再向客户端返回创建成功。若 Docker 已创建容器但来源保存失败，返回明确错误及容器 ID；容器保留，请先检查该 ID 和审计目录，不要直接重试创建。服务或宿主机在创建与保存之间崩溃时，可能留下无来源记录的容器；后续明确显示未知，不伪造补记。原始 dockerd socket 仍供受信任的管理组件使用，绕过代理的请求无法归属；当前机制不是针对拥有宿主机管理权限者的防篡改审计。使用已有连接的中间代理或共享外层容器时，只能确认该连接／外层容器来源，不能识别代理背后的具体自然人。
 
 ## registry 代理
 

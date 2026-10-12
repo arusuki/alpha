@@ -10,8 +10,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -23,6 +21,7 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+	"project-alpha/internal/containerorigin"
 )
 
 const controlPath = "/_rootless/control"
@@ -37,6 +36,8 @@ type controlResponse struct {
 }
 type daemon struct {
 	sourceSocket      string // Nonempty for the independent DRAM manager.
+	businessSocket    string // Audited Docker API socket injected into containers.
+	audit             *creationAudit
 	manager           *manager
 	user              account
 	mu                sync.Mutex
@@ -95,7 +96,13 @@ func runDaemon(o options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	d := &daemon{manager: m, user: u, store: store, bootID: boot, stateFile: stateDirectory + "/bindings.json", ctx: ctx}
+	origins := originStore{directory: stateDirectory + "/origins"}
+	if err = rootDirectory(origins.directory, 0700); err != nil {
+		lease.Close()
+		return err
+	}
+	audit := &creationAudit{store: origins, bootID: boot, procRoot: "/proc"}
+	d := &daemon{manager: m, user: u, store: store, bootID: boot, stateFile: stateDirectory + "/bindings.json", ctx: ctx, businessSocket: auditSocket, audit: audit}
 	d.savedBindings, err = jsonBytes(store)
 	if err != nil {
 		lease.Close()
@@ -140,9 +147,26 @@ func runDaemon(o options) (retErr error) {
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
-	errCh := make(chan error, 1)
+	if err = removeStaleSocket(d.businessSocket); err != nil {
+		return err
+	}
+	business, err := net.ListenUnix("unix", &net.UnixAddr{Name: d.businessSocket, Net: "unix"})
+	if err != nil {
+		return err
+	}
+	defer business.Close()
+	if err = os.Chown(d.businessSocket, int(u.UID), int(u.GID)); err == nil {
+		err = os.Chmod(d.businessSocket, 0660)
+	}
+	if err != nil {
+		return err
+	}
+	server := &http.Server{Handler: d.handler(), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }, ConnContext: audit.connectionContext}
+	businessServer := &http.Server{Handler: audit.proxy(layout(u).Socket), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }, ConnContext: audit.connectionContext}
+	defer businessServer.Close()
+	errCh := make(chan error, 2)
 	go func() { errCh <- server.Serve(listener) }()
+	go func() { errCh <- businessServer.Serve(business) }()
 	d.mu.Lock()
 	d.syncWatchers()
 	d.mu.Unlock()
@@ -158,6 +182,7 @@ func runDaemon(o options) (retErr error) {
 	// Close active HTTP requests and streaming logs; serialize against any
 	// current mutation before stopping the host service.
 	_ = server.Close()
+	_ = businessServer.Close()
 	return retErr
 }
 
@@ -170,13 +195,8 @@ func (d *daemon) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc(controlPath, d.control)
 	mux.HandleFunc("/_rootless/logs", d.logs)
-	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "docker"})
-	proxy.Transport = unixTransport(layout(d.user).Socket)
-	proxy.FlushInterval = -1
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		http.Error(w, "rootless dockerd 不可用："+err.Error(), http.StatusBadGateway)
-	}
-	mux.Handle("/", proxy)
+	mux.HandleFunc(containerorigin.Endpoint, d.audit.store.serveHTTP)
+	mux.Handle("/", d.audit.proxy(layout(d.user).Socket))
 	return mux
 }
 func (d *daemon) control(w http.ResponseWriter, r *http.Request) {

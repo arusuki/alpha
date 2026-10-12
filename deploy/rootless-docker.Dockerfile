@@ -5,6 +5,8 @@ ARG GOPROXY=https://proxy.golang.org,direct
 RUN go mod download golang.org/x/sys
 COPY cmd/rootless-docker ./cmd/rootless-docker
 COPY internal/rootless ./internal/rootless
+COPY internal/containerorigin ./internal/containerorigin
+COPY internal/procfs ./internal/procfs
 RUN CGO_ENABLED=0 go build -trimpath -o /out/rootless-docker ./cmd/rootless-docker
 
 # The daemon enters the host namespaces and uses the host's installed Docker,

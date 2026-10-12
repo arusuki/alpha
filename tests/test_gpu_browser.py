@@ -24,7 +24,9 @@ def overview(query):
     for i,name in enumerate(['NVIDIA RTX 4090','NVIDIA RTX 4090','NVIDIA A100 80GB','NVIDIA A100 80GB']):
         process=[] if i==3 else [dict(pid=18920+i,name='python train.py' if i!=2 else '<img src=x onerror=alert(1)>',kind='C',memory_mib=12480,container_id='a'*64,container='research-alice' if i==0 else 'finetune-bob',owner='alice' if i==0 else 'bob',started_at=now-7260)]
         if i==2:process[0].update(container=unowned_name,owner='未归属容器')
-        if i==1:process.append(dict(pid=21900,name='python evaluate.py',kind='C',memory_mib=4320,container_id='b'*64,container='research-alice',owner='alice',started_at=now-425))
+        if i==1:
+            process.append(dict(pid=21900,name='python evaluate.py',kind='C',memory_mib=4320,container_id='b'*64,container='research-alice',owner='alice',started_at=now-425))
+            process.append(dict(pid=21901,name='python train.py',kind='C',memory_mib=1024,container_id='c'*64,container='rootless-training',owner='rootless Docker',started_at=now-300))
         devices.append(dict(uuid=f'GPU-test-{i}',index=i,name=name,utilization=[86,63,98,0][i],memory_used_mib=[18340,14840,61250,128][i],memory_total_mib=24576 if i<2 else 81920,temperature=[62,57,68,34][i],compute_mode='Default',mig=False,processes=process,process_count=len(process),owners=sorted(set(p['owner'] for p in process)),state='unknown' if mode in ('stale','expired') else 'busy' if process else 'idle'))
         if i==2:devices[-1]['owners']=[unowned_label]
         points=[]
@@ -32,11 +34,12 @@ def overview(query):
             if 70<n<80:continue
             users={} if i==3 else {('alice' if n%100<55 else 'bob'):step}
             if 110<n<155 and i==1:users={'alice':step,'bob':step}
+            if i==1:users['rootless Docker']=step
             if i==2:users={unowned_label if n%100<55 else past_unowned_label:step}
             points.append(dict(at=start+n*step,utilization=0 if i==3 else round(max(0,min(100,60+22*math.sin(n/9+i)+12*math.sin(n/3)))),observed_seconds=step,owners=users))
         series.append(dict(uuid=f'GPU-test-{i}',name=name,points=points))
     if mode=='empty':devices=[];series=[]
-    return dict(now=now,sample_seconds=15,current=dict(at=now-100 if mode in ('stale','expired') else now,stale=mode in ('stale','expired'),devices=devices,error='nvidia-smi 暂时不可用' if mode=='stale' else '',warning=''),history=dict(from_=start,to=end,step=step,series=series,users=[] if mode=='empty' else [dict(owner='alice',seconds=41.25*3600),dict(owner='bob',seconds=29.78*3600),dict(owner=unowned_label,seconds=10*3600),dict(owner=past_unowned_label,seconds=5*3600),dict(owner='host:root',seconds=2.41*3600)],since=now-58*3600))
+    return dict(now=now,sample_seconds=15,current=dict(at=now-100 if mode in ('stale','expired') else now,stale=mode in ('stale','expired'),devices=devices,error='nvidia-smi 暂时不可用' if mode=='stale' else '',warning=''),history=dict(from_=start,to=end,step=step,series=series,users=[] if mode=='empty' else [dict(owner='alice',seconds=41.25*3600),dict(owner='bob',seconds=29.78*3600),dict(owner=unowned_label,seconds=10*3600),dict(owner=past_unowned_label,seconds=5*3600),dict(owner='rootless Docker',seconds=3*3600),dict(owner='host:root',seconds=2.41*3600)],since=now-58*3600))
 
 class Handler(NodeHandler):
     def do_GET(self):
@@ -67,7 +70,11 @@ with sync_playwright() as p:
     assert page.locator('.gpu-chart').count()==4
     assert page.locator('#gpuProcessRows tr').count()==1
     page.locator('[data-gpu-select="GPU-test-1"]').click()
-    assert page.locator('#gpuProcessRows tr').count()==2
+    assert page.locator('#gpuProcessRows tr').count()==3
+    assert 'rootless-training' in page.locator('#gpuProcessRows').inner_text()
+    for selector in ('#gpuProcessRows','[data-gpu-select="GPU-test-1"]','#gpuLegend','#gpuRanking'):
+        assert 'rootless Docker' in page.locator(selector).inner_text()
+    assert 'rootless Docker' in page.locator('.gpu-chart').nth(1).locator('.gpu-lanes').inner_text()
     page.locator('[data-gpu-select="GPU-test-2"]').click()
     assert '<img src=x onerror=alert(1)>' in page.locator('#gpuProcessRows').inner_text()
     assert page.locator('#gpuProcessRows img').count()==0

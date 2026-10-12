@@ -3,6 +3,7 @@ package gpu
 
 import (
 	"context"
+	"database/sql"
 	"encoding/xml"
 	"fmt"
 	"math"
@@ -142,6 +143,9 @@ func readProcess(root string, p *Process, boot float64) {
 			p.ContainerID = match[1]
 			p.Container = match[1][:12]
 			p.Owner = "未归属容器"
+			if owner := rootlessProcessOwner(dir, string(cg)); owner != "" {
+				p.Owner = owner
+			}
 			return
 		}
 	}
@@ -201,18 +205,28 @@ func collect(ctx context.Context, db *platform.Database) ([]Device, string, erro
 	}
 	warning := ""
 	if missingNames {
-		raw, e := command(ctx, "docker", "ps", "--no-trunc", "--format", "{{.ID}}\t{{.Names}}")
-		if e != nil {
-			warning = "Docker 名称暂不可读，容器仍按 ID 和已登记归属展示"
-		} else {
-			for _, line := range strings.Split(string(raw), "\n") {
-				f := strings.SplitN(line, "\t", 2)
-				if len(f) == 2 {
-					names[f[0]] = f[1]
-				}
+		socket := "/run/rootless-docker/control.sock"
+		var configured string
+		e := db.SQL.QueryRow("SELECT json_extract(config,'$.control_socket') FROM node_service_settings WHERE name='rootless-docker'").Scan(&configured)
+		if e != nil && e != sql.ErrNoRows {
+			return nil, "", fmt.Errorf("读取 rootless Docker 配置: %w", e)
+		}
+		if configured != "" {
+			socket = configured
+		}
+		warning = readContainerNames(ctx, devices, names, socket, command)
+		if auditWarning := readContainerOrigins(ctx, devices, ownerMap, socket); auditWarning != "" {
+			if warning != "" {
+				warning += "；"
 			}
+			warning += auditWarning
 		}
 	}
+	applyContainerOwners(devices, names, ownerMap)
+	return devices, warning, nil
+}
+
+func applyContainerOwners(devices []Device, names, ownerMap map[string]string) {
 	for i := range devices {
 		for j := range devices[i].Processes {
 			p := &devices[i].Processes[j]
@@ -224,5 +238,4 @@ func collect(ctx context.Context, db *platform.Database) ([]Device, string, erro
 			}
 		}
 	}
-	return devices, warning, nil
 }
