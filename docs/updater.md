@@ -54,7 +54,7 @@ worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器
 | 角色 | 更新文件 | 数据库 |
 | --- | --- | --- |
 | control | `project-alpha`、`alpha-updater` | 总控的 `platform.sqlite3` |
-| worker | `project-alpha`、`rootless-docker`、`alpha-updater` | 节点的 `platform.sqlite3` |
+| worker | `project-alpha`、`rootless-docker`、`alpha-chat`、`alpha-updater` | 节点的 `platform.sqlite3` |
 | registry | `project-alpha`、`alpha-updater` | 注册节点的 `platform.sqlite3` |
 | share-node | `project-alpha-jump`、`alpha-updater` | 无 |
 

@@ -125,6 +125,7 @@ func futureArchiveVersion(t *testing.T, target []byte, tag string) []byte {
 	return makeArchive(t, map[string][]byte{
 		prefix + "/bin/alpha-updater":            target,
 		prefix + "/bin/project-alpha":            main,
+		prefix + "/bin/alpha-chat":               script("alpha-chat", tag),
 		prefix + "/bin/rootless-docker":          script("rootless-docker", "v0.6.0"),
 		prefix + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
 		prefix + "/bin/future-helper":            []byte("new release payload"),

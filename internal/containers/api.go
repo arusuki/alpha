@@ -21,6 +21,7 @@ type Handler struct {
 	serviceRun        command
 	mountControl      func(context.Context, ServiceConfig, []string) (string, error)
 	mu                sync.Mutex
+	chatBinary        func() ([]byte, error)
 	permissionCommand func(context.Context, string, ...string) *exec.Cmd
 	// Owner integrates the platform's shared ownership overlay in the same transaction.
 	Owner      func(*sql.Tx, string, string) error
@@ -67,6 +68,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	}
 	if strings.HasPrefix(path, "/api/containers/members/") {
 		id := strings.TrimPrefix(path, "/api/containers/members/")
+		if memberID, ok := strings.CutSuffix(id, "/cli"); ok {
+			return h.configureMemberCLI(w, r.WithContext(ctx), user, memberID)
+		}
 		if memberID, ok := strings.CutSuffix(id, "/password"); ok {
 			return h.resetMemberPassword(w, r.WithContext(ctx), user, memberID)
 		}

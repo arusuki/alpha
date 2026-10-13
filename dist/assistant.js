@@ -40,7 +40,7 @@ async function checkHealth(){
  finally{if(generation===epoch&&sequence===healthSequence)el('assistantHealthRefresh').disabled=false;}
 }
 async function open(){const generation=epoch;await Promise.all([checkHealth(),refresh().catch(e=>{if(generation===epoch)status(e.message);})]);}
-function reset(){window.AssistantSettings?.reset();epoch++;selection++;healthSequence++;el('assistantHealth').textContent='Agno 状态待检查';delete el('assistantHealth').dataset.state;el('assistantHealthRefresh').disabled=false;pending?.abort();pending=null;session='';messages=[];el('assistantPrompt').value='';el('assistantSessions').replaceChildren(new Option('选择会话',''));el('assistantMemories').replaceChildren();busy(false);status('');render();}
+function reset(){window.AssistantCLI?.reset();window.AssistantSettings?.reset();epoch++;selection++;healthSequence++;el('assistantHealth').textContent='Agno 状态待检查';delete el('assistantHealth').dataset.state;el('assistantHealthRefresh').disabled=false;pending?.abort();pending=null;session='';messages=[];el('assistantPrompt').value='';el('assistantSessions').replaceChildren(new Option('选择会话',''));el('assistantMemories').replaceChildren();busy(false);status('');render();}
 el('assistantNew').addEventListener('click',()=>{selection++;session='';messages=[];el('assistantSessions').value='';status('');render();});
 el('assistantSessions').addEventListener('change',async()=>{
  const id=el('assistantSessions').value;if(!id)return;
@@ -129,4 +129,35 @@ window.AssistantUI={open,reset,healthText};
   finally{if(gen===generation&&seq===sequence)el('assistantSettingsFields').disabled=false;}
  });
  window.AssistantSettings={reset(){generation++;sequence++;current=null;loaded=false;el('assistantSettingsPanel').open=false;el('assistantSettingsFields').disabled=true;el('assistantInstructions').value='';el('assistantBuiltinTools').replaceChildren();el('assistantMCPServers').replaceChildren();status('');}};
+})();
+
+
+(()=>{
+ 'use strict';
+ const el=id=>document.getElementById(id);
+ let revision=0,generation=0,sequence=0,loaded=false;
+ const status=text=>{el('assistantCLIStatus').textContent=text;};
+ function render(data){
+  revision=data.settings.revision;el('assistantCLIServer').value=data.settings.server;el('assistantCLIPath').value=data.settings.command_path;
+  const list=el('assistantCLIDeliveries');list.replaceChildren();
+  for(const row of data.deliveries||[]){const li=document.createElement('li');li.textContent=`${row.username} · ${row.node_name}：${({pending:'等待下发',ready:'已同步',failed:'下发失败'})[row.state]||row.state}${row.error?' — '+row.error:''}`;list.append(li);}
+ }
+ async function load(){
+  const gen=generation,seq=++sequence;el('assistantCLIFields').disabled=true;status('正在读取…');
+  try{const data=await api('/api/assistant/cli');if(gen!==generation||seq!==sequence)return;render(data);loaded=true;status('');}
+  catch(e){if(gen===generation&&seq===sequence)status(e.message);}
+  finally{if(gen===generation&&seq===sequence)el('assistantCLIFields').disabled=!revision;}
+ }
+ async function submit(sync){
+  const gen=generation,seq=++sequence;el('assistantCLIFields').disabled=true;status('正在提交…');
+  const body=sync?{}:{revision,server:el('assistantCLIServer').value.trim().replace(/\/$/,''),command_path:el('assistantCLIPath').value.trim()};
+  try{const data=await api('/api/assistant/cli'+(sync?'/sync':''),{method:sync?'POST':'PUT',body:JSON.stringify(body)});if(gen!==generation||seq!==sequence)return;revision=data.settings.revision;status('已加入下发队列，可刷新查看逐节点结果。');}
+  catch(e){if(gen===generation&&seq===sequence)status(e.message);}
+  finally{if(gen===generation&&seq===sequence)el('assistantCLIFields').disabled=false;}
+ }
+ el('assistantCLIPanel').addEventListener('toggle',()=>{if(el('assistantCLIPanel').open&&!loaded)load();});
+ el('assistantCLIForm').addEventListener('submit',e=>{e.preventDefault();submit(false);});
+ el('assistantCLISync').addEventListener('click',()=>submit(true));
+ el('assistantCLIReload').addEventListener('click',load);
+ window.AssistantCLI={reset(){generation++;sequence++;revision=0;loaded=false;el('assistantCLIPanel').open=false;el('assistantCLIFields').disabled=true;el('assistantCLIServer').value='';el('assistantCLIPath').value='/usr/local/bin/alpha-chat';el('assistantCLIDeliveries').replaceChildren();status('');}};
 })();

@@ -10,7 +10,7 @@ server {
     client_header_timeout 15s;
 
     # A complete Agno turn can include several model and node requests.
-    location /api/assistant/ {
+    location ~ ^/api/(assistant|member-assistant)/ {
         proxy_pass http://127.0.0.1:8765;
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-Proto $scheme;

@@ -116,6 +116,7 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	archive := makeArchive(t, map[string][]byte{
 		packageName + "/bin/project-alpha":            script("project-alpha", "v0.6.0"),
 		packageName + "/bin/alpha-updater":            target,
+		packageName + "/bin/alpha-chat":               script("alpha-chat", "v0.6.0"),
 		packageName + "/bin/rootless-docker":          script("rootless-docker", "v0.6.0"),
 		packageName + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
 		packageName + "/deploy/updater-services.json": manifest,
@@ -190,7 +191,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 				}
 			}
 			for _, f := range binaries(role) {
-				if f.source != "alpha-updater" {
+				if f.source != "alpha-updater" && f.source != "alpha-chat" {
 					writeFile(t, filepath.Join(dir, f.destination), script(f.source, "v0.5.4"))
 				}
 			}
@@ -234,6 +235,11 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 			got, err := executableVersion(context.Background(), filepath.Join(dir, binaries(role)[0].destination), "project-alpha")
 			if err != nil || got != "v0.6.0" {
 				t.Fatal(got, err)
+			}
+			if role == "worker" {
+				if got, err := executableVersion(context.Background(), filepath.Join(dir, "alpha-chat"), "alpha-chat"); err != nil || got != "v0.6.0" {
+					t.Fatal("worker update did not add CLI", got, err)
+				}
 			}
 			if _, err := os.Stat(filepath.Join(dir, ".alpha-update-pending")); !os.IsNotExist(err) {
 				t.Fatal("journal retained", err)

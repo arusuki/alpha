@@ -24,6 +24,12 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 							t.Fatal(err)
 						}
+						dropChatCLISchema(t, db, role)
+						if role == "control" {
+							if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
+								t.Fatal(err)
+							}
+						}
 						if role == "worker" {
 							if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 								t.Fatal(err)
@@ -91,7 +97,8 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "control", db); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := db.SQL.Exec(`DROP TABLE assistant_settings; PRAGMA user_version=43; INSERT INTO assistant_memories VALUES('user','[{"memory":"preserved"}]',2); CREATE TRIGGER fail_settings BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'failure'); END`); err != nil {
+			dropChatCLISchema(t, db, "control")
+			if _, err := db.SQL.Exec(`DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories; DROP TABLE assistant_settings; PRAGMA user_version=43; INSERT INTO assistant_memories VALUES('user','[{"memory":"preserved"}]',2); CREATE TRIGGER fail_settings BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'failure'); END`); err != nil {
 				t.Fatal(err)
 			}
 			if err := runScheduledMigration(t, binary, entry, "control", db); err == nil {

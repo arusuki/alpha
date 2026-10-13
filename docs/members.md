@@ -80,7 +80,7 @@ curl -X POST http://127.0.0.1:8765/api/members/register \
 
 `username` 必须以小写字母开头，为 3–32 位小写字母、数字、下划线或短横线，不能是 `data`。`schema_revision` 使用刚读取的版本，`profile` 必须是对象，没有附加字段时传 `{}`。
 
-`password` 必填，长度为 12–256 字节，不得包含换行、冒号或 NUL；不去掉首尾空格。此密码用于 `/status` 登录及新容器的初始 root 密码。总控保存 PBKDF2-SHA256 摘要和用于异步创建的 AES-GCM 密文，密钥为数据目录的 `member-password.key`（0600），备份时必须一并保存；缺失时恢复原密钥或使用新数据目录。registry 的待提交注册使用 `registry-registration.key` 加密，注册完成后移除该提交内容。
+`password` 必填，长度为 12–256 字节，不得包含换行、冒号或 NUL；不去掉首尾空格。此密码用于 `/status` 和独立 `alpha-chat` CLI 登录，以及新容器的初始 root 密码。CLI 与工具鉴权见[运维助理](assistant.md#使用者-cli)。总控保存 PBKDF2-SHA256 摘要和用于异步创建的 AES-GCM 密文，密钥为数据目录的 `member-password.key`（0600），备份时必须一并保存；缺失时恢复原密钥或使用新数据目录。registry 的待提交注册使用 `registry-registration.key` 加密，注册完成后移除该提交内容。
 
 `ssh_public_key` 必填，接受一行一个的 Ed25519、RSA（至少 2048 位）或 ECDSA 公钥，至少一个、最多 64 个，总长度不超过 32768 字节。忽略空行和重复公钥，按规范化内容存储；无效行返回行号。不接受 authorized_keys 选项、私钥或证书。公钥经 `alpha-worker` 发布到分配 share node 的 `alpha-jump` 专用授权清单，并写入各 node 容器。share node 需先运行 `share-node` 完成两个账号、sshd 和 HTTP 代理的一次 sudo 初始化，后续公钥管理免 sudo。
 

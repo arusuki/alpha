@@ -97,6 +97,14 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
+				if tc.version >= 39 && tc.version < 47 {
+					schema := map[string]string{"control": "DROP TABLE member_cli_sync; DROP TABLE chat_cli_settings", "worker": "DROP TABLE container_cli_installs; DROP TABLE member_cli_configs"}[tc.role]
+					if schema != "" {
+						if _, err = db.SQL.Exec(schema); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
 				if tc.role == "worker" && tc.version >= 39 && tc.version < 45 {
 					if _, err = db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 						t.Fatal(err)
@@ -109,6 +117,11 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
+				if tc.role == "control" && tc.version >= 39 && tc.version < 46 {
+					if _, err = db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if tc.role == "control" && tc.version >= 39 && tc.version < 44 {
 					if _, err = db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
 						t.Fatal(err)

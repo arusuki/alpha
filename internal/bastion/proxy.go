@@ -38,6 +38,8 @@ func newShareProxy(c installation) (http.Handler, func(), error) {
 		return nil, nil, fmt.Errorf("总控代理目标不能指向分享节点自身的入口")
 	}
 	transport := &http.Transport{DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 60 * time.Second, IdleConnTimeout: 60 * time.Second, MaxIdleConns: 128, MaxIdleConnsPerHost: 32}
+	assistantTransport := transport.Clone()
+	assistantTransport.ResponseHeaderTimeout = 16 * time.Minute
 	proxy := &httputil.ReverseProxy{
 		Rewrite:       func(r *httputil.ProxyRequest) { r.SetURL(target); r.Out.Host = r.In.Host },
 		Transport:     transport,
@@ -47,6 +49,8 @@ func newShareProxy(c installation) (http.Handler, func(), error) {
 			http.Error(w, "无法连接总控，请检查总控内网 Web 地址", http.StatusBadGateway)
 		},
 	}
+	assistantProxy := *proxy
+	assistantProxy.Transport = assistantTransport
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Preserve the public Host and Origin together so control's existing Host,
 		// Origin, CSRF and bearer-token checks also protect the proxy entrance.
@@ -59,9 +63,13 @@ func newShareProxy(c installation) (http.Handler, func(), error) {
 			http.Error(w, "分享入口仅开放使用者 status 面板，请打开 /status/你的使用者标识", http.StatusForbidden)
 			return
 		}
-		proxy.ServeHTTP(w, r)
+		if httpapi.MemberAssistantAllowed(r) {
+			assistantProxy.ServeHTTP(w, r)
+		} else {
+			proxy.ServeHTTP(w, r)
+		}
 	})
-	return handler, transport.CloseIdleConnections, nil
+	return handler, func() { transport.CloseIdleConnections(); assistantTransport.CloseIdleConnections() }, nil
 }
 func serveShareProxy(ctx context.Context, s keyStore) error {
 	r, c, err := s.open()

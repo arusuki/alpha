@@ -12,6 +12,12 @@ import (
 // Tools select fixed, read-only worker APIs. Neither URLs, methods, paths nor
 // credentials are accepted from the model. Node credentials stay in Go.
 func (h *Control) assistantTool(ctx context.Context, user platform.User, call assistant.ToolCall) (any, error) {
+	if user.Role == "member" {
+		return h.memberAssistantTool(ctx, user, call)
+	}
+	if user.Role != "admin" {
+		return nil, httpapi.NewError(403, "此操作需要管理员权限")
+	}
 	if call.Name == "list_nodes" && call.NodeID == "" {
 		nodes, err := h.nodes("")
 		return map[string]any{"nodes": nodes, "checked_at": platform.Now()}, err

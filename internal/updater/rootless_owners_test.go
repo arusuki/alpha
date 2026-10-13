@@ -22,6 +22,12 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 							t.Fatal(err)
 						}
+						dropChatCLISchema(t, db, role)
+						if role == "control" {
+							if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
+								t.Fatal(err)
+							}
+						}
 						if role == "worker" {
 							if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 								t.Fatal(err)
@@ -97,6 +103,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err != nil {
 				t.Fatal(err)
 			}
+			dropChatCLISchema(t, db, "worker")
 			if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners; PRAGMA user_version=44; CREATE TRIGGER fail_rootless BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'failure'); END"); err != nil {
 				t.Fatal(err)
 			}

@@ -103,15 +103,24 @@ func (s *Store) LoginStatus(username, password string) (string, error) {
 }
 
 func (s *Store) SessionID(token string) (string, error) {
+	u, err := SessionUser(s.SQL, token)
+	return u.ID, err
+}
+
+// SessionUser revalidates the bearer credential, including inside a commit
+// transaction. Tokens never enter model input or worker credentials.
+func SessionUser(q interface{ QueryRow(string, ...any) *sql.Row }, token string) (platform.User, error) {
+	var u platform.User
 	if len(token) != 64 {
-		return "", httpapi.NewError(401, "请使用注册时设置的密码登录")
+		return u, httpapi.NewError(401, "请使用注册时设置的密码登录")
 	}
-	var id string
-	err := s.SQL.QueryRow("SELECT m.id FROM member_sessions s JOIN members m ON m.id=s.member_id WHERE s.token_hash=? AND s.expires_at>? AND m.status='active'", hashCode(token), platform.Now()).Scan(&id)
+	err := q.QueryRow("SELECT m.id,m.username FROM member_sessions s JOIN members m ON m.id=s.member_id WHERE s.token_hash=? AND s.expires_at>? AND m.status='active'", hashCode(token), platform.Now()).Scan(&u.ID, &u.Username)
 	if err == sql.ErrNoRows {
-		return "", httpapi.NewError(401, "登录已失效，请重新输入密码")
+		return u, httpapi.NewError(401, "登录已失效，请重新输入密码")
 	}
-	return id, err
+	u.Username = "member:" + u.Username
+	u.Role = "member"
+	return u, err
 }
 
 func (s *Store) Logout(token string) error {

@@ -94,6 +94,10 @@ func decodeSettings(raw []byte, value any) error {
 	return decoder.Decode(value)
 }
 func (h *Handler) settings() (Settings, map[string]string, int64, error) {
+	return h.loadSettings(true)
+}
+
+func (h *Handler) loadSettings(secrets bool) (Settings, map[string]string, int64, error) {
 	var c Settings
 	var raw, cipher string
 	var revision int64
@@ -108,7 +112,7 @@ func (h *Handler) settings() (Settings, map[string]string, int64, error) {
 	if err != nil {
 		return c, nil, 0, fmt.Errorf("invalid assistant settings; use a new data directory: %w", err)
 	}
-	if cipher != "" {
+	if secrets && cipher != "" {
 		plain, e := credentials.Decrypt(h.db.Directory, settingsKeyFile, settingsKeyAAD, cipher)
 		if e != nil {
 			return c, nil, 0, e

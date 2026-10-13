@@ -185,12 +185,15 @@ func (h *Handler) ReconcileServices(ctx context.Context) error {
 		return errors.New("容器或服务管理正在执行其他操作，请稍后重试应用挂载")
 	}
 	defer h.mu.Unlock()
-	return h.reconcileRunningService(ctx, "")
+	return errors.Join(h.reconcileRunningService(ctx, ""), h.reconcileCLI(ctx, ""))
 }
 
 // A completed container operation must retain its result, especially generated
 // credentials, when the separate socket attachment fails.
 func (h *Handler) containerServiceResult(ctx context.Context, id string, result map[string]any) map[string]any {
+	if err := h.reconcileCLI(ctx, id); err != nil {
+		result["cli_error"] = err.Error()
+	}
 	if err := h.reconcileRunningService(ctx, id); err != nil {
 		result["warning"] = "服务挂载尚未完成，请在节点服务中重试应用：" + err.Error()
 	}

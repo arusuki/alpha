@@ -117,6 +117,7 @@ cd project-alpha_v0.8.0_linux_amd64
 | 扫描记录、目录探索与增量更新 | [记录读取与探索](records.md) |
 | 运维助理与长期记忆 | [Agno 运维助理](assistant.md) |
 | Agent 报告与诊断清理 | [Agent API](agent.md) |
+| 使用者对话 CLI 与鉴权 | [运维助理](assistant.md#使用者-cli) |
 | 公网注册、数据备份与服务部署 | [运行与配置](operations.md) |
 | rootless Docker daemon/client | [rootless Docker](rootless-docker.md) |
 | 节点服务容器（Tetragon + DRAM + rootless Docker） | [services.yaml](../deploy/services.yaml)、[部署与监控](../ctools/dram-bw/README.md#compose-daemonprivileged) |

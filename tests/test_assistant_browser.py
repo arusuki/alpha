@@ -9,6 +9,8 @@ failure = False
 health_status = "ready"
 settings=dict(revision=1,value=dict(instructions="先按节点巡检",builtin_tools=["list_nodes"],mcp_servers=[]),has_tokens={},available_tools=["list_nodes","get_node_gpu"])
 settings_writes=[]
+cli_settings=dict(revision=1,server="",command_path="/usr/local/bin/alpha-chat")
+cli_syncs=[]
 
 
 class Handler(BrowserHandler):
@@ -17,6 +19,8 @@ class Handler(BrowserHandler):
             return self.respond(dict(user=dict(id='a'*32, username='admin', role='admin'), csrf='test', setup_required=False))
         if self.path == '/api/cluster/overview':
             return self.respond(dict(nodes=[], members=[], online=0, container_count=0, checked_at=1, partial=False))
+        if self.path == '/api/assistant/cli':
+            return self.respond(dict(settings=cli_settings,deliveries=[dict(username='alice',node_name='worker',state='failed',error='<img src=x onerror=alert(1)>')]))
         if self.path == '/api/assistant/settings':
             return self.respond(settings)
         if self.path == '/api/assistant/health':
@@ -32,6 +36,10 @@ class Handler(BrowserHandler):
     def do_POST(self):
         assert self.headers['X-CSRF-Token'] == 'test'
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if self.path == '/api/assistant/cli/sync':
+            assert body == {}
+            cli_syncs.append(True)
+            return self.respond(dict(settings=cli_settings),202)
         assert list(body) == ['message']
         writes.append((self.path, body))
         if failure:
@@ -43,6 +51,13 @@ class Handler(BrowserHandler):
         return self.respond(dict(id=session_id, messages=messages, tools=[]))
 
     def do_PUT(self):
+        if self.path == '/api/assistant/cli':
+            assert self.headers['X-CSRF-Token'] == 'test'
+            body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if body['revision'] != cli_settings['revision']:
+                return self.respond(dict(error='CLI 配置已变化，请重新载入'),409)
+            cli_settings.update(body,revision=body['revision']+1)
+            return self.respond(dict(settings=cli_settings),202)
         assert self.path == '/api/assistant/settings'
         assert self.headers['X-CSRF-Token'] == 'test'
         body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
@@ -76,6 +91,23 @@ try:
         health_status = 'ready'
         page.locator('#assistantHealthRefresh').click()
         expect(page.locator('#assistantHealth')).to_contain_text('Agno 服务就绪')
+        page.locator('#assistantCLIPanel summary').click()
+        expect(page.locator('#assistantCLIPath')).to_have_value('/usr/local/bin/alpha-chat')
+        expect(page.locator('#assistantCLIDeliveries')).to_contain_text('下发失败')
+        assert page.locator('#assistantCLIDeliveries img').count() == 0
+        page.locator('#assistantCLIPath').fill('/usr/local/bin/ask')
+        page.locator('#assistantCLIForm button[type="submit"]').click()
+        expect(page.locator('#assistantCLIStatus')).to_contain_text('已加入下发队列')
+        assert cli_settings['command_path'] == '/usr/local/bin/ask'
+        cli_settings['revision'] += 1
+        page.locator('#assistantCLIForm button[type="submit"]').click()
+        expect(page.locator('#assistantCLIStatus')).to_contain_text('请重新载入')
+        page.locator('#assistantCLIReload').click()
+        expect(page.locator('#assistantCLIStatus')).to_have_text('')
+        page.locator('#assistantCLISync').click()
+        expect(page.locator('#assistantCLIStatus')).to_contain_text('已加入下发队列')
+        assert cli_syncs == [True]
+        page.locator('#assistantCLIPanel summary').click()
         page.locator('#assistantSettingsPanel summary').click()
         expect(page.locator('#assistantInstructions')).to_have_value('先按节点巡检')
         page.locator('#assistantInstructions').fill('优先检查 GPU，标注数据时间')

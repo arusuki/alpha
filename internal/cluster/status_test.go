@@ -184,6 +184,7 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	})
 	w, s := worker(t, strings.Repeat("3", 32), Inventory{}, module)
 	add(t, f, w, s, "New node")
+	awaitIdle(t, f, id)
 	path := "/api/status/alice/containers"
 	body := map[string]string{"node_id": w.ID, "mode": "create"}
 	response := selfCall(f, "POST", path, token, body)
@@ -218,6 +219,7 @@ func TestStatusApplicationReturnsPersistedResult(t *testing.T) {
 	}
 	offline, server := worker(t, strings.Repeat("4", 32), Inventory{}, module)
 	add(t, f, offline, server, "Offline new node")
+	awaitIdle(t, f, id)
 	server.Close()
 	requireStatus(t, selfCall(f, "POST", path, token, map[string]string{"node_id": offline.ID, "mode": "create"}), 502)
 	var count int
@@ -304,6 +306,7 @@ func TestStatusPasswordChangeAndSessionBoundary(t *testing.T) {
 		return 200, map[string]any{"id": strings.Repeat("e", 64), "name": "alpha-" + id, "port": 2222}, nil
 	}))
 	add(t, f, workerNode, workerServer, "After password change")
+	awaitIdle(t, f, id)
 	requireStatus(t, selfCall(f, "POST", path+"/containers", token, map[string]string{"node_id": workerNode.ID, "mode": "create"}), 200)
 	awaitIdle(t, f, id)
 	requireStatus(t, selfCall(f, "POST", path+"/logout", token, nil), 200)

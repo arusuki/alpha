@@ -44,6 +44,8 @@ func TestStatusMultipleKeysSaveIsolationFailureAndRetry(t *testing.T) {
 		return 200, map[string]bool{"ok": true}, nil
 	}))
 	add(t, f, w, s, "Keys worker")
+	awaitIdle(t, f, id)
+	awaitIdle(t, f, bob)
 	path := "/api/status/alice/keys"
 	for _, tok := range []string{"", resourceToken, bobToken} {
 		want := 401

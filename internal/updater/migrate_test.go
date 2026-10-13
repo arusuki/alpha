@@ -101,6 +101,7 @@ func migrationArchive(t *testing.T, target []byte) []byte {
 	return makeArchive(t, map[string][]byte{
 		prefix + "/bin/project-alpha":            script("project-alpha", "v0.6.0"),
 		prefix + "/bin/alpha-updater":            target,
+		prefix + "/bin/alpha-chat":               script("alpha-chat", "v0.6.0"),
 		prefix + "/bin/rootless-docker":          []byte("rootless binary"),
 		prefix + "/bin/dram-bwd":                 []byte("dram binary"),
 		prefix + "/deploy/updater-services.json": manifest,

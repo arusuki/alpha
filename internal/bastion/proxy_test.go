@@ -113,3 +113,42 @@ func TestShareProxyBlocksManagementBeforeUpstream(t *testing.T) {
 		}
 	}
 }
+
+func TestShareProxyMemberAssistantAllowlist(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer member-token" {
+			t.Error("token lost")
+		}
+		w.WriteHeader(204)
+	}))
+	defer upstream.Close()
+	handler, closeTransport, err := newShareProxy(installation{ListenHost: "100.64.0.2", StatusPort: 9765, ControlURL: upstream.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeTransport()
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{"GET", "/api/member-assistant/me", 204},
+		{"GET", "/api/member-assistant/sessions", 204},
+		{"POST", "/api/member-assistant/sessions", 204},
+		{"POST", "/api/member-assistant/sessions/" + strings.Repeat("a", 32) + "/messages", 204},
+		{"DELETE", "/api/member-assistant/memories", 204},
+		{"POST", "/api/member-assistant/logout", 204},
+		{"GET", "/api/member-assistant/settings", 403},
+		{"PUT", "/api/member-assistant/settings", 403},
+		{"GET", "/api/assistant/sessions", 403},
+		{"DELETE", "/api/member-assistant/sessions", 403},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		r.Host = "100.64.0.2:9765"
+		r.Header.Set("Authorization", "Bearer member-token")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		if w.Code != tc.status {
+			t.Fatal(tc.method, tc.path, w.Code)
+		}
+	}
+}

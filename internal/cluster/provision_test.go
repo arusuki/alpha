@@ -68,7 +68,7 @@ func awaitIdle(t *testing.T, f *fixture, id string) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		var pending int
-		e := f.db.SQL.QueryRow("SELECT pending FROM member_work WHERE member_id=?", id).Scan(&pending)
+		e := f.db.SQL.QueryRow("SELECT pending+(SELECT count(*) FROM member_cli_sync WHERE member_id=member_work.member_id AND state='pending') FROM member_work WHERE member_id=?", id).Scan(&pending)
 		if e == nil && pending == 0 {
 			return
 		}
@@ -232,6 +232,7 @@ func TestMemberDeletionIncludesWorkersWithoutProvisioningSlots(t *testing.T) {
 	})
 	node, server := worker(t, strings.Repeat("9", 32), Inventory{}, module)
 	add(t, f, node, server, "new worker")
+	awaitIdle(t, f, id)
 	requireStatus(t, f.request(t, "DELETE", "/api/members/"+id, map[string]string{}), 200)
 	if !deleted {
 		t.Fatal("worker with manually assigned containers was skipped")

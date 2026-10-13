@@ -50,7 +50,7 @@ func binaries(role string) []binary {
 		result[0].destination = "project-alpha-jump"
 	}
 	if role == "worker" {
-		result = append(result, binary{"rootless-docker", "rootless-docker"})
+		result = append(result, binary{"rootless-docker", "rootless-docker"}, binary{"alpha-chat", "alpha-chat"})
 	}
 	return append(result, binary{"alpha-updater", "alpha-updater"})
 }
@@ -384,7 +384,11 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			}
 		}
 	}
-	for _, name := range []string{"project-alpha", "alpha-updater"} {
+	versioned := []string{"project-alpha", "alpha-updater"}
+	if o.role == "worker" {
+		versioned = append(versioned, "alpha-chat")
+	}
+	for _, name := range versioned {
 		v, e := executableVersion(ctx, filepath.Join(stage, name), name)
 		if e != nil {
 			return e

@@ -105,6 +105,18 @@
           </fieldset>
         </form><p id="assistantSettingsStatus" role="status" aria-live="polite"></p>
       </details>
+      <details id="assistantCLIPanel" class="assistant-settings">
+        <summary>使用者 CLI · 自动下发</summary>
+        <p>自动将对话命令和连接配置安装到使用者容器。首次运行输入使用者密码即可登录。</p>
+        <form id="assistantCLIForm"><fieldset id="assistantCLIFields" disabled>
+          <label>容器可访问的总控地址<input id="assistantCLIServer" type="text" placeholder="留空则自动使用各使用者的分享入口"></label>
+          <label>命令安装路径<input id="assistantCLIPath" type="text" value="/usr/local/bin/alpha-chat" required></label>
+          <p>路径最后一段就是命令名称。默认可直接输入 alpha-chat；自定义目录需位于容器的 PATH 中，或使用完整路径调用。</p>
+          <div class="assistant-toolbar"><button class="primary" type="submit">保存并下发</button><button id="assistantCLISync" type="button">重新下发</button></div>
+        </fieldset></form>
+        <button id="assistantCLIReload" type="button">刷新下发状态</button>
+        <p id="assistantCLIStatus" role="status"></p><ul id="assistantCLIDeliveries"></ul>
+      </details>
       <div class="assistant-layout"><div>
         <div id="assistantMessages" class="assistant-messages" role="log" aria-label="运维对话" aria-live="polite"><p>可以问：“帮我检查各节点的运行状态”，或告诉我需要记住的运维偏好。</p></div>
         <p id="assistantStatus" role="status" aria-live="polite"></p>

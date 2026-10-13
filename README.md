@@ -123,6 +123,7 @@ The detailed guides are currently available in Chinese.
 | Scan results, directory exploration, and incremental updates | [Records and exploration](docs/records.md) |
 | Operations assistant | [Agno assistant](docs/assistant.md) |
 | Agent reports and cleanup | [Agent API](docs/agent.md) |
+| Member conversation CLI | [Operations assistant](docs/assistant.md#使用者-cli) |
 | Public registration, backups, and deployment | [Running and configuration](docs/operations.md) |
 | Rootless Docker daemon/client | [Rootless Docker](docs/rootless-docker.md) |
 | Node service controls and user socket mounts | [Node services](docs/node-services.md) |

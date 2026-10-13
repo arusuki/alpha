@@ -186,6 +186,9 @@ func (h *Control) probe(ctx context.Context, n Node) (Info, error) {
 	return info, err
 }
 func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, any, error) {
+	if status, v, e := h.memberAssistant(w, r); status != 0 || e != nil {
+		return status, v, e
+	}
 	if status, v, e := h.statusPublic(w, r); status != 0 || e != nil {
 		return status, v, e
 	}
@@ -196,6 +199,9 @@ func (h *Control) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 }
 
 func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform.User) (int, any, error) {
+	if r.URL.Path == "/api/assistant/cli" || r.URL.Path == "/api/assistant/cli/sync" {
+		return h.dispatchChatCLI(w, r, user)
+	}
 	if strings.HasPrefix(r.URL.Path, "/api/assistant/") {
 		return h.Assistant.Dispatch(w, r, user)
 	}
@@ -212,7 +218,11 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		return agent.NewHandler(agent.NewStore(h.DB), nil).Dispatch(w, r, user)
 	}
 	if bastion.IsRoute(r.URL.Path) {
-		return h.Bastion.Dispatch(w, r, user)
+		status, value, err := h.Bastion.Dispatch(w, r, user)
+		if err == nil && status >= 200 && status < 300 && r.Method != "GET" {
+			err = h.queueChatCLI("", "")
+		}
+		return status, value, err
 	}
 	if id, action, ok := memberAdminRoute(r.URL.Path); ok {
 		if user.Role != "admin" {
@@ -407,6 +417,9 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 	n, err = h.node(n.ID)
 	if err == nil && n.Kind == "worker" {
 		_ = h.syncGitHubToken(r.Context(), n)
+		if e := h.queueChatCLI("", n.ID); e != nil {
+			return 0, nil, e
+		}
 	}
 	if err == nil && n.Kind == "registry" && (id == "" || n.URL != previous.URL || n.Token != previous.Token) {
 		h.startRegistry(n)
@@ -496,6 +509,11 @@ func (h *Control) proxy(w http.ResponseWriter, r *http.Request, n Node, path str
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del("Set-Cookie")
+			if resp.StatusCode >= 200 && resp.StatusCode < 300 && ((r.Method == "POST" && (path == "/api/containers" || strings.HasPrefix(path, "/api/containers/") && !strings.HasPrefix(path, "/api/containers/services/"))) || (r.Method == "PUT" && path == "/api/owners")) {
+				if err := h.queueChatCLI("", n.ID); err != nil {
+					return err
+				}
+			}
 			if resp.StatusCode == http.StatusUnauthorized {
 				return fmt.Errorf("worker authentication rejected")
 			}

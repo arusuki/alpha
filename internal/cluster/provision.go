@@ -61,8 +61,10 @@ func (h *Control) initProvision() error {
 				return err
 			}
 		}
-		_, err = tx.Exec("INSERT INTO member_work VALUES(?,1)", m.ID)
-		return err
+		if _, err = tx.Exec("INSERT INTO member_work VALUES(?,1)", m.ID); err != nil {
+			return err
+		}
+		return queueChatCLI(tx, m.ID, "")
 	}
 	h.provisionWake = make(chan struct{}, 1)
 	h.Members.Registered = func(m members.Member) { h.wakeProvision() }
@@ -73,6 +75,9 @@ func (h *Control) initProvision() error {
 		return err
 	}
 	if _, err := h.DB.SQL.Exec("UPDATE member_node_resources SET state='pending' WHERE state='running'"); err != nil {
+		return err
+	}
+	if err := h.DB.Transaction(func(tx *sql.Tx) error { return queueChatCLI(tx, "", "") }); err != nil {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,7 +100,7 @@ func (h *Control) provisionLoop(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		rows, err := platform.Rows(h.DB.SQL, "SELECT member_id FROM member_work WHERE pending=1 ORDER BY member_id")
+		rows, err := platform.Rows(h.DB.SQL, "SELECT member_id FROM member_work WHERE pending=1 UNION SELECT s.member_id FROM member_cli_sync s JOIN members m ON m.id=s.member_id WHERE s.state='pending' AND m.status='active' ORDER BY member_id")
 		if err != nil {
 			log.Printf("member queue: %v", err)
 		}
@@ -108,15 +113,25 @@ func (h *Control) provisionLoop(ctx context.Context) {
 			// durable idempotent steps; ambiguous invites remain unknown.
 			gate := h.memberGate(id)
 			gate.Lock()
-			err = h.provisionMember(ctx, id)
-			if err != nil {
-				log.Printf("member resource %s: %v", id, err)
-			}
-			if ctx.Err() == nil {
-				if _, e := h.DB.SQL.Exec("UPDATE member_work SET pending=0 WHERE member_id=?", id); e != nil {
-					log.Printf("member queue: %v", e)
+
+			var pending int
+			if e := h.DB.SQL.QueryRow("SELECT pending FROM member_work WHERE member_id=?", id).Scan(&pending); e == nil && pending == 1 {
+				if e := h.provisionMember(ctx, id); e != nil {
+					log.Printf("member resource %s: %v", id, e)
+				}
+				if ctx.Err() == nil {
+					if _, e := h.DB.SQL.Exec("UPDATE member_work SET pending=0 WHERE member_id=?", id); e != nil {
+						log.Printf("member queue: %v", e)
+					}
 				}
 			}
+			var username string
+			if e := h.DB.SQL.QueryRow("SELECT username FROM members WHERE id=? AND status='active'", id).Scan(&username); e == nil {
+				if e := h.syncMemberCLI(ctx, id, username); e != nil {
+					log.Printf("member CLI %s: %v", id, e)
+				}
+			}
+
 			gate.Unlock()
 		}
 		select {
@@ -395,6 +410,11 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 		}
 		if _, e := tx.Exec("UPDATE member_work SET pending=1 WHERE member_id=?", id); e != nil {
 			return e
+		}
+		if !remove {
+			if err := queueChatCLI(tx, id, req.NodeID); err != nil {
+				return err
+			}
 		}
 		event := "member.resources.retry"
 		if remove {

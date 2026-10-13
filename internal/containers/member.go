@@ -133,6 +133,9 @@ func (h *Handler) memberOperation(w http.ResponseWriter, r *http.Request, u plat
 			if deleted {
 				return nil
 			}
+			if _, err := tx.Exec("DELETE FROM member_cli_configs WHERE member_id=?", id); err != nil {
+				return err
+			}
 			if _, err = tx.Exec("UPDATE member_container_slots SET deleted=1 WHERE member_id=?", id); err != nil {
 				return err
 			}

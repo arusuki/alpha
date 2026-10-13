@@ -261,7 +261,7 @@ func TestRealAgnoService(t *testing.T) {
 	if _, _, err = call(h, "alice", "POST", "/api/assistant/sessions/"+id+"/messages", `{"message":"继续"}`); err != nil {
 		t.Fatal(err)
 	}
-	_, messages, _, err := h.session(id, "alice")
+	_, messages, _, err := h.session("assistant_sessions", id, "alice")
 	if err != nil || len(messages) != 4 {
 		t.Fatal(messages, err)
 	}

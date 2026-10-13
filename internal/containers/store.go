@@ -61,6 +61,9 @@ func cleanPath(s string) bool {
 var schema string
 
 func Initialize(tx *sql.Tx) error {
+	if err := platform.InstallWorkerChatCLI(tx); err != nil {
+		return err
+	}
 	_, err := tx.Exec(schema)
 	if err != nil {
 		return err
