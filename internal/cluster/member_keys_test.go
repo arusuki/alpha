@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -27,6 +28,9 @@ func TestStatusMultipleKeysSaveIsolationFailureAndRetry(t *testing.T) {
 	fail.Store(true)
 	keys := resourceTestKey + "\n" + secondMemberKey
 	w, s := worker(t, strings.Repeat("8", 32), Inventory{}, moduleFunc(func(_ http.ResponseWriter, r *http.Request, u platform.User) (int, any, error) {
+		if r.URL.Path == "/api/worker/scheduled-analysis" && r.Method == "GET" {
+			return 200, map[string]any{"jobs": []any{}}, nil
+		}
 		if r.URL.Path == "/api/containers/candidates" {
 			return 200, map[string]any{"containers": []any{}}, nil
 		}
@@ -46,6 +50,8 @@ func TestStatusMultipleKeysSaveIsolationFailureAndRetry(t *testing.T) {
 	add(t, f, w, s, "Keys worker")
 	awaitIdle(t, f, id)
 	awaitIdle(t, f, bob)
+	// Exercise the background poll even when this test finishes before its timer.
+	f.control.consumeScheduledAnalyses(context.Background())
 	path := "/api/status/alice/keys"
 	for _, tok := range []string{"", resourceToken, bobToken} {
 		want := 401
