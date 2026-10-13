@@ -1,4 +1,4 @@
--- Source: v0.7.1 internal/platform/gpu_schema.go (schema 39).
+-- Source: v0.8.0-rc2 internal/platform/gpu_schema.go (schema 41).
 CREATE TABLE gpu_intervals (
  gpu_uuid TEXT NOT NULL, name TEXT NOT NULL, started_at REAL NOT NULL,
  ended_at REAL NOT NULL CHECK(ended_at>started_at), utilization REAL,

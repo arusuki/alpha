@@ -36,16 +36,16 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 		tables     []string
 		conflict   bool
 	}{
-		{"control", cluster.Initialize, 39, "", []string{"members", "member_invitations"}, false},
-		{"worker", app.Initialize, 39, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
-		{"registry", registry.Initialize, 39, "", []string{"registry_control", "registry_sessions"}, false},
-		{"control", cluster.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"members", "mihomo_runtime"}, true},
-		{"worker", app.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"managed_containers", "mihomo_runtime"}, true},
-		{"registry", registry.Initialize, 39, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"registry_sessions", "mihomo_runtime"}, true},
+		{"control", cluster.Initialize, 41, "", []string{"members", "member_invitations"}, false},
+		{"worker", app.Initialize, 41, "", []string{"managed_containers", "owners", "member_container_slots"}, false},
+		{"registry", registry.Initialize, 41, "", []string{"registry_control", "registry_sessions"}, false},
+		{"control", cluster.Initialize, 41, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"members", "mihomo_runtime"}, true},
+		{"worker", app.Initialize, 41, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"managed_containers", "mihomo_runtime"}, true},
+		{"registry", registry.Initialize, 41, "CREATE TRIGGER reject_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected audit failure'); END", []string{"registry_sessions", "mihomo_runtime"}, true},
 	}
 	// Unsupported versions use ordinary data with a rejected version marker;
 	// no expired schema fixtures or migrations are retained.
-	for _, version := range []int{1, 38, platform.DatabaseVersion + 1} {
+	for _, version := range []int{1, 39, 40, platform.DatabaseVersion + 1} {
 		for _, role := range []string{"control", "worker", "registry"} {
 			initialize := map[string]func(*sql.Tx) error{"control": cluster.Initialize, "worker": app.Initialize, "registry": registry.Initialize}[role]
 			cases = append(cases, struct {
@@ -88,7 +88,7 @@ INSERT INTO registry_sessions VALUES('token','invitation','csrf','resource','{}'
 				if err != nil {
 					t.Fatal(err)
 				}
-				if tc.role == "worker" && tc.version >= 39 {
+				if tc.role == "worker" && tc.version >= 41 {
 					_, err = db.SQL.Exec(`UPDATE settings SET value=json_set(value,'$.interval_minutes',30,'$.schedule_mode','interval'),schedule_last_run=100;
 INSERT INTO jobs(id,status,trigger,created_by,created_at,finished_at,config) VALUES('saved-scan','completed','scheduled','scheduler',100,200,'{}');
 INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
@@ -97,7 +97,7 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
-				if tc.version >= 39 && tc.version < 47 {
+				if tc.version >= 41 && tc.version < 47 {
 					schema := map[string]string{"control": "DROP TABLE member_cli_sync; DROP TABLE chat_cli_settings", "worker": "DROP TABLE container_cli_installs; DROP TABLE member_cli_configs"}[tc.role]
 					if schema != "" {
 						if _, err = db.SQL.Exec(schema); err != nil {
@@ -105,29 +105,29 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 						}
 					}
 				}
-				if tc.role == "worker" && tc.version >= 39 && tc.version < 45 {
+				if tc.role == "worker" && tc.version >= 41 && tc.version < 45 {
 					if _, err = db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 						t.Fatal(err)
 					}
 				}
 
-				if tc.role == "worker" && tc.version >= 39 && tc.version < 40 {
-					if _, err = db.SQL.Exec("DROP TRIGGER service_mount_owner; DROP TRIGGER service_mount_release; DROP TABLE node_service_mounts; DROP TABLE node_service_settings"); err != nil {
+				if tc.role == "worker" && tc.version >= 41 && tc.version < 42 {
+					if _, err = db.SQL.Exec("ALTER TABLE node_service_mounts DROP COLUMN service"); err != nil {
 						t.Fatal(err)
 					}
 				}
 
-				if tc.role == "control" && tc.version >= 39 && tc.version < 46 {
+				if tc.role == "control" && tc.version >= 41 && tc.version < 46 {
 					if _, err = db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if tc.role == "control" && tc.version >= 39 && tc.version < 44 {
+				if tc.role == "control" && tc.version >= 41 && tc.version < 44 {
 					if _, err = db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
 						t.Fatal(err)
 					}
 				}
-				if tc.role == "control" && tc.version >= 39 && tc.version < 43 {
+				if tc.role == "control" && tc.version >= 41 && tc.version < 43 {
 					if _, err = db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
 						t.Fatal(err)
 					}
@@ -150,6 +150,12 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					return rows
 				}
 				tables := append([]string{"service_identity"}, tc.tables...)
+				unsupported := tc.version < 41 || tc.version > platform.DatabaseVersion
+				if unsupported {
+					for _, row := range read("SELECT name FROM sqlite_master WHERE type='table'") {
+						tables = append(tables, row["name"].(string))
+					}
+				}
 				if tc.role == "worker" {
 					tables = append(tables, "jobs", "snapshot_records")
 				}
@@ -176,6 +182,9 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					cmd.ExtraFiles = files
 					output, err := cmd.CombinedOutput()
 					if tc.conflict {
+						if unsupported && !strings.Contains(string(output), "unsupported database version") {
+							t.Fatalf("expected explicit unsupported-version error: %v\n%s", err, output)
+						}
 						if err == nil || !strings.Contains(string(output), "existing data preserved") {
 							t.Fatalf("expected explicit migration failure: %v\n%s", err, output)
 						}

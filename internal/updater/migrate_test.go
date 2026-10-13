@@ -115,7 +115,7 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, db, payload := newDockerFixture(t)
 			syncDocker := useDockerProcessFixture(t, f.run)
-			oldSchema := 39
+			oldSchema := 41
 			if strings.HasPrefix(mode, "current-schema") {
 				if err := platform.UpgradeDatabase(db.Directory, "worker", nil, nil); err != nil {
 					t.Fatal(err)
@@ -130,7 +130,7 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 				oldSchema = 37
 			}
 			if mode == "database-failure" || mode == "migration-rollback-failure" {
-				if _, err := db.SQL.Exec("CREATE TABLE node_service_mounts(sentinel TEXT); INSERT INTO node_service_mounts VALUES('preserved')"); err != nil {
+				if _, err := db.SQL.Exec("CREATE TRIGGER fail_upgrade BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'injected migration failure'); END"); err != nil {
 					t.Fatal(err)
 				}
 			}

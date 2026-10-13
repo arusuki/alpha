@@ -276,7 +276,7 @@ func TestServicesOnlyPreservesBinariesAndDatabase(t *testing.T) {
 	if err := run(context.Background(), options{role: "worker", directory: db.Directory, binDir: dir, servicesOnly: true, docker: noDeployedServices}, g, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	assertVersion(t, db, 39)
+	assertVersion(t, db, 41)
 	for _, file := range binaries("worker") {
 		raw, err := os.ReadFile(filepath.Join(dir, file.destination))
 		if err != nil || !bytes.Equal(raw, script(file.source, "v0.6.0")) {

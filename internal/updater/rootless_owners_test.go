@@ -15,9 +15,9 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{39, 40, 41, 42, 43, 44} {
+			for _, version := range []int{41, 42, 43, 44} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
-					db := nodeServicesOldDatabase(t, role, min(version, 41))
+					db := dramMountOldDatabase(t, role)
 					if version >= 42 {
 						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 							t.Fatal(err)
@@ -99,7 +99,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 			}
 		}
 		t.Run(entry+"/rollback", func(t *testing.T) {
-			db := nodeServicesOldDatabase(t, "worker", 41)
+			db := dramMountOldDatabase(t, "worker")
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err != nil {
 				t.Fatal(err)
 			}

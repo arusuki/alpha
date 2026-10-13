@@ -1,4 +1,4 @@
--- Source: v0.7.1 internal/platform/mihomo.sql (schema 39).
+-- Source: v0.8.0-rc2 internal/platform/mihomo.sql (schema 41).
 CREATE TABLE mihomo_profiles (
  target TEXT PRIMARY KEY, revision INTEGER NOT NULL, config TEXT NOT NULL,
  updated_at REAL NOT NULL

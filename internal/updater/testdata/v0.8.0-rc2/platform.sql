@@ -1,4 +1,4 @@
--- Source: v0.7.1 internal/platform/schema.sql (schema 39).
+-- Source: v0.8.0-rc2 internal/platform/schema.sql (schema 41).
 CREATE TABLE users (
  id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL,
  role TEXT NOT NULL CHECK(role IN ('admin','viewer')), enabled INTEGER NOT NULL DEFAULT 1,

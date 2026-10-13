@@ -11,7 +11,7 @@ import (
 
 func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, version int) *platform.Database {
 	t.Helper()
-	db := nodeServicesOldDatabase(t, role, min(version, 41))
+	db := dramMountOldDatabase(t, role)
 	if version >= 42 {
 		if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 			t.Fatal(err)
@@ -62,7 +62,7 @@ func TestMemberAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{39, 40, 41, 42, 43, 44, 45} {
+			for _, version := range []int{41, 42, 43, 44, 45} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := memberAssistantOldDatabase(t, binary, entry, role, version)
 					tables := []string{"users"}

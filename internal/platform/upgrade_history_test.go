@@ -2,6 +2,7 @@ package platform
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -65,6 +66,13 @@ func TestUpgradeHistoryRejectsIncompleteOrInvalidPaths(t *testing.T) {
 }
 
 func TestCurrentUpgradeHistoryHasCompletePath(t *testing.T) {
+	var history databaseUpgradeHistory
+	if err := json.Unmarshal(upgradeHistoryJSON, &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(databaseUpgrades) > 0 && databaseUpgrades[0].From != history.BaseSchema {
+		t.Fatalf("migration chain starts at %d, retained window starts at %d; remove expired migrations", databaseUpgrades[0].From, history.BaseSchema)
+	}
 	if _, err := databaseUpgradePlan(DatabaseVersion); err != nil {
 		t.Fatal(err)
 	}

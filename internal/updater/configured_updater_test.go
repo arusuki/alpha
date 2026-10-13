@@ -105,7 +105,7 @@ func TestExternalUpdaterServiceHandoff(t *testing.T) {
 			o.bootstrap, o.servicePlan = true, path
 			err = run(context.Background(), o, archiveServer(t, archive, false), io.Discard)
 			syncDocker()
-			assertVersion(t, db, 39)
+			assertVersion(t, db, 41)
 			if image() != f.old {
 				t.Fatal("preparation replaced running deployment")
 			}
@@ -144,7 +144,7 @@ func TestExternalUpdaterServiceHandoff(t *testing.T) {
 			if err := json.Unmarshal(raw, &result); err != nil {
 				t.Fatal(err)
 			}
-			wantUpdater, wantSchema := original, 39
+			wantUpdater, wantSchema := original, 41
 			if mode == "success" {
 				wantUpdater, wantSchema = target, platform.DatabaseVersion
 				if result.State != "completed" || image() != f.next {

@@ -1,11 +1,6 @@
 {
-  "base_schema": 39,
+  "base_schema": 41,
   "updates": [
-    {
-      "tag": "v0.8.0-rc2",
-      "from": 39,
-      "to": 41
-    },
     {
       "tag": "v0.8.0-rc4",
       "from": 41,
@@ -15,6 +10,11 @@
       "tag": "v0.8.3",
       "from": 42,
       "to": 45
+    },
+    {
+      "tag": "v0.8.4",
+      "from": 45,
+      "to": 47
     }
   ]
 }

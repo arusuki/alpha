@@ -14,10 +14,9 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{39, 40, 41, 42, 43} {
+			for _, version := range []int{41, 42, 43} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
-					base := min(version, 41)
-					db := nodeServicesOldDatabase(t, role, base)
+					db := dramMountOldDatabase(t, role)
 					if version >= 42 {
 						// Upgrade through the shared chain, then remove only the new schema to
 						// reproduce the immediately preceding release for every role.
@@ -93,7 +92,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			}
 		}
 		t.Run(entry+"/settings-rollback", func(t *testing.T) {
-			db := nodeServicesOldDatabase(t, "control", 41)
+			db := dramMountOldDatabase(t, "control")
 			if err := runScheduledMigration(t, binary, entry, "control", db); err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +121,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "control", db); err == nil {
 				t.Fatal("migration must fail")
 			}
-			assertVersion(t, db, 39)
+			assertVersion(t, db, 41)
 			var tables int
 			if err := db.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('assistant_sessions','assistant_memories','assistant_settings')").Scan(&tables); err != nil || tables != 0 {
 				t.Fatal("partial schema retained", tables, err)

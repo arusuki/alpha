@@ -1,4 +1,4 @@
--- Source: v0.7.1 internal/agent/schema.sql (schema 39).
+-- Source: v0.8.0-rc2 internal/agent/schema.sql (schema 41).
 CREATE TABLE agent_settings (
  id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL,
  api_key_ciphertext TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1

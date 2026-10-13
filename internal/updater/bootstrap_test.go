@@ -219,7 +219,7 @@ func TestBootstrapTargetOwnsPreparationAndInstallation(t *testing.T) {
 			if _, err := prepareContainers(context.Background(), db, stage, noDeployedServices, io.Discard); err == nil || !strings.Contains(err.Error(), "FutureInputs") {
 				t.Fatal("fixture must be incompatible with bootstrap", err)
 			}
-			assertVersion(t, db, 39)
+			assertVersion(t, db, 41)
 			got, _ := os.ReadFile(exe)
 			if !bytes.Equal(got, original) {
 				t.Fatal("online preparation replaced service")
@@ -254,7 +254,7 @@ func TestBootstrapTargetOwnsPreparationAndInstallation(t *testing.T) {
 				}
 				assertNoStaging(t, bin)
 			} else {
-				assertVersion(t, db, 39)
+				assertVersion(t, db, 41)
 				got, _ = os.ReadFile(exe)
 				if !bytes.Equal(got, original) || result.State != "failed" {
 					t.Fatal("failed install did not preserve old service", result)
@@ -270,7 +270,7 @@ func TestBootstrapTargetOwnsPreparationAndInstallation(t *testing.T) {
 
 func TestBootstrapTargetRejectsExpiredDatabase(t *testing.T) {
 	// The bootstrap supports this database; the target's newer window does not.
-	target := futureUpdater(t, 40)
+	target := futureUpdater(t, 42)
 	db := oldDatabase(t, "worker")
 	bin := t.TempDir()
 	for _, file := range binaries("worker") {
@@ -290,10 +290,10 @@ func TestBootstrapTargetRejectsExpiredDatabase(t *testing.T) {
 	o.bootstrap, o.servicePlan = true, path
 	o.prepare = func(*PreparedUpdate) error { return nil }
 	err = run(context.Background(), o, archiveServer(t, futureArchive(t, target), false), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "unsupported database version 39") || !strings.Contains(err.Error(), "existing data preserved") {
+	if err == nil || !strings.Contains(err.Error(), "unsupported database version 41") || !strings.Contains(err.Error(), "existing data preserved") {
 		t.Fatal("target accepted expired database", err)
 	}
-	assertVersion(t, db, 39)
+	assertVersion(t, db, 41)
 	for _, file := range binaries("worker") {
 		got, _ := os.ReadFile(filepath.Join(bin, file.destination))
 		if !bytes.Equal(got, script(file.source, "v0.5.4")) {
@@ -339,7 +339,7 @@ func TestBootstrapRejectsUnverifiedOrUnsupportedUpdater(t *testing.T) {
 			if !bytes.Equal(got, original) {
 				t.Fatal("failed bootstrap changed installed binary")
 			}
-			assertVersion(t, db, 39)
+			assertVersion(t, db, 41)
 			assertNoStaging(t, bin)
 		})
 	}
