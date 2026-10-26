@@ -105,7 +105,7 @@ func TestRegistryOutboundRegistrationProgressAndMultipleGateways(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &members.Store{Database: f.db}
-	i, err := store.CreateInvitation("registry", 1, "admin")
+	i, err := store.CreateInvitation("registry", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

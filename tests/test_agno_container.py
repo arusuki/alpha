@@ -109,7 +109,7 @@ try:
             with socket.socket(socket.AF_UNIX) as client:
                 client.settimeout(3)
                 client.connect(str(sockets / 'agno.sock'))
-                client.sendall(b'{"protocol":2,"operation":"health"}\n')
+                client.sendall(b'{"protocol":3,"operation":"health"}\n')
                 with client.makefile('rb') as reader:
                     return json.loads(reader.readline())
 
@@ -212,11 +212,11 @@ try:
             with socket.socket(socket.AF_UNIX) as client:
                 client.settimeout(5)
                 client.connect(str(sockets / 'agno.sock'))
-                client.sendall(b'{"protocol":2,"operation":"run"}\n')
+                client.sendall(b'{"protocol":3,"operation":"run"}\n')
                 with client.makefile('rb') as reader:
                     assert json.loads(reader.readline())['type'] == 'ready'
                     frame = dict(settings=dict(instructions='检查状态',builtin_tools=[],mcp_servers=[]),mcp_tokens={},user_id='cancel-user', session_id='cancel-session', message='block for cancellation',
-                        session=None, memories=[], api_key='fixture-model-token', config=dict(protocol='completions',
+                        session=None, memories=[], api_key='fixture-model-token', config=dict(provider='openai', protocol='completions',
                         endpoint=f'http://127.0.0.1:{model.server_port}/v1/chat/completions', model='test',
                         timeout_seconds=30, reasoning_summary=False))
                     client.sendall((json.dumps(frame)+'\n').encode())

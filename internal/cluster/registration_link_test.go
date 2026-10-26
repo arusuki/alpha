@@ -16,7 +16,7 @@ import (
 func TestRegistrationLinkRejectsChangedRegistryIdentityAndInvalidEntry(t *testing.T) {
 	f := setup(t)
 	store := &members.Store{Database: f.db}
-	i, err := store.CreateInvitation("入口验证", 1, "admin")
+	i, err := store.CreateInvitation("入口验证", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestRegistrationLinkRejectsChangedRegistryIdentityAndInvalidEntry(t *testin
 func TestRegistryRegistrationLinks(t *testing.T) {
 	f := setup(t)
 	store := &members.Store{Database: f.db}
-	i, err := store.CreateInvitation("分享", 1, "admin")
+	i, err := store.CreateInvitation("分享", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

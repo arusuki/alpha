@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -148,5 +149,45 @@ func TestConfigBindingAndCancelledInput(t *testing.T) {
 	var out bytes.Buffer
 	if err := Run(ctx, []string{"--config", filepath.Join(t.TempDir(), "none"), "--server", "http://127.0.0.1", "--user", "alice", "--password-stdin"}, input, &out, &out); err != context.DeadlineExceeded {
 		t.Fatal(err)
+	}
+}
+
+func TestFailedLoginAndConversationGuidance(t *testing.T) {
+	for _, loginFailure := range []bool{true, false} {
+		t.Run(map[bool]string{true: "login", false: "conversation"}[loginFailure], func(t *testing.T) {
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if !loginFailure && r.URL.Path == "/api/status/alice/login" {
+					json.NewEncoder(w).Encode(map[string]string{"session_token": strings.Repeat("a", 64)})
+					return
+				}
+				// A truncated response can leave a sent conversation's outcome unknown.
+				w.Header().Set("Content-Length", "100")
+				io.WriteString(w, `{`)
+			}))
+			defer server.Close()
+			var output bytes.Buffer
+			err := run(context.Background(), []string{
+				"--server", server.URL, "--user", "alice", "--password-stdin", "--message", "hello",
+				"--config", filepath.Join(t.TempDir(), "session.json"),
+			}, strings.NewReader("Member-password-123\n"), &output, &output, filepath.Join(t.TempDir(), "alpha-chat"))
+			if !errors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if strings.Contains(err.Error(), "历史会话") == loginFailure {
+				t.Fatalf("wrong recovery guidance: %v", err)
+			}
+			wantCalls := 2
+			if loginFailure {
+				wantCalls = 1
+				if !strings.Contains(err.Error(), "登录失败") {
+					t.Fatal(err)
+				}
+			}
+			if calls != wantCalls {
+				t.Fatalf("requests = %d, want %d; requests must not be retried", calls, wantCalls)
+			}
+		})
 	}
 }

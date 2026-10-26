@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 
-PROTOCOL = 2
+PROTOCOL = 3
 RUNTIME = Path(__file__).with_name("runtime.py")
 spec = importlib.util.spec_from_file_location("alpha_runtime", RUNTIME)
 runtime = importlib.util.module_from_spec(spec)

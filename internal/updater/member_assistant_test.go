@@ -16,7 +16,10 @@ func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, versio
 		if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 			t.Fatal(err)
 		}
-		dropChatCLISchema(t, db, role)
+		dropNodePermissionsSchema(t, db, role)
+		if version < 47 {
+			dropChatCLISchema(t, db, role)
+		}
 		if role == "control" {
 			if version < 46 {
 				if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {

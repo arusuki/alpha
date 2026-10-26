@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"project-alpha/internal/httpapi"
+	"project-alpha/internal/members"
 	"project-alpha/internal/platform"
 )
 
@@ -56,11 +57,18 @@ func (h *Control) containerCandidates(ctx context.Context, node Node, username s
 	}
 	return result.Containers, nil
 }
-func (h *Control) registrationOptions(ctx context.Context, username string) (any, error) {
+func (h *Control) registrationOptions(ctx context.Context, username string, permissions members.NodePermissions) (any, error) {
 	nodes, err := h.nodes("worker")
 	if err != nil {
 		return nil, err
 	}
+	allowed := []Node{}
+	for _, n := range nodes {
+		if permissions.Allows(n.ID) {
+			allowed = append(allowed, n)
+		}
+	}
+	nodes = allowed
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	out := make([]nodeChoices, len(nodes))

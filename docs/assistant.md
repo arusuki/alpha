@@ -46,6 +46,10 @@ alpha-chat --logout
 
 自动化调用可用 `--password-stdin` 从标准输入第一行读取密码并重新登录；密码不作为命令行参数。交互隐藏输入目前支持 Linux。整轮回复完成后显示结果，不逐字流式输出。取消或连接失败后可以用 `--list` 和 `--session` 核对历史，不自动重试。
 
+登录、身份检查和历史查询等普通请求最多等待 30 秒，发送问题最多等待 16 分钟。登录失败不会发送问题；只有发送问题失败时才提示核对历史会话。
+
+若输入密码后一直等待，先在出问题的容器中探测下发地址，例如 `curl --noproxy '*' -sv --connect-timeout 5 --max-time 10 http://<总控地址>:<端口>/ -o /dev/null`。ping 成功不能证明 HTTP 端口可达。未出现 `Connected to` 就超时，需检查地址、端口、总控监听及防火墙；已连接但无 HTTP 响应则检查服务或反向代理。收到 HTTP 403 时查看响应正文，确认是否需要配置总控的 `--allowed-host`；分享入口对 `/` 的拒绝也说明 HTTP 已连通，可改用 `/status/<使用者标识>` 检查。总控默认只监听 `127.0.0.1:8765`，直连内网地址时需配置相应的 `--host`、`--port`。地址修正后在“使用者 CLI · 自动下发”保存并下发。
+
 成员请求、每次模型工具调用和提交会话事务都会重新检查 token 的有效期与成员状态；退出登录、修改／重置密码或删除成员后，旧 token 不能继续调用工具或提交本轮结果。校验发生在 Go 服务中，用户 token 不传给模型、Agno 容器或 worker；worker 继续使用总控已有的服务认证通道和服务端确认的使用者身份。
 
 成员会话与记忆按稳定成员 ID 隔离，独立于平台账号；删除成员时级联删除对应会话和记忆。成员继承管理员启用的内置工具列表，但返回范围固定为：
@@ -129,7 +133,7 @@ AGNO_UID=$(id -u) AGNO_GID=$(id -g) AGNO_SOCKET_DIR="$PWD/data-control/agno" \
 
 已有 worker 数据目录不可用作总控目录。也可以直接把 socket 放入已有总控数据目录的 `agno` 子目录。
 
-更新发布包后，以同样环境变量执行 `docker compose -f deploy/control-services.yaml up -d --build` 更新容器。updater 仍按现有流程更新总控程序和数据库，Agno 镜像需使用对应发布包重建；总控会拒绝不匹配的服务协议或依赖版本。停止使用同样环境变量执行 `docker compose -f deploy/control-services.yaml down`，不会删除总控会话与记忆。生产部署不使用宿主机 Python 回退路径。
+首次部署完成后，updater 的总控命令行更新、网页更新和自动更新都会同步已部署的 Agno：停服前使用目标发布包的 Dockerfile 与 Python 源码构建镜像，安装时重建容器并检查新服务的协议和依赖版本。保留原 UID/GID、socket 挂载、容器参数和启停状态；构建失败不交接停服，容器替换或数据库迁移失败时回滚。部署 Agno 的总控服务账号须有本机 Docker socket 和 Compose 权限；默认使用 `unix:///var/run/docker.sock`，自定义本机 socket 通过 `DOCKER_HOST` 指定。updater 从已有容器恢复 Compose 模板需要的 `AGNO_*` 值，无需重新设置首次部署时的 shell 变量；自定义 Agno socket 则须与总控的 `ALPHA_AGNO_SOCKET` 一致。未部署 Agno 时跳过，不自动初装；从未部署 Agno 且未安装 Docker 的总控仍可更新主程序，具体判断及故障处理见 [updater](updater.md)。仅同步同版本容器可用 `alpha-updater --services-only --tag <已安装的tag>`，详情见 [updater](updater.md)。停止使用同样环境变量执行 `docker compose -f deploy/control-services.yaml down`，不会删除总控会话与记忆。生产部署不使用宿主机 Python 回退路径。
 
 每轮请求由容器启动隔离的 Agno 子进程，任务完成后退出。总控关闭、取消请求或连接断开会终止对应任务，容器服务保持可用；容器关闭会终止全部任务。socket 所在目录有独占锁，重启只清理本账号拥有的失效 socket，不覆盖其他文件或活动服务。
 

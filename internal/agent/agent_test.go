@@ -38,7 +38,7 @@ func waitAgentSession(t *testing.T, p *testPlatform, id string) object {
 }
 func configureTestAgent(t *testing.T, p *testPlatform, protocol, endpoint string) {
 	t.Helper()
-	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "timeout_seconds": 10}}, nil)
+	p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": object{"provider": "opencode", "protocol": protocol, "endpoint": endpoint, "model": "test-model", "api_key": "test-secret-key", "timeout_seconds": 10}}, nil)
 
 }
 
@@ -193,7 +193,11 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	p.Expect(401, "GET", "/api/agent/settings", nil, nil)
 	p.Login(true, "administrator", "A-test-password-123")
 	p.Expect(403, "PUT", "/api/agent/settings", object{}, map[string]string{"X-CSRF-Token": "wrong"})
-	value := object{"protocol": "completions", "endpoint": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key": "keep-this-private", "timeout_seconds": 30}
+	defaults := p.Expect(200, "GET", "/api/agent/settings", nil, nil)
+	if defaults["value"].(map[string]any)["provider"] != "openai" {
+		t.Fatal("wrong default provider")
+	}
+	value := object{"provider": "opencode", "protocol": "completions", "endpoint": "http://127.0.0.1:1234/v1", "model": "local-model", "api_key": "keep-this-private", "timeout_seconds": 30}
 	r := p.Expect(200, "PUT", "/api/agent/settings", object{"revision": 1, "value": value}, nil)
 	if strings.Contains(httpapi.JSONText(r), "keep-this-private") || r["value"].(map[string]any)["has_api_key"] != true {
 		t.Fatal("key leaked or was not saved")
@@ -221,8 +225,11 @@ func TestAgentSettingsPermissionsAndPersistence(t *testing.T) {
 	}
 	saved, _, _ := NewStore(other).agentConfig()
 	other.SQL.Close()
-	if saved.APIKey != c.APIKey {
-		t.Fatal("key not persisted")
+	if saved.APIKey != c.APIKey || saved.Provider != "opencode" || r["value"].(map[string]any)["provider"] != "opencode" {
+		t.Fatal("key or provider not persisted")
+	}
+	for _, provider := range []any{"", "unknown", "OpenCode", nil, 1} {
+		p.Expect(400, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"provider": provider}}, nil)
 	}
 	for _, endpoint := range []string{"file:///tmp/test", "http://user:pass@example.com/v1", "https://example.com/v1?key=secret"} {
 		p.Expect(400, "PUT", "/api/agent/settings", object{"revision": 3, "value": object{"endpoint": endpoint}}, nil)
@@ -367,6 +374,7 @@ func TestAgentProviderSessionErrorDoesNotExposeUpstreamText(t *testing.T) {
 			}))
 			defer mock.Close()
 			c := defaultConfig()
+			c.Provider = "opencode"
 			c.Endpoint, c.APIKey = mock.URL, "secret-key-value"
 			_, err := (agentProvider{Config: c, SessionID: "test-session"}).complete(context.Background(), nil)
 			if err == nil {

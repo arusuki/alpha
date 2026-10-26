@@ -82,6 +82,14 @@ with sync_playwright() as p:
     assert submitted[-1]['containers'] == [
         dict(node_id=node_a, mode='adopt', container_id=free),
         dict(node_id=node_b, mode='create', container_id='')]
+    page.locator(f'input[data-node="{node_a}"][value=skip]').check()
+    page.locator(f'input[data-node="{node_b}"][value=skip]').check()
+    page.locator('#submit').click()
+    expect(page.locator('#errorDialog')).to_be_visible()
+    assert all(c['mode'] == 'skip' and c['container_id'] == '' for c in submitted[-1]['containers'])
+    page.locator('#errorDialog button').click()
+    page.locator(f'input[data-node="{node_a}"][value="{free}"]').check()
+    page.locator(f'input[data-node="{node_b}"][value=create]').check()
     # Another user took the selected container: refresh keeps it visible but
     # disables it and clears the now-invalid selection.
     nodes[0]['containers'][1]['claimed'] = True
@@ -109,6 +117,13 @@ with sync_playwright() as p:
     expect(page.locator('#errorMessage')).to_have_text('注册结果暂不可用')
     page.locator('#errorDialog button').click()
     expect(page.locator('#resume')).to_be_visible()
+    # An invitation with no authorized nodes can still register.
+    page.reload()
+    nodes.clear()
+    page.locator('#reloadNodes').click()
+    expect(page.locator('#nodeChoices fieldset')).to_have_count(0)
+    expect(page.locator('#nodeChoices')).to_contain_text('可以直接完成注册')
+    expect(page.locator('#submit')).to_be_enabled()
     assert not errors, errors
     browser.close()
 print('Registration container choice browser checks passed.')

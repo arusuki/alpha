@@ -39,7 +39,7 @@ func TestRegistrationNodeChoicesAndClaimedVisibility(t *testing.T) {
 	add(t, f, a, as, "Adopt node")
 	b, bs := worker(t, strings.Repeat("2", 32), Inventory{}, module)
 	add(t, f, b, bs, "Create node")
-	options, err := f.control.registrationOptions(context.Background(), "alice")
+	options, err := f.control.registrationOptions(context.Background(), "alice", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestRegistrationNodeChoicesAndClaimedVisibility(t *testing.T) {
 		}
 	}
 	store := &members.Store{Database: f.db}
-	invite, err := store.CreateInvitation("choices", 1, "admin")
+	invite, err := store.CreateInvitation("choices", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

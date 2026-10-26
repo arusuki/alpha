@@ -24,7 +24,7 @@ func TestStartupReevaluatesSavedRelease(t *testing.T) {
 	for _, role := range []string{"control", "registry", "worker"} {
 		t.Run(role, func(t *testing.T) {
 			tag := "v0.3.3"
-			if role == "worker" {
+			if role == "worker" || role == "control" {
 				tag = "v0.3.2"
 			}
 			root := t.TempDir()
@@ -82,7 +82,7 @@ func TestStartupReevaluatesSavedRelease(t *testing.T) {
 				t.Fatal("service did not reevaluate saved release on startup")
 			}
 			p, err := updater.ReadServicePlan(filepath.Join(directory, "update-service.json"))
-			if err != nil || p.ServicesOnly != (role == "worker") || p.Tag != tag || p.Role != role {
+			if err != nil || p.ServicesOnly != (role == "worker" || role == "control") || p.Tag != tag || p.Role != role {
 				t.Fatal("wrong startup update plan", p, err)
 			}
 			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {

@@ -228,6 +228,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 		if user.Role != "admin" {
 			return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
 		}
+		if action == "node-permissions" {
+			return h.memberNodePermissions(w, r, id, user.Username)
+		}
 		if action == "password" {
 			return h.resetMemberPassword(w, r, id, user)
 		}
@@ -331,9 +334,11 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			if !operational(path) {
 				return fail(httpapi.NewError(404, "此接口不属于节点操作 API"))
 			}
-			if err := h.validateOwner(w, r, path); err != nil {
+			release, err := h.validateOwner(w, r, path, n.ID)
+			if err != nil {
 				return fail(err)
 			}
+			defer release()
 			h.proxy(w, r, n, path, user)
 			return 0, nil, nil
 		}
@@ -432,33 +437,48 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 }
 
 // Owners are stable central member usernames, not platform login accounts.
-func (h *Control) validateOwner(w http.ResponseWriter, r *http.Request, path string) error {
+func (h *Control) validateOwner(w http.ResponseWriter, r *http.Request, path, nodeID string) (release func(), err error) {
+	release = func() {}
+	defer func() {
+		if err != nil {
+			release()
+		}
+	}()
 	if !(path == "/api/containers" && r.Method == "POST") && !(path == "/api/owners" && r.Method == "PUT") {
-		return nil
+		return release, nil
 	}
 	value, err := httpapi.RequestBody(w, r)
 	if err != nil {
-		return err
+		return release, err
 	}
 	owner := httpapi.FieldString(value, "owner")
 	if owner != "" {
-		var count int
-		if err = h.DB.SQL.QueryRow("SELECT count(*) FROM members WHERE username=? AND status='active'", owner).Scan(&count); err != nil {
-			return err
+		var memberID string
+		err = h.DB.SQL.QueryRow("SELECT id FROM members WHERE username=? AND status='active'", owner).Scan(&memberID)
+		if err != nil && err != sql.ErrNoRows {
+			return release, err
 		}
-		if count != 1 {
-			return httpapi.NewError(400, "所属用户必须是总控已登记的使用者标识")
+		if err == sql.ErrNoRows {
+			return release, httpapi.NewError(400, "所属用户必须是总控已登记的使用者标识")
+		}
+		gate := h.memberGate(memberID)
+		if !gate.TryLock() {
+			return release, httpapi.NewError(409, "使用者资源或权限正在修改，请稍后重试")
+		}
+		release = gate.Unlock
+		if err := h.requireMemberNode(memberID, nodeID); err != nil {
+			return release, err
 		}
 	} else if path == "/api/containers" {
-		return httpapi.NewError(400, "请选择总控已登记的所属用户")
+		return release, httpapi.NewError(400, "请选择总控已登记的所属用户")
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return release, err
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
-	return nil
+	return release, nil
 }
 
 func (h *Control) proxy(w http.ResponseWriter, r *http.Request, n Node, path string, user platform.User) {

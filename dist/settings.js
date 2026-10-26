@@ -3,7 +3,7 @@ const settingsState={model:null,epoch:0,loading:0,saving:false};
 function modelSettingsError(error){$('agentSettingsError').textContent=error ? error.message||String(error) : '';}
 function renderModelSettings(result){
   settingsState.model=result;const c=result.value;
-  $('agentProtocol').value=c.protocol;$('agentEndpoint').value=c.endpoint;$('agentModel').value=c.model;
+  $('agentProvider').value=c.provider;$('agentProtocol').value=c.protocol;$('agentEndpoint').value=c.endpoint;$('agentModel').value=c.model;
   $('agentReasoningSummary').checked=!!c.reasoning_summary;
   $('agentTimeout').value=c.timeout_seconds;
   $('agentKey').value='';$('agentClearKey').checked=false;
@@ -43,7 +43,7 @@ $('agentSettingsForm').addEventListener('submit',async e=>{
   const epoch=settingsState.epoch;settingsState.saving=true;modelSettingsError('');modelSettingsControls();
   try{
     if(!settingsState.model)throw Error('请先载入模型配置');
-    const value={protocol:$('agentProtocol').value,endpoint:$('agentEndpoint').value.trim(),model:$('agentModel').value.trim(),api_key:$('agentKey').value,clear_api_key:$('agentClearKey').checked,timeout_seconds:Number($('agentTimeout').value),reasoning_summary:$('agentReasoningSummary').checked};
+    const value={provider:$('agentProvider').value,protocol:$('agentProtocol').value,endpoint:$('agentEndpoint').value.trim(),model:$('agentModel').value.trim(),api_key:$('agentKey').value,clear_api_key:$('agentClearKey').checked,timeout_seconds:Number($('agentTimeout').value),reasoning_summary:$('agentReasoningSummary').checked};
     const result=await api('/api/agent/settings',{method:'PUT',body:JSON.stringify({revision:settingsState.model.revision,value})});
     if(epoch!==settingsState.epoch)return;
     renderModelSettings(result);$('agentSettingsStatus').textContent='模型配置已保存';

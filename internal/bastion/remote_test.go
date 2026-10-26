@@ -181,7 +181,7 @@ func TestShareDiscoveryValidatesConfigAndProtectsReferencedPort(t *testing.T) {
 func TestMemberKeysAndRevocationAreScopedToAssignedShare(t *testing.T) {
 	h, _, alice := fixture(t)
 	store := &members.Store{Database: h.DB}
-	invite, err := store.CreateInvitation("test", 10, "admin")
+	invite, err := store.CreateInvitation("test", 10, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

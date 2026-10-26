@@ -106,7 +106,7 @@ func TestClusterNodeLifecycleAndAggregate(t *testing.T) {
 	add(t, f, w1, s1, "node-a")
 	add(t, f, w2, s2, "node-b")
 	memberStore := &members.Store{Database: f.db}
-	invitation, err := memberStore.CreateInvitation("test", 1, "admin")
+	invitation, err := memberStore.CreateInvitation("test", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

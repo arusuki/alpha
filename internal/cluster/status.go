@@ -18,6 +18,7 @@ import (
 )
 
 type memberNodeResource struct {
+	Allowed     bool   `json:"allowed"`
 	Mode        string `json:"mode"`
 	TargetID    string `json:"target_id"`
 	NodeID      string `json:"node_id"`
@@ -130,7 +131,7 @@ func (h *Control) statusPublic(w http.ResponseWriter, r *http.Request) (int, any
 }
 
 func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error) {
-	resources, err := h.memberResources(id)
+	resources, err := h.readMemberResources(id)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -189,7 +190,7 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 			}
 			n.Online = true
 			n.Candidates = []containerCandidate{}
-			if n.Mode == "" {
+			if n.Allowed && n.Mode == "" {
 				candidates, err := h.containerCandidates(ctx, node, resources.Access.Username)
 				if err != nil {
 					n.CandidatesError = err.Error()
@@ -211,7 +212,13 @@ func (h *Control) memberStatus(ctx context.Context, id string) (int, any, error)
 		})
 	}
 	wg.Wait()
-	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "ssh_public_key": keys, "control": resources.Control, "access": resources.Access, "nodes": out, "checked_at": platform.Now()}, nil
+	visible := []memberNodeStatus{}
+	for _, n := range out {
+		if n.Allowed || len(n.Containers) > 0 || n.State != "unallocated" {
+			visible = append(visible, n)
+		}
+	}
+	return 200, map[string]any{"member_id": id, "username": resources.Access.Username, "ssh_public_key": keys, "control": resources.Control, "access": resources.Access, "nodes": visible, "checked_at": platform.Now()}, nil
 }
 
 func memberStatusURL(a bastion.Access) string {

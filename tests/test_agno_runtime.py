@@ -19,7 +19,7 @@ spec.loader.exec_module(runtime)
 class RuntimeTests(unittest.TestCase):
     def data(self, protocol="completions"):
         suffix = "/chat/completions" if protocol == "completions" else "/responses"
-        return {"settings": {"instructions": "按证据巡检，优先检查 GPU", "builtin_tools": ["list_nodes"], "mcp_servers": []}, "mcp_tokens": {}, "config": {"protocol": protocol, "endpoint": "https://model.example/v1" + suffix,
+        return {"settings": {"instructions": "按证据巡检，优先检查 GPU", "builtin_tools": ["list_nodes"], "mcp_servers": []}, "mcp_tokens": {}, "config": {"provider": "openai", "protocol": protocol, "endpoint": "https://model.example/v1" + suffix,
                 "model": "test", "timeout_seconds": 30, "reasoning_summary": False},
                 "api_key": "private-test-token", "user_id": "user-a", "session_id": "session-a",
                 "message": "记住我的巡检偏好：先检查 GPU，并列出节点。", "session": None, "memories": []}
@@ -44,7 +44,20 @@ class RuntimeTests(unittest.TestCase):
                 "finish_reason": "tool_calls" if name else "stop"}]})
 
     def test_tools_memory_and_restore(self):
+        for provider in ("openai", "opencode"):
+            with self.subTest(provider=provider):
+                self.check_tools_memory_and_restore(provider)
+
+    def check_tools_memory_and_restore(self, provider):
+        data = self.data()
+        data["config"]["provider"] = provider
+        def assert_session(req, session_id):
+            if provider == "opencode":
+                self.assertEqual(req.headers["x-opencode-session"], session_id)
+            else:
+                self.assertNotIn("x-opencode-session", req.headers)
         def respond(req):
+            assert_session(req, "session-a")
             body = json.loads(req.content)
             self.assertEqual(req.url.path, "/v1/chat/completions")
             self.assertEqual(req.headers["authorization"], "Bearer private-test-token")
@@ -59,15 +72,17 @@ class RuntimeTests(unittest.TestCase):
             if "update_user_memory" not in used:
                 return self.completion(name="update_user_memory", args={"task": "记住巡检先检查 GPU"})
             return self.completion("当前未注册节点；已记住巡检先检查 GPU。")
-        first, tool = self.execute(self.data(), respond)
+        first, tool = self.execute(data, respond)
         tool.assert_called_with("list_nodes")
         self.assertEqual(first["memories"][0]["memory"], "巡检先检查 GPU")
         self.assertEqual(first["memories"][0]["user_id"], "user-a")
         self.assertNotIn("private-test-token", json.dumps(first))
         second_data = self.data()
+        second_data["config"]["provider"] = provider
         second_data.update(session=first["session"], memories=first["memories"], message="我的偏好是什么？")
         requests = []
         def recall(req):
+            assert_session(req, second_data["session_id"])
             requests.append(json.loads(req.content))
             return self.completion("你偏好先检查 GPU。")
         second, _ = self.execute(second_data, recall)
@@ -81,11 +96,18 @@ class RuntimeTests(unittest.TestCase):
         self.assertNotIn("当前未注册节点", json.dumps(requests, ensure_ascii=False))
 
     def test_responses_configuration_and_no_implicit_key(self):
+        for provider in ("openai", "opencode"):
+            with self.subTest(provider=provider):
+                self.check_responses_configuration(provider)
+
+    def check_responses_configuration(self, provider):
         data = self.data("responses")
+        data["config"]["provider"] = provider
         data["api_key"] = ""
         data["config"]["reasoning_summary"] = True
         def respond(req):
             self.assertNotIn("authorization", req.headers)
+            self.assertEqual(req.headers.get("x-opencode-session"), "session-a" if provider == "opencode" else None)
             self.assertEqual(req.url.path, "/v1/responses")
             body = json.loads(req.content)
             self.assertFalse(body["store"])
@@ -96,6 +118,22 @@ class RuntimeTests(unittest.TestCase):
                 "role": "assistant", "status": "completed", "content": [{"type": "output_text", "text": "正常回复", "annotations": []}]}]})
         result, _ = self.execute(data, respond)
         self.assertEqual(result["content"], "正常回复")
+
+    def test_invalid_provider_and_missing_opencode_session_rejected(self):
+        for provider in (None, "", "unknown"):
+            data = self.data()
+            data["config"]["provider"] = provider
+            with self.assertRaises(ValueError):
+                runtime.build_agent(data, None, [])
+        data = self.data()
+        del data["config"]["provider"]
+        with self.assertRaises(KeyError):
+            runtime.build_agent(data, None, [])
+        data["config"]["provider"] = "opencode"
+        for session in (None, "", " "):
+            data["session_id"] = session
+            with self.assertRaises(ValueError):
+                runtime.build_agent(data, None, [])
 
     def test_invalid_state_and_owner_rejected(self):
         data = self.data()

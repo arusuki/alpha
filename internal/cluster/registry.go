@@ -24,7 +24,8 @@ func (h *Control) RegistryDispatch(ctx context.Context, req registry.Request) (a
 		}
 		return store.Schema()
 	case "options":
-		if err := (&members.Store{Database: h.DB}).CheckInvitation(req.Invitation); err != nil {
+		permissions, err := (&members.Store{Database: h.DB}).InvitationPermissions(req.Invitation)
+		if err != nil {
 			return nil, err
 		}
 		var input struct {
@@ -33,7 +34,7 @@ func (h *Control) RegistryDispatch(ctx context.Context, req registry.Request) (a
 		if err := json.Unmarshal(req.Body, &input); err != nil {
 			return nil, httpapi.NewError(400, "使用者标识无效")
 		}
-		return h.registrationOptions(ctx, input.Username)
+		return h.registrationOptions(ctx, input.Username, permissions)
 	case "register":
 		var registration members.Registration
 		decoder := json.NewDecoder(bytes.NewReader(req.Body))

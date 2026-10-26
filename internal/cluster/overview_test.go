@@ -14,7 +14,7 @@ import (
 func TestOverviewCountsMembersInsteadOfImportedContainerNames(t *testing.T) {
 	f := setup(t)
 	store := &members.Store{Database: f.db}
-	invite, err := store.CreateInvitation("overview", 2, "admin")
+	invite, err := store.CreateInvitation("overview", 2, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

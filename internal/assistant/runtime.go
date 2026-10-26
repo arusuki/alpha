@@ -13,7 +13,7 @@ import (
 	"project-alpha/internal/platform"
 )
 
-const runtimeProtocol = 2
+const runtimeProtocol = 3
 const agnoVersion = "3.1.2"
 const mcpVersion = "2.1.0"
 const openaiVersion = "3.29.0"
@@ -143,6 +143,13 @@ func (c *serviceClient) health(ctx context.Context) Health {
 	health.Capacity = event.Capacity
 	return health
 }
+
+// CheckRuntime checks a specific local Agno socket using this release's protocol
+// and dependency requirements, without running a model or touching saved state.
+func CheckRuntime(ctx context.Context, socket string) Health {
+	return (&serviceClient{socket: socket}).health(ctx)
+}
+
 func (h *Handler) Health(ctx context.Context) Health { return h.runtime.health(ctx) }
 
 // The Go control talks only to a local socket owned by its service user. The

@@ -55,7 +55,7 @@ Docker 可写层条目保留报告中的物理路径作为确认范围与结果�
 | 接口 | 请求与结果 |
 |---|---|
 | `GET /api/agent/settings` | 配置及版本，Key 仅返回 `has_api_key` |
-| `PUT /api/agent/settings` | `{revision, value}`；value 包含 `protocol`、`endpoint`、`model`、`api_key`、`clear_api_key`、`timeout_seconds`、`reasoning_summary` |
+| `PUT /api/agent/settings` | `{revision, value}`；value 包含 `provider`（`openai` 或 `opencode`）、`protocol`、`endpoint`、`model`、`api_key`、`clear_api_key`、`timeout_seconds`、`reasoning_summary` |
 | `GET /api/agent/sessions` | 当前账号的 Host、容器、自定义分析各最近 50 个，包含 `report_scope` 供历史分区 |
 | `GET /api/agent/cleanup-reports` | 自己的全部完整报告、`report_scope` 及对应清理记录 |
 | `POST /api/agent/cleanups` | `{report_id}`；读取已验证条目并返回 `{cleanup, entries}`，状态码 201；已有记录复用 |
@@ -77,7 +77,11 @@ Docker 可写层条目保留报告中的物理路径作为确认范围与结果�
 
 `protocol` 为 `completions` 或 `responses`，`endpoint` 支持基础地址或完整接口地址。保存空 Key 表示保留，`clear_api_key:true` 表示清除。
 
-模型请求以 `project-alpha/0.1` 标识客户端，并携带 `x-opencode-session`，分组 Agent 的值为 `分析会话 ID-group-组号`，同组工具轮次保持相同值，各组互不复用；整体追问使用分析会话 ID，新分析使用新 ID。使用 OpenCode Go 或转发它的代理时，需保留该请求头，否则服务会返回 HTTP 400 `MissingSessionID`。接口协议须与所选模型匹配，参见 [OpenCode Go 接口说明](https://opencode.ai/docs/go/#endpoints)。
+Provider 与接口类型独立：`openai` 用于 OpenAI 及普通兼容服务，`opencode` 用于 OpenCode；两者均可选择 Responses 或 Chat Completions。模型请求以 `project-alpha/0.1` 标识客户端，仅当 Provider 为 `opencode` 时携带 `x-opencode-session`，分组 Agent 的值为 `分析会话 ID-group-组号`，同组工具轮次保持相同值，各组互不复用；整体追问使用分析会话 ID，新分析使用新 ID。使用 OpenCode Go 或转发它的代理时，需保留该请求头，否则服务会返回 HTTP 400 `MissingSessionID`。接口协议须与所选模型匹配，参见 [OpenCode Go 接口说明](https://opencode.ai/docs/go/#endpoints)。
+
+Agno 运维助理通过独立的 Python SDK 调用模型，总控会将同一 `config.provider` 连同 `session_id` 发送给 Agno 服务。选择 `opencode` 后，Agno 的主模型、工具轮次、追问和记忆模型均使用该会话 ID 作为会话头；其他 Provider 不发送此头。updater 会在总控更新时同步重建已部署的 Agno 服务并验证协议；手工替换主程序时也须同步更新容器，旧服务会报告版本不匹配。
+
+已有数据库通过共享 updater 迁移链原地增加 Provider，默认 `openai`，保留 Endpoint、Key、对话和其他配置。使用 OpenCode 的管理员升级后须在“Agent 设置 → API Key 与模型”明确选择 OpenCode。停止使用数据目录的服务后执行 `alpha-updater --database-only --data-dir <已有数据目录>`；目标版本以 `alpha-updater --help` 为准，支持范围见生成的 `internal/platform/upgrade_history.json`。
 
 `POST /api/agent/sessions` 是另行建立全盘基线的自定义分析入口：先扫描宿主机 `/`，启用 Docker 自动发现时也扫描 Docker 资源。Web 一键报告使用 `/api/agent/reports`，不会为每份报告另建全盘扫描。两个入口共用会话、追问、取消与查询接口。
 

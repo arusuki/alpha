@@ -26,8 +26,10 @@ import (
 var schemaSQL string
 
 func Initialize(tx *sql.Tx) error {
-	_, err := tx.Exec(schemaSQL)
-	return err
+	if _, err := tx.Exec(schemaSQL); err != nil {
+		return err
+	}
+	return platform.InstallMemberNodePermissions(tx)
 }
 
 type Store struct{ *platform.Database }
@@ -43,27 +45,30 @@ type Schema struct {
 	Fields   []Field `json:"fields"`
 }
 type Member struct {
-	Containers    []ContainerChoice `json:"-"`
-	SSHKey        string            `json:"ssh_public_key"`
-	ResourceToken string            `json:"-"`
-	Status        string            `json:"status"`
-	ID            string            `json:"id"`
-	Username      string            `json:"username"`
-	Profile       map[string]string `json:"profile"`
-	Schema        Schema            `json:"schema"`
-	InvitationID  string            `json:"invitation_id"`
-	CreatedAt     float64           `json:"created_at"`
+	NodePermissions NodePermissions   `json:"node_permissions"`
+	Containers      []ContainerChoice `json:"-"`
+	SSHKey          string            `json:"ssh_public_key"`
+	ResourceToken   string            `json:"-"`
+	Status          string            `json:"status"`
+	ID              string            `json:"id"`
+	Username        string            `json:"username"`
+	Profile         map[string]string `json:"profile"`
+	Schema          Schema            `json:"schema"`
+	InvitationID    string            `json:"invitation_id"`
+	CreatedAt       float64           `json:"created_at"`
 }
 type Invitation struct {
-	ID        string  `json:"id"`
-	Label     string  `json:"label"`
-	Quota     int     `json:"quota"`
-	Used      int     `json:"used"`
-	Remaining int     `json:"remaining"`
-	Status    string  `json:"status"`
-	CreatedBy string  `json:"created_by"`
-	CreatedAt float64 `json:"created_at"`
-	Code      string  `json:"code,omitempty"`
+	NodeNames       []string        `json:"-"`
+	NodePermissions NodePermissions `json:"node_permissions"`
+	ID              string          `json:"id"`
+	Label           string          `json:"label"`
+	Quota           int             `json:"quota"`
+	Used            int             `json:"used"`
+	Remaining       int             `json:"remaining"`
+	Status          string          `json:"status"`
+	CreatedBy       string          `json:"created_by"`
+	CreatedAt       float64         `json:"created_at"`
+	Code            string          `json:"code,omitempty"`
 }
 type queryRower interface{ QueryRow(string, ...any) *sql.Row }
 
@@ -177,13 +182,16 @@ func (s *Store) CheckInvitation(code string) error {
 	}
 	return err
 }
-func (s *Store) CreateInvitation(label string, quota int, actor string) (Invitation, error) {
+func (s *Store) CreateInvitation(label string, quota int, actor string, permissions NodePermissions) (Invitation, error) {
 	label = strings.TrimSpace(label)
-	i := Invitation{ID: platform.RandomHex(16), Label: label, Quota: quota, Remaining: quota, Status: "active", CreatedBy: actor, CreatedAt: platform.Now(), Code: platform.RandomHex(24)}
+	i := Invitation{NodePermissions: permissions, ID: platform.RandomHex(16), Label: label, Quota: quota, Remaining: quota, Status: "active", CreatedBy: actor, CreatedAt: platform.Now(), Code: platform.RandomHex(24)}
 	if quota < 1 || quota > 100000 || utf8.RuneCountInString(label) > 100 {
 		return Invitation{}, httpapi.NewError(400, "quota 必须为 1–100000 的整数，备注最多 100 个字符")
 	}
 	err := s.Transaction(func(tx *sql.Tx) error {
+		if err := permissions.ValidateNodes(tx); err != nil {
+			return err
+		}
 		var existing bool
 		if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM member_invitations)").Scan(&existing); err != nil {
 			return err
@@ -199,12 +207,15 @@ func (s *Store) CreateInvitation(label string, quota int, actor string) (Invitat
 		if _, err := tx.Exec("INSERT INTO member_invitations(id,code_hash,code_ciphertext,label,quota,created_by,created_at) VALUES(?,?,?,?,?,?,?)", i.ID, hashCode(i.Code), ciphertext, label, quota, actor, i.CreatedAt); err != nil {
 			return err
 		}
+		if _, err := tx.Exec("INSERT INTO invitation_node_permissions VALUES(?,?)", i.ID, httpapi.JSONText(permissions)); err != nil {
+			return err
+		}
 		return platform.Audit(tx, actor, "member.invitation.create", fmt.Sprintf("%s / quota=%d", i.ID, quota))
 	})
 	return i, err
 }
 func (s *Store) Invitations() ([]Invitation, error) {
-	rows, err := s.SQL.Query("SELECT id,label,quota,used,revoked,created_by,created_at FROM member_invitations ORDER BY created_at DESC,id")
+	rows, err := s.SQL.Query("SELECT i.id,i.label,i.quota,i.used,i.revoked,i.created_by,i.created_at,p.permissions FROM member_invitations i LEFT JOIN invitation_node_permissions p ON p.invitation_id=i.id ORDER BY i.created_at DESC,i.id")
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +224,12 @@ func (s *Store) Invitations() ([]Invitation, error) {
 	for rows.Next() {
 		var i Invitation
 		var revoked bool
-		if err := rows.Scan(&i.ID, &i.Label, &i.Quota, &i.Used, &revoked, &i.CreatedBy, &i.CreatedAt); err != nil {
+		var rawPermissions string
+		if err := rows.Scan(&i.ID, &i.Label, &i.Quota, &i.Used, &revoked, &i.CreatedBy, &i.CreatedAt, &rawPermissions); err != nil {
+			return nil, err
+		}
+		i.NodePermissions, err = parseNodePermissions(rawPermissions)
+		if err != nil {
 			return nil, err
 		}
 		i.Remaining, i.Status = i.Quota-i.Used, "active"
@@ -290,6 +306,13 @@ type ContainerChoice struct {
 	ContainerID string `json:"container_id"`
 }
 
+func (c ContainerChoice) ValidateRegistration() error {
+	if c.Mode == "skip" && invitationID.MatchString(c.NodeID) && c.ContainerID == "" {
+		return nil
+	}
+	return c.Validate()
+}
+
 func (c ContainerChoice) Validate() error {
 	if !regexp.MustCompile(`^[a-f0-9]{32}$`).MatchString(c.NodeID) || (c.Mode != "create" && c.Mode != "adopt") || (c.Mode == "create" && c.ContainerID != "") || (c.Mode == "adopt" && !regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(c.ContainerID)) {
 		return httpapi.NewError(400, "每个节点请选择新建或领养；领养须提供完整容器 ID")
@@ -359,7 +382,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 	choices := append([]ContainerChoice{}, req.Containers...)
 	seen := map[string]bool{}
 	for _, choice := range choices {
-		if err := choice.Validate(); err != nil {
+		if err := choice.ValidateRegistration(); err != nil {
 			return Member{}, err
 		}
 		if seen[choice.NodeID] {
@@ -414,6 +437,10 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 				if e != nil || httpapi.JSONText(previous.Containers) != httpapi.JSONText(choices) || !platform.CheckPassword(req.Password, previousPassword) || previous.Status != "active" || previous.Username != req.Username || previous.SSHKey != key || previous.Schema.Revision != req.SchemaRevision || invitationHash != hashCode(req.InvitationCode) || httpapi.JSONText(values) != httpapi.JSONText(previous.Profile) {
 					return httpapi.NewError(409, "此注册请求已提交，不能更改注册内容")
 				}
+				previous.NodePermissions, err = ReadNodePermissions(tx, previous.ID)
+				if err != nil {
+					return err
+				}
 				previous.ResourceToken = token
 				previous.Containers = choices
 				m = previous
@@ -441,6 +468,14 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 			}
 			return err
 		}
+		var rawPermissions string
+		if err = tx.QueryRow("SELECT permissions FROM invitation_node_permissions WHERE invitation_id=?", m.InvitationID).Scan(&rawPermissions); err != nil {
+			return err
+		}
+		m.NodePermissions, err = parseNodePermissions(rawPermissions)
+		if err != nil {
+			return err
+		}
 		result, err := tx.Exec("UPDATE member_invitations SET used=used+1 WHERE id=? AND revoked=0 AND used<quota", m.InvitationID)
 		if err != nil {
 			return err
@@ -462,6 +497,9 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 			}
 			return err
 		}
+		if _, err = tx.Exec("INSERT INTO member_node_permissions VALUES(?,?)", m.ID, rawPermissions); err != nil {
+			return err
+		}
 		if reserve != nil {
 			if err = reserve(tx, m); err != nil {
 				return err
@@ -472,7 +510,7 @@ func (s *Store) registerWithToken(req Registration, reserve func(*sql.Tx, Member
 	return m, err
 }
 func (s *Store) Members() ([]Member, error) {
-	rows, err := s.SQL.Query("SELECT id,username,profile,registration_schema,invitation_id,created_at,ssh_public_key,status FROM members ORDER BY created_at DESC,id")
+	rows, err := s.SQL.Query("SELECT m.id,m.username,m.profile,m.registration_schema,m.invitation_id,m.created_at,m.ssh_public_key,m.status,p.permissions FROM members m LEFT JOIN member_node_permissions p ON p.member_id=m.id ORDER BY m.created_at DESC,m.id")
 	if err != nil {
 		return nil, err
 	}
@@ -480,8 +518,12 @@ func (s *Store) Members() ([]Member, error) {
 	out := []Member{}
 	for rows.Next() {
 		var m Member
-		var profile, schema string
-		if err = rows.Scan(&m.ID, &m.Username, &profile, &schema, &m.InvitationID, &m.CreatedAt, &m.SSHKey, &m.Status); err != nil {
+		var profile, schema, rawPermissions string
+		if err = rows.Scan(&m.ID, &m.Username, &profile, &schema, &m.InvitationID, &m.CreatedAt, &m.SSHKey, &m.Status, &rawPermissions); err != nil {
+			return nil, err
+		}
+		m.NodePermissions, err = parseNodePermissions(rawPermissions)
+		if err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal([]byte(profile), &m.Profile); err != nil {

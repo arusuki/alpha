@@ -93,7 +93,7 @@ func TestMultipleKeyRegistrationPreservesExistingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := &members.Store{Database: db}
-	invitation, err := store.CreateInvitation("keys", 2, "admin")
+	invitation, err := store.CreateInvitation("keys", 2, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

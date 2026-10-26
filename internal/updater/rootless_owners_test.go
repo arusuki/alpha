@@ -22,6 +22,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 							t.Fatal(err)
 						}
+						dropNodePermissionsSchema(t, db, role)
 						dropChatCLISchema(t, db, role)
 						if role == "control" {
 							if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {

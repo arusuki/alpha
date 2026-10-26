@@ -15,7 +15,7 @@ func TestMemberPasswordStorageAndSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	invitation, err := s.CreateInvitation("password", 2, "admin")
+	invitation, err := s.CreateInvitation("password", 2, "admin", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestAdminResetPasswordTransactionRollback(t *testing.T) {
 	if _, err := s.SaveSchema(exampleSchema(), "admin"); err != nil {
 		t.Fatal(err)
 	}
-	invitation, err := s.CreateInvitation("reset", 1, "admin")
+	invitation, err := s.CreateInvitation("reset", 1, "admin", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}

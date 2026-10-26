@@ -194,32 +194,36 @@ func TestRecoveryMarkerBlocksAllAutomaticTargets(t *testing.T) {
 }
 func TestServicePreparationFailureDoesNotConsumeReceipt(t *testing.T) {
 	testVersion(t)
-	m := automaticManager(t, "worker")
-	configure(t, m, func(c *Config) { c.Automatic = true })
-	if err := os.WriteFile(filepath.Join(m.directory, "prepare-fail"), nil, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Receive(release("current", buildinfo.Version)); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Automatic(); err != nil {
-		t.Fatal(err)
-	}
-	finishPreparation(t, m)
-	if attempted, err := updater.ServicesAttempted(m.directory, buildinfo.Version); err != nil || attempted {
-		t.Fatal("failed preparation consumed service receipt", err)
-	}
-	if err := os.Remove(filepath.Join(m.directory, "prepare-fail")); err != nil {
-		t.Fatal(err)
-	}
-	retryNow(t, m)
-	select {
-	case <-m.Requested:
-	case <-time.After(5 * time.Second):
-		t.Fatal("service preparation did not retry")
-	}
-	finishPreparation(t, m)
-	if attempted, err := updater.ServicesAttempted(m.directory, buildinfo.Version); err != nil || !attempted {
-		t.Fatal("prepared services lack installation guard", err)
+	for _, role := range []string{"worker", "control"} {
+		t.Run(role, func(t *testing.T) {
+			m := automaticManager(t, role)
+			configure(t, m, func(c *Config) { c.Automatic = true })
+			if err := os.WriteFile(filepath.Join(m.directory, "prepare-fail"), nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Receive(release("current", buildinfo.Version)); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Automatic(); err != nil {
+				t.Fatal(err)
+			}
+			finishPreparation(t, m)
+			if attempted, err := updater.ServicesAttempted(m.directory, buildinfo.Version); err != nil || attempted {
+				t.Fatal("failed preparation consumed service receipt", err)
+			}
+			if err := os.Remove(filepath.Join(m.directory, "prepare-fail")); err != nil {
+				t.Fatal(err)
+			}
+			retryNow(t, m)
+			select {
+			case <-m.Requested:
+			case <-time.After(5 * time.Second):
+				t.Fatal("service preparation did not retry")
+			}
+			finishPreparation(t, m)
+			if attempted, err := updater.ServicesAttempted(m.directory, buildinfo.Version); err != nil || !attempted {
+				t.Fatal("prepared services lack installation guard", err)
+			}
+		})
 	}
 }

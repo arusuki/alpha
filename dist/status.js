@@ -119,7 +119,7 @@
     const choices=new Map(Array.from(document.querySelectorAll('[data-choice]:checked')).map(el=>[el.dataset.choice,el.value]));
     $('statusNodes').innerHTML=data.nodes.map((n,index)=>{
       const own=containers(n),hasContainer=own.length>0||n.state==='ready';
-      const canApply=n.state!=='ready'&&['unallocated','failed','deleted'].includes(n.state);
+      const canApply=n.allowed&&n.state!=='ready'&&['unallocated','failed','deleted'].includes(n.state);
       const applying=n.node_id===state.applying;
       const allocation=applying?'正在分配':hasContainer&&!n.mode&&n.state==='unallocated'?'已有容器，待领养':hasContainer?'已分配容器':labels[n.state]||n.state;
       return `<article class="node" data-node="${esc(n.node_id)}">
@@ -130,6 +130,7 @@
         <div class="allocation"><div class="allocation-heading"><strong>${esc(allocation)}</strong></div>
           ${canApply&&!n.mode?containerChoices(n):''}
           ${canApply&&n.mode?`<p class="node-note">原选择：${n.mode==='adopt'?'领养 · '+esc(n.target_id):'新建一个'}；重试将继续原分配。</p>`:''}
+          ${!n.allowed?'<p class="node-note">此节点已撤销容器分配权限，已有容器和数据保留。</p>':''}
           ${n.candidates_error?`<p class="node-note">已有容器列表暂不可用：${esc(n.candidates_error)}</p>`:''}
           ${own.length?`<ul class="container-list">${own.map(c=>`<li><code>${esc(c.name||c.id)}</code><small>${esc(c.state||'已登记 · 运行状态待采集')}</small></li>`).join('')}</ul>`:''}
           ${n.port?`<p class="node-note">SSH · root @ ${esc(n.internal_ip)} · 端口 ${esc(n.port)}</p>`:''}

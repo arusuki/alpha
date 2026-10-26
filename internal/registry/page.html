@@ -36,8 +36,8 @@
       <p>还没有密钥时，可运行 <code>ssh-keygen -t ed25519</code>，按提示选择保存位置，再读取生成的 <code>.pub</code> 文件；已有密钥时不要覆盖。</p>
     </details>
     <section class="node-picker" aria-labelledby="nodePickerTitle">
-      <div class="picker-heading"><div><h2 id="nodePickerTitle">选择你的容器</h2><p class="hint">每个节点选择一个，打造你的工作空间。</p></div><button type="button" id="reloadNodes">刷新列表</button></div>
-      <p class="picker-note">新建独立环境，或领养已有容器并保留原数据和密码。</p>
+      <div class="picker-heading"><div><h2 id="nodePickerTitle">选择你的容器</h2><p class="hint">仅显示此邀请授权的节点，每个节点可独立选择。</p></div><button type="button" id="reloadNodes">刷新列表</button></div>
+      <p class="picker-note">新建独立环境，或领养已有容器并保留原数据和密码。选择「暂不创建」可跳过，注册后再申请。</p>
       <p id="choiceSummary" class="choice-summary" role="status" aria-live="polite"></p>
       <div id="nodeChoices"></div>
     </section>

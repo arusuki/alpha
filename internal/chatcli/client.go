@@ -48,6 +48,12 @@ func newClient(server string) *client {
 }
 
 func (c *client) request(ctx context.Context, method, path string, body, result any) error {
+	return c.requestWithTimeout(ctx, method, path, body, result, 30*time.Second)
+}
+
+func (c *client) requestWithTimeout(ctx context.Context, method, path string, body, result any, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var input io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -68,12 +74,12 @@ func (c *client) request(ctx context.Context, method, path string, body, result 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("请求未完成，请核对历史会话后重试: %w", err)
+		return fmt.Errorf("请求未完成: %w", err)
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (16<<20)+1))
 	if err != nil {
-		return err
+		return fmt.Errorf("读取服务器响应失败: %w", err)
 	}
 	if len(data) > 16<<20 {
 		return fmt.Errorf("服务器响应超过大小限制")

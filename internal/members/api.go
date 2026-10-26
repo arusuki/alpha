@@ -18,7 +18,7 @@ type attempt struct {
 	since time.Time
 }
 type Handler struct {
-	Options    func(context.Context, string) (any, error)
+	Options    func(context.Context, string, NodePermissions) (any, error)
 	Reserve    func(*sql.Tx, Member) error
 	Registered func(Member)
 	store      *Store
@@ -86,10 +86,11 @@ func (h *Handler) DispatchPublic(w http.ResponseWriter, r *http.Request) (int, a
 		if err := httpapi.DecodeBody(w, r, &req); err != nil {
 			return 0, nil, err
 		}
-		if err := h.store.CheckInvitation(req.InvitationCode); err != nil {
+		permissions, err := h.store.InvitationPermissions(req.InvitationCode)
+		if err != nil {
 			return 0, nil, err
 		}
-		value, err := h.Options(r.Context(), req.Username)
+		value, err := h.Options(r.Context(), req.Username, permissions)
 		return 200, value, err
 	}
 	if r.Method == "POST" && r.URL.Path == "/api/members/register" {

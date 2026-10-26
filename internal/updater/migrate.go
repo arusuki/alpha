@@ -20,7 +20,7 @@ import (
 // identities from a failed subprocess and may restart after a database rollback.
 func migrateRelease(ctx context.Context, role, directory, binDir string, lock *os.File, docker dockerCommand, out io.Writer) error {
 	return platform.UpgradeDatabase(directory, role, lock, func() error {
-		if role != "worker" {
+		if role != "worker" && role != "control" {
 			return nil
 		}
 		if _, err := os.Stat(filepath.Join(binDir, ".alpha-update-pending")); os.IsNotExist(err) {
@@ -29,7 +29,7 @@ func migrateRelease(ctx context.Context, role, directory, binDir string, lock *o
 		} else if err != nil {
 			return err
 		}
-		stage, err := migrationPayload(binDir, buildinfo.Version)
+		stage, err := migrationPayload(binDir, buildinfo.Version, role)
 		if err != nil {
 			return err
 		}
@@ -66,7 +66,7 @@ func migrateRelease(ctx context.Context, role, directory, binDir string, lock *o
 			return err
 		}
 		if len(plan.Updates) != 0 {
-			return errors.New("worker service containers do not match the target release; bootstrap the target release's alpha-updater and retry the full update")
+			return errors.New("service containers do not match the target release; bootstrap the target release's alpha-updater and retry the full update")
 		}
 		return nil
 	})
@@ -75,12 +75,12 @@ func migrateRelease(ctx context.Context, role, directory, binDir string, lock *o
 // Locate the release by its installed binary hashes, never by stage age or a
 // service-plan format. This also works for CLI installs. Extraction uses a new
 // private directory; the caller's archive and prepared files remain untouched.
-func migrationPayload(binDir, tag string) (string, error) {
+func migrationPayload(binDir, tag, role string) (string, error) {
 	if err := ValidateTag(tag); err != nil {
 		return "", err
 	}
 	hashes := map[string]string{}
-	for _, file := range binaries("worker") {
+	for _, file := range binaries(role) {
 		hash, err := fileHash(filepath.Join(binDir, file.destination))
 		if err != nil {
 			return "", err
@@ -97,7 +97,7 @@ func migrationPayload(binDir, tag string) (string, error) {
 			continue
 		}
 		archive := filepath.Join(binDir, entry.Name(), "release.tar.gz")
-		stage, err := extractMigrationPayload(binDir, archive, tag, hashes)
+		stage, err := extractMigrationPayload(binDir, archive, tag, role, hashes)
 		if err == nil {
 			return stage, nil
 		}
@@ -106,7 +106,7 @@ func migrationPayload(binDir, tag string) (string, error) {
 	return "", fmt.Errorf("cannot find the installed release's container payload in the staged archive: %w", errors.Join(append([]error{errors.New("matching release package required")}, failures...)...))
 }
 
-func extractMigrationPayload(binDir, archive, tag string, hashes map[string]string) (stage string, err error) {
+func extractMigrationPayload(binDir, archive, tag, role string, hashes map[string]string) (stage string, err error) {
 	info, err := os.Lstat(archive)
 	if err != nil {
 		return "", err
@@ -129,14 +129,14 @@ func extractMigrationPayload(binDir, archive, tag string, hashes map[string]stri
 		}
 	}()
 	var names []string
-	for _, file := range releaseFiles("worker") {
+	for _, file := range releaseFiles(role) {
 		names = append(names, file.source)
 	}
 	if err = extract(f, stage, "project-alpha_"+tag+"_linux_"+runtime.GOARCH, names); err != nil {
 		return stage, err
 	}
 	p := PreparedUpdate{Stage: stage, Hashes: hashes}
-	if err = p.verify(binaries("worker")); err != nil {
+	if err = p.verify(binaries(role)); err != nil {
 		return stage, fmt.Errorf("staged archive does not match installed release: %w", err)
 	}
 	return stage, nil

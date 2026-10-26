@@ -121,6 +121,16 @@ def build_agent(data, db, mcp_tools):
             return super()._parse_provider_response(response, **kwargs)
 
     cfg = data["config"]
+    if cfg["provider"] not in ("openai", "opencode"):
+        raise ValueError("Invalid model provider")
+    if cfg["protocol"] not in ("responses", "completions"):
+        raise ValueError("Invalid model protocol")
+    default_headers = {"User-Agent": "project-alpha/0.1"}
+    if cfg["provider"] == "opencode":
+        if not isinstance(data["session_id"], str) or not data["session_id"].strip():
+            raise ValueError("OpenCode requires a session ID")
+        # Retained by Agno's model copies, including MemoryManager calls.
+        default_headers["x-opencode-session"] = data["session_id"]
     suffix = "/responses" if cfg["protocol"] == "responses" else "/chat/completions"
     if not cfg["endpoint"].endswith(suffix):
         raise ValueError("Invalid normalized model endpoint")
@@ -134,7 +144,7 @@ def build_agent(data, db, mcp_tools):
     options = dict(id=cfg["model"], base_url=cfg["endpoint"][:-len(suffix)],
                    api_key=data["api_key"] or "unused", timeout=cfg["timeout_seconds"],
                    max_retries=0, retries=0, retry_with_guidance=False, http_client=client,
-                   default_headers={"User-Agent": "project-alpha/0.1"}, store=False)
+                   default_headers=default_headers, store=False)
     if cfg["protocol"] == "responses":
         model = ControlResponses(**options, use_previous_response_id=False,
                                 reasoning_summary="auto" if cfg["reasoning_summary"] else None)

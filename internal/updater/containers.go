@@ -51,7 +51,7 @@ func runDocker(ctx context.Context, endpoint string, args []string, input []byte
 	// Explicit endpoint and private resolved Compose files are authoritative.
 	for _, env := range os.Environ() {
 		key, _, _ := strings.Cut(env, "=")
-		if !strings.HasPrefix(key, "COMPOSE_") && !slices.Contains([]string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH"}, key) {
+		if !strings.HasPrefix(key, "COMPOSE_") && !slices.Contains([]string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "AGNO_UID", "AGNO_GID", "AGNO_SOCKET_DIR", "AGNO_IMAGE"}, key) {
 			cmd.Env = append(cmd.Env, env)
 		}
 	}
@@ -61,7 +61,7 @@ func runDocker(ctx context.Context, endpoint string, args []string, input []byte
 	if err != nil {
 		// Compose diagnostics can contain interpolated credentials; do not copy
 		// the full resolved document or command output into web-visible errors.
-		return nil, fmt.Errorf("docker %s failed: %w; check Docker access and Compose configuration as the worker account (sudo is not invoked)", args[0], err)
+		return nil, fmt.Errorf("docker %s failed: %w; check Docker access and Compose configuration as the service account (sudo is not invoked)", args[0], err)
 	}
 	return raw, nil
 }
@@ -134,6 +134,13 @@ func inspectService(ctx context.Context, run dockerCommand, endpoint, id string)
 }
 
 func containerEndpoint(db *platform.Database) (string, error) {
+	var role string
+	if err := db.SQL.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
+		return "", err
+	}
+	if role == "control" {
+		return controlDockerEndpoint()
+	}
 	var raw string
 	err := db.SQL.QueryRow("SELECT value FROM container_settings WHERE id=1").Scan(&raw)
 	if err != nil {
@@ -156,42 +163,59 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		return nil, err
 	}
 	p := &containerPlan{Endpoint: endpoint, Updates: []containerUpdate{}}
-	raw, err := os.ReadFile(filepath.Join(stage, serviceManifest))
-	if err != nil {
+	var role string
+	if err := db.SQL.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
 		return nil, err
 	}
+	var raw []byte
 	var manifest struct{ Services []serviceImage }
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&manifest); err != nil {
-		return nil, err
-	}
-	seen := map[string]bool{}
-	for _, image := range manifest.Services {
-		if !slices.Contains([]string{"rootless-docker", "dram-bw", "tetragon"}, image.Name) || seen[image.Name] {
-			return nil, errors.New("invalid or duplicate service image")
+	if role == "control" {
+		dockerfile, err := os.ReadFile(filepath.Join(stage, agnoDockerfile))
+		if err != nil {
+			return nil, err
 		}
-		seen[image.Name] = true
-		if image.Image == "" && (len(image.Binaries) == 0 || image.Dockerfile == "") {
-			return nil, errors.New("invalid service build context")
+		manifest.Services = []serviceImage{{Name: "agno", Dockerfile: string(dockerfile), Binaries: agnoBuildFiles, Entrypoint: []string{"python", "-I", "-u", "/app/service.py"}}}
+	} else {
+		raw, err = os.ReadFile(filepath.Join(stage, serviceManifest))
+		if err != nil {
+			return nil, err
 		}
-		for _, binary := range image.Binaries {
-			if !slices.Contains([]string{"rootless-docker", "dram-bwd"}, binary) {
-				return nil, errors.New("invalid service binary")
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		if err = decoder.Decode(&manifest); err != nil {
+			return nil, err
+		}
+		seen := map[string]bool{}
+		for _, image := range manifest.Services {
+			if !slices.Contains([]string{"rootless-docker", "dram-bw", "tetragon"}, image.Name) || seen[image.Name] {
+				return nil, errors.New("invalid or duplicate service image")
+			}
+			seen[image.Name] = true
+			if image.Image == "" && (len(image.Binaries) == 0 || image.Dockerfile == "") {
+				return nil, errors.New("invalid service build context")
+			}
+			for _, binary := range image.Binaries {
+				if !slices.Contains([]string{"rootless-docker", "dram-bwd"}, binary) {
+					return nil, errors.New("invalid service binary")
+				}
 			}
 		}
-	}
-	if len(seen) != 3 {
-		return nil, errors.New("release service manifest must describe all three node services")
+		if len(seen) != 3 {
+			return nil, errors.New("release service manifest must describe all three node services")
+		}
 	}
 	for _, image := range manifest.Services {
 		raw, err = run(ctx, endpoint, []string{"container", "ls", "--all", "--no-trunc", "--filter", "label=project-alpha.service=" + image.Name, "--format", "{{.ID}}"}, nil)
 		if err != nil {
+			if image.Name == "agno" && ctx.Err() == nil && agnoUndeployedWithoutDocker(db.Directory, endpoint, err) {
+				fmt.Fprintln(out, "Agno 未部署且未安装 Docker，跳过服务容器更新。")
+				continue
+			}
 			return nil, err
 		}
 		ids := strings.Fields(string(raw))
 		if len(ids) == 0 {
-			fmt.Fprintf(out, "节点服务 %s 未部署，跳过。\n", image.Name)
+			fmt.Fprintf(out, "服务容器 %s 未部署，跳过。\n", image.Name)
 			continue
 		}
 		if len(ids) != 1 {
@@ -203,6 +227,11 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		}
 		if c.ID != ids[0] || c.Config.Labels["project-alpha.service"] != image.Name || c.State.Paused || c.State.Dead || c.State.Status == "removing" || c.HostConfig.AutoRemove {
 			return nil, fmt.Errorf("%s container identity/state does not permit updating", image.Name)
+		}
+		if image.Name == "agno" {
+			if err := validateAgnoMount(db.Directory, c); err != nil {
+				return nil, err
+			}
 		}
 		labels := c.Config.Labels
 		project, service := labels["com.docker.compose.project"], labels["com.docker.compose.service"]
@@ -224,6 +253,14 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 			}
 			args = append(args, "-f", file)
 		}
+		if image.Name == "agno" {
+			envFile, err := agnoComposeEnvironment(stage, c)
+			if err != nil {
+				return nil, err
+			}
+			defer os.Remove(envFile)
+			args = append(args, "--env-file", envFile)
+		}
 		raw, err = run(ctx, endpoint, append(args, "config", "--format", "json"), nil)
 		if err != nil {
 			return nil, err
@@ -240,10 +277,15 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 		if !ok {
 			return nil, errors.New("Compose service missing")
 		}
+		if image.Name == "agno" {
+			if err := validateAgnoCompose(spec, c); err != nil {
+				return nil, err
+			}
+		}
 		// Node services are standalone. Avoid persisting stale image settings
 		// for unrelated services into the new deployment's Compose document.
 		if deps, ok := spec["depends_on"].(map[string]any); ok && len(deps) > 0 {
-			return nil, fmt.Errorf("%s has Compose dependencies; node services must be independently managed", image.Name)
+			return nil, fmt.Errorf("%s has Compose dependencies; services must be independently managed", image.Name)
 		}
 		config["services"] = map[string]any{service: spec}
 		// Keep the resolved deployment (mounts, namespaces, logging, GIDs) and
@@ -285,30 +327,34 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 			}
 			hash := fmt.Sprintf("%x", digest.Sum(nil))
 			ref = "project-alpha-" + image.Name + ":update-" + hash[:16]
-			var input bytes.Buffer
-			tw := tar.NewWriter(&input)
-			if err = tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0644, Size: int64(len(image.Dockerfile))}); err != nil {
-				return nil, err
-			}
-			if _, err = tw.Write([]byte(image.Dockerfile)); err != nil {
-				return nil, err
-			}
-			for _, name := range image.Binaries {
-				binary, readErr := os.ReadFile(filepath.Join(stage, name))
-				if readErr != nil {
-					return nil, readErr
-				}
-				if err = tw.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(binary))}); err != nil {
+			if image.Name == "agno" {
+				err = buildAgnoImage(ctx, endpoint, stage, ref, run)
+			} else {
+				var input bytes.Buffer
+				tw := tar.NewWriter(&input)
+				if err = tw.WriteHeader(&tar.Header{Name: "Dockerfile", Mode: 0644, Size: int64(len(image.Dockerfile))}); err != nil {
 					return nil, err
 				}
-				if _, err = tw.Write(binary); err != nil {
+				if _, err = tw.Write([]byte(image.Dockerfile)); err != nil {
 					return nil, err
 				}
+				for _, name := range image.Binaries {
+					binary, readErr := os.ReadFile(filepath.Join(stage, name))
+					if readErr != nil {
+						return nil, readErr
+					}
+					if err = tw.WriteHeader(&tar.Header{Name: name, Mode: 0755, Size: int64(len(binary))}); err != nil {
+						return nil, err
+					}
+					if _, err = tw.Write(binary); err != nil {
+						return nil, err
+					}
+				}
+				if err = tw.Close(); err != nil {
+					return nil, err
+				}
+				_, err = run(ctx, endpoint, []string{"build", "--network=none", "--pull=false", "--tag", ref, "-"}, input.Bytes())
 			}
-			if err = tw.Close(); err != nil {
-				return nil, err
-			}
-			_, err = run(ctx, endpoint, []string{"build", "--network=none", "--pull=false", "--tag", ref, "-"}, input.Bytes())
 		} else {
 			_, err = run(ctx, endpoint, []string{"pull", ref}, nil)
 		}
@@ -356,11 +402,16 @@ func prepareContainers(ctx context.Context, db *platform.Database, stage string,
 			return nil, err
 		}
 		if bytes.Equal(before, after) {
-			fmt.Fprintf(out, "节点服务 %s 镜像及配置已一致，跳过重建。\n", image.Name)
+			if image.Name == "agno" && (c.State.Running || c.State.Restarting) {
+				if err := probeAgno(ctx, c); err != nil {
+					return nil, err
+				}
+			}
+			fmt.Fprintf(out, "服务容器 %s 镜像及配置已一致，跳过重建。\n", image.Name)
 			continue
 		}
 		p.Updates = append(p.Updates, containerUpdate{Name: image.Name, Service: service, Project: project, ID: c.ID, Image: c.Image, NextImage: next, Before: before, After: after, Inspection: snapshot, Running: c.State.Running || c.State.Restarting})
-		fmt.Fprintf(out, "已准备节点服务镜像：%s\n", image.Name)
+		fmt.Fprintf(out, "已准备服务容器镜像：%s\n", image.Name)
 	}
 	return p, nil
 }
@@ -454,7 +505,7 @@ func (p *containerPlan) apply(ctx context.Context, directory string, run dockerC
 	}
 	for i, u := range p.Updates {
 		last = i
-		fmt.Fprintf(out, "更新节点服务：%s（保留原启停状态）\n", u.Service)
+		fmt.Fprintf(out, "更新服务容器：%s（保留原启停状态）\n", u.Service)
 		if err = p.replace(ctx, run, u, filepath.Join(deployment, fmt.Sprintf("%d-after.json", i)), u.NextImage, true); err != nil {
 			return nil, errors.Join(err, rollback())
 		}
@@ -509,6 +560,11 @@ func (p *containerPlan) replace(ctx context.Context, run dockerCommand, u contai
 							break
 						}
 					}
+					if err == nil {
+						return nil
+					}
+				} else if u.Name == "agno" && updated {
+					err = probeAgno(ctx, c)
 					if err == nil {
 						return nil
 					}

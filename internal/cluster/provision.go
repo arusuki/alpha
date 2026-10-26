@@ -46,8 +46,14 @@ func (h *Control) initProvision() error {
 		if err != nil {
 			return err
 		}
-		if len(nodes) != len(m.Containers) {
-			return httpapi.NewError(409, "请为每个节点选择领养或新建；节点列表有变化时请重新载入")
+		allowedCount := 0
+		for _, n := range nodes {
+			if m.NodePermissions.Allows(n["id"].(string)) {
+				allowedCount++
+			}
+		}
+		if allowedCount != len(m.Containers) {
+			return httpapi.NewError(409, "请为每个授权节点选择领养、新建或暂不创建；节点列表有变化时请重新载入")
 		}
 		valid := map[string]bool{}
 		for _, n := range nodes {
@@ -56,6 +62,12 @@ func (h *Control) initProvision() error {
 		for _, choice := range m.Containers {
 			if !valid[choice.NodeID] {
 				return httpapi.NewError(400, "所选节点不存在或不是 worker")
+			}
+			if !m.NodePermissions.Allows(choice.NodeID) {
+				return httpapi.NewError(403, "没有在此节点拥有容器的权限")
+			}
+			if choice.Mode == "skip" {
+				continue
 			}
 			if _, err := tx.Exec("INSERT INTO member_node_resources(member_id,node_id,state,updated_at,mode,target_id) VALUES(?,?,'pending',?,?,?)", m.ID, choice.NodeID, platform.Now(), choice.Mode, choice.ContainerID); err != nil {
 				return err
@@ -209,6 +221,12 @@ func (h *Control) provisionMember(ctx context.Context, id string) error {
 
 // applyMemberNode runs under the member gate and persists the result before returning.
 func (h *Control) applyMemberNode(ctx context.Context, id, nodeID, name, key string, removing bool) error {
+	if !removing {
+		if err := h.requireMemberNode(id, nodeID); err != nil {
+			_, persistErr := h.DB.SQL.Exec("UPDATE member_node_resources SET state='failed',error=?,updated_at=? WHERE member_id=? AND node_id=?", err.Error(), platform.Now(), id, nodeID)
+			return errors.Join(err, persistErr)
+		}
+	}
 	state := "running"
 	method := "PUT"
 	if removing {
@@ -288,11 +306,32 @@ func (h *Control) memberID(r *http.Request) (string, error) {
 	return id, err
 }
 func (h *Control) memberResources(id string) (*memberResourceView, error) {
+	v, err := h.readMemberResources(id)
+	if err != nil {
+		return nil, err
+	}
+	nodes := v.Nodes[:0]
+	for _, n := range v.Nodes {
+		if n.Allowed || n.State != "unallocated" {
+			nodes = append(nodes, n)
+		}
+	}
+	v.Nodes = nodes
+	return v, nil
+}
+
+// Keep all node metadata until the caller can determine visibility. Status
+// queries also discover administrator-assigned containers through inventory.
+func (h *Control) readMemberResources(id string) (*memberResourceView, error) {
 	var status string
 	if err := h.DB.SQL.QueryRow("SELECT status FROM members WHERE id=?", id).Scan(&status); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, httpapi.NewError(404, "使用者不存在")
 		}
+		return nil, err
+	}
+	permissions, err := members.ReadNodePermissions(h.DB.SQL, id)
+	if err != nil {
 		return nil, err
 	}
 	a, err := h.Bastion.Access(id)
@@ -310,6 +349,7 @@ func (h *Control) memberResources(id string) (*memberResourceView, error) {
 		if err = rows.Scan(&n.NodeID, &n.NodeName, &n.State, &n.ContainerID, &n.Name, &n.Port, &n.InternalIP, &n.Error, &n.Mode, &n.TargetID, &n.KeyState, &n.KeyError); err != nil {
 			return nil, err
 		}
+		n.Allowed = permissions.Allows(n.NodeID)
 		v.Nodes = append(v.Nodes, n)
 	}
 	return v, rows.Err()
@@ -360,6 +400,9 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 		return 0, nil, httpapi.NewError(404, "接口不存在")
 	}
 	if !remove && action == "containers" {
+		if err := h.requireMemberNode(id, req.NodeID); err != nil {
+			return 0, nil, err
+		}
 		if err := req.Validate(); err != nil {
 			return 0, nil, err
 		}

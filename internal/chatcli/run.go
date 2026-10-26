@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"project-alpha/internal/buildinfo"
 )
@@ -176,7 +177,7 @@ func run(ctx context.Context, args []string, in io.Reader, out, status io.Writer
 		err = c.request(ctx, "POST", "/api/status/"+*username+"/login", map[string]string{"password": password}, &login)
 		password = ""
 		if err != nil {
-			return err
+			return fmt.Errorf("登录失败: %w", err)
 		}
 		if !tokenPattern.MatchString(login.Token) {
 			return fmt.Errorf("服务器返回的访问 token 格式无效")
@@ -218,8 +219,8 @@ func run(ctx context.Context, args []string, in io.Reader, out, status io.Writer
 		}
 		var result conversation
 		fmt.Fprintln(status, "正在处理…")
-		if err := c.request(ctx, "POST", path, map[string]string{"message": text}, &result); err != nil {
-			return err
+		if err := c.requestWithTimeout(ctx, "POST", path, map[string]string{"message": text}, &result, 16*time.Minute); err != nil {
+			return fmt.Errorf("对话请求未完成，请核对历史会话后重试: %w", err)
 		}
 		if !sessionPattern.MatchString(result.ID) || len(result.Messages) == 0 || result.Messages[len(result.Messages)-1].Role != "assistant" {
 			return fmt.Errorf("服务器返回的对话格式无效")

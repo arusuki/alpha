@@ -8,7 +8,7 @@ import (
 )
 
 // The receipt is independent of the main binary version: an older installer
-// may have installed the new worker without updating its service containers.
+// may have installed the new control/worker without updating its service containers.
 type serviceSync struct {
 	Tag   string `json:"tag"`
 	State string `json:"state"`

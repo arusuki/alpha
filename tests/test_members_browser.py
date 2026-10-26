@@ -139,6 +139,20 @@ with tempfile.TemporaryDirectory(prefix='alpha-members-') as temporary:
                 assert page.locator('#membersBody img').count() == 0
                 assert '<img' in page.locator('#membersBody').inner_text()
                 assert '1 / 2' in page.locator('#memberInvitationsBody').inner_text()
+                # Permissions can be revoked and restored without removing the member.
+                page.locator(f'[data-member-permissions="{member_id}"]').click()
+                expect(page.locator('#memberPermissionsDialog')).to_be_visible()
+                expect(page.locator('#memberAllNodes')).to_be_checked()
+                page.locator('#memberAllNodes').uncheck()
+                page.locator('#memberPermissionsSave').click()
+                expect(page.locator('#memberPermissionsDialog')).to_be_hidden()
+                expect(page.locator('#membersBody')).to_contain_text('未授权节点')
+                page.locator(f'[data-member-permissions="{member_id}"]').click()
+                expect(page.locator('#memberAllNodes')).not_to_be_checked()
+                page.locator('#memberAllNodes').check()
+                page.locator('#memberPermissionsSave').click()
+                expect(page.locator('#memberPermissionsDialog')).to_be_hidden()
+                expect(page.locator('#membersBody')).to_contain_text('全部节点')
                 # Reset from account management and verify actual session revocation.
                 old_session = public.post('/api/status/alice/login', data={'password': 'Member-password-123'}).json()['session_token']
                 page.locator(f'#membersBody [data-reset-member="{member_id}"]').click()

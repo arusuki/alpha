@@ -22,7 +22,7 @@ for index, (name, online, state) in enumerate([
     ('离线节点', False, 'unallocated'), ('<img src=x onerror=alert(1)>', True, 'failed'),
     ('管理员分配', True, 'unallocated'), ('等待分配', True, 'pending'),
 ]):
-    nodes.append(dict(node_id=str(index + 1) * 32, node_name=name, online=online, state=state,
+    nodes.append(dict(allowed=True, node_id=str(index + 1) * 32, node_name=name, online=online, state=state,
                       internal_ip='10.0.0.' + str(11 + index), host='compute-one', container_count=5,
                       observed_at='', scanning=False, containers=[], container_id='', name='',
                       port=0, error='默认镜像不可用' if state == 'failed' else ''))

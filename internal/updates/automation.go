@@ -72,7 +72,7 @@ func (m *Manager) automatic() error {
 	if m.closed || !c.Automatic || r == nil || m.plan != nil || r.Repo != c.Repo || r.Prerelease && !c.Prerelease {
 		return nil
 	}
-	services := m.role == "worker" && r.Tag == buildinfo.Version
+	services := (m.role == "worker" || m.role == "control") && r.Tag == buildinfo.Version
 	if services {
 		attempted, err := updater.ServicesAttempted(m.directory, r.Tag)
 		if err != nil {

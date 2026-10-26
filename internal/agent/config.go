@@ -16,6 +16,7 @@ const apiKeyFile = "agent-api-key.key"
 const apiKeyAAD = "project-alpha/agent-settings/api-key/v1"
 
 type Config struct {
+	Provider         string `json:"provider"`
 	Protocol         string `json:"protocol"`
 	Endpoint         string `json:"endpoint"`
 	Model            string `json:"model"`
@@ -25,10 +26,13 @@ type Config struct {
 }
 
 func defaultConfig() Config {
-	return Config{Protocol: "responses", Endpoint: "https://api.openai.com/v1", TimeoutSeconds: 180}
+	return Config{Provider: "openai", Protocol: "responses", Endpoint: "https://api.openai.com/v1", TimeoutSeconds: 180}
 }
 
 func (c Config) endpointURL() (string, error) {
+	if c.Provider != "openai" && c.Provider != "opencode" {
+		return "", httpapi.NewError(400, "Provider 必须为 openai 或 opencode")
+	}
 	if c.Protocol != "responses" && c.Protocol != "completions" {
 		return "", httpapi.NewError(400, "接口必须为 responses 或 completions")
 	}
@@ -85,6 +89,9 @@ func (d *Store) agentConfig() (Config, int64, error) {
 	if err = json.Unmarshal([]byte(raw), &c); err != nil {
 		return c, 0, fmt.Errorf("invalid agent settings: %w", err)
 	}
+	if err = c.validate(); err != nil {
+		return c, 0, fmt.Errorf("invalid agent settings: %w", err)
+	}
 	if encryptedKey != "" {
 		c.APIKey, err = credentials.Decrypt(d.Directory, apiKeyFile, apiKeyAAD, encryptedKey)
 	}
@@ -109,7 +116,7 @@ func (d *Store) RuntimeConfig() (Config, error) {
 }
 
 func publicConfig(c Config, revision int64) object {
-	return object{"revision": revision, "value": object{"protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != "", "reasoning_summary": c.ReasoningSummary}}
+	return object{"revision": revision, "value": object{"provider": c.Provider, "protocol": c.Protocol, "endpoint": c.Endpoint, "model": c.Model, "timeout_seconds": c.TimeoutSeconds, "has_api_key": c.APIKey != "", "reasoning_summary": c.ReasoningSummary}}
 }
 
 func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (object, error) {
@@ -135,6 +142,8 @@ func (d *Store) saveConfig(fields map[string]json.RawMessage, actor string) (obj
 			return nil, httpapi.NewError(400, "模型配置字段不能为 null")
 		}
 		switch k {
+		case "provider":
+			err = json.Unmarshal(v, &c.Provider)
 		case "protocol":
 			err = json.Unmarshal(v, &c.Protocol)
 		case "endpoint":

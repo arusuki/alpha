@@ -122,7 +122,7 @@ func futureArchiveVersion(t *testing.T, target []byte, tag string) []byte {
 	manifest = bytes.ReplaceAll(manifest, []byte(`"binaries"`), []byte(`"FutureInputs"`))
 	prefix := "project-alpha_" + tag + "_linux_" + runtime.GOARCH
 	main := []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'project-alpha " + tag + "'; else printf '%s\\n' \"$@\" > \"$ALPHA_TEST_RESTART\"; fi\n")
-	return makeArchive(t, map[string][]byte{
+	return makeArchive(t, agnoArchiveEntries(t, prefix, map[string][]byte{
 		prefix + "/bin/alpha-updater":            target,
 		prefix + "/bin/project-alpha":            main,
 		prefix + "/bin/alpha-chat":               script("alpha-chat", tag),
@@ -130,7 +130,7 @@ func futureArchiveVersion(t *testing.T, target []byte, tag string) []byte {
 		prefix + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
 		prefix + "/bin/future-helper":            []byte("new release payload"),
 		prefix + "/deploy/updater-services.json": manifest,
-	})
+	}))
 }
 
 func assertNoStaging(t *testing.T, bin string) {

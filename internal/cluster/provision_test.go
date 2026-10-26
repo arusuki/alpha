@@ -31,7 +31,7 @@ func selfCall(f *fixture, method, path, token string, body any) *httptest.Respon
 func registerResource(t *testing.T, f *fixture, name string) (string, string) {
 	t.Helper()
 	store := &members.Store{Database: f.db}
-	invite, e := store.CreateInvitation("resources", 1, "admin")
+	invite, e := store.CreateInvitation("resources", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -194,7 +194,7 @@ func TestRegistrationReservesResourcesAtomically(t *testing.T) {
 		t.Fatal(e)
 	}
 	store := &members.Store{Database: f.db}
-	i, e := store.CreateInvitation("atomic", 1, "admin")
+	i, e := store.CreateInvitation("atomic", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -246,7 +246,7 @@ func TestInterruptedQueueRestartsWithoutDuplicatingNodeSlots(t *testing.T) {
 	// An interrupted pending item must survive close/reopen. No external resources
 	// are needed to verify that failures become explicit and the unique slot stays.
 	store := &members.Store{Database: f.db}
-	invite, _ := store.CreateInvitation("restart", 1, "admin")
+	invite, _ := store.CreateInvitation("restart", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	m, e := store.RegisterWith(members.Registration{Containers: registrationChoices(t, f), Password: "Member-password-123", Username: "alice", SSHKey: resourceTestKey, InvitationCode: invite.Code, SchemaRevision: 1, Profile: map[string]json.RawMessage{}}, f.control.Members.Reserve)
 	if e != nil {
 		t.Fatal(e)

@@ -535,7 +535,7 @@ func (m *Manager) trigger(tag string) error {
 		return httpapi.NewError(409, "上次更新需要人工恢复，请检查 .alpha-update-pending")
 	}
 	p := updater.ServicePlan{Format: 3, Command: c.Command, Executable: m.executable, Arguments: append([]string(nil), os.Args[1:]...), Directory: m.directory, Role: m.role, Repo: c.Repo, Proxy: c.Proxy, Prerelease: c.Prerelease, Tag: tag}
-	p.ServicesOnly = m.role == "worker" && tag == buildinfo.Version
+	p.ServicesOnly = (m.role == "worker" || m.role == "control") && tag == buildinfo.Version
 	if r := m.state.Release; r != nil && r.Tag == tag && r.Repo == c.Repo && (!r.Prerelease || c.Prerelease) {
 		p.Published = true
 	}

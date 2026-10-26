@@ -220,8 +220,10 @@ func TestRealAgnoService(t *testing.T) {
 	h.runtime = client
 	h.run = client.run
 	var requests atomic.Int32
+	sessions := make(chan string, 16)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := requests.Add(1)
+		sessions <- r.Header.Get("x-opencode-session")
 		if r.URL.Path != "/v1/chat/completions" {
 			t.Errorf("wrong model endpoint %s", r.URL.Path)
 		}
@@ -238,7 +240,7 @@ func TestRealAgnoService(t *testing.T) {
 		httpapi.WriteJSON(w, 200, map[string]any{"id": "completion", "object": "chat.completion", "created": 1, "model": "test", "choices": []any{map[string]any{"index": 0, "message": message, "finish_reason": reason}}})
 	}))
 	defer server.Close()
-	if _, err := h.db.SQL.Exec("UPDATE agent_settings SET value=json_set(value,'$.protocol','completions','$.endpoint',?)", server.URL+"/v1"); err != nil {
+	if _, err := h.db.SQL.Exec("UPDATE agent_settings SET value=json_set(value,'$.provider','opencode','$.protocol','completions','$.endpoint',?)", server.URL+"/v1"); err != nil {
 		t.Fatal(err)
 	}
 	var calls int
@@ -260,6 +262,12 @@ func TestRealAgnoService(t *testing.T) {
 	// The service starts a new isolated run using the previous persisted state.
 	if _, _, err = call(h, "alice", "POST", "/api/assistant/sessions/"+id+"/messages", `{"message":"继续"}`); err != nil {
 		t.Fatal(err)
+	}
+	for range requests.Load() {
+		session := <-sessions
+		if session != id {
+			t.Fatalf("Agno lost provider/session across the socket: %q != %q", session, id)
+		}
 	}
 	_, messages, _, err := h.session("assistant_sessions", id, "alice")
 	if err != nil || len(messages) != 4 {

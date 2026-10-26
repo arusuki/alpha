@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -58,7 +59,7 @@ func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 	if _, err := s.SaveSchema(exampleSchema(), "operator"); err != nil {
 		t.Fatal(err)
 	}
-	i, err := s.CreateInvitation("A组", 2, "operator")
+	i, err := s.CreateInvitation("A组", 2, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +144,7 @@ func TestRegistrationQuotaValidationAndPersistence(t *testing.T) {
 
 func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
 	s := testStore(t)
-	i, err := s.CreateInvitation("共享", 1, "operator")
+	i, err := s.CreateInvitation("共享", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
 	}
 	_, err = s.InvitationCode(i.ID)
 	expectError(t, err, 500)
-	_, err = s.CreateInvitation("missing key", 1, "operator")
+	_, err = s.CreateInvitation("missing key", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	expectError(t, err, 500)
 	if _, err = os.Stat(keyPath); !os.IsNotExist(err) {
 		t.Fatalf("lost key was replaced: %v", err)
@@ -179,7 +180,7 @@ func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
 	}
 	_, err = s.InvitationCode(i.ID)
 	expectError(t, err, 400)
-	i, err = s.CreateInvitation("作废", 1, "operator")
+	i, err = s.CreateInvitation("作废", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,11 +193,11 @@ func TestInvitationCodeEncryptionAndAvailability(t *testing.T) {
 
 func TestInvitationCodeIntegrityAndIndependentCreation(t *testing.T) {
 	s := testStore(t)
-	i, err := s.CreateInvitation("old", 1, "operator")
+	i, err := s.CreateInvitation("old", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := s.CreateInvitation("other", 1, "operator")
+	other, err := s.CreateInvitation("other", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +224,7 @@ func TestInvitationCodeIntegrityAndIndependentCreation(t *testing.T) {
 	if _, err = s.SQL.Exec("UPDATE member_invitations SET code_ciphertext='broken' WHERE id=?", i.ID); err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := s.CreateInvitation("new", 1, "operator")
+	fresh, err := s.CreateInvitation("new", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatalf("corrupt retired invitation blocked creation: %v", err)
 	}
@@ -237,7 +238,7 @@ func TestInvitationLabelUpdates(t *testing.T) {
 	s := testStore(t)
 	for _, status := range []string{"active", "exhausted", "revoked"} {
 		t.Run(status, func(t *testing.T) {
-			i, err := s.CreateInvitation("原备注", 1, "operator")
+			i, err := s.CreateInvitation("原备注", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -276,7 +277,7 @@ func TestInvitationLabelUpdates(t *testing.T) {
 							t.Fatalf("bad update: %+v", after)
 						}
 						after.Label = before.Label
-						if after != before {
+						if !reflect.DeepEqual(after, before) {
 							t.Fatalf("label update changed invitation metadata: %+v -> %+v", before, after)
 						}
 					}
@@ -292,7 +293,7 @@ func TestInvitationLabelUpdates(t *testing.T) {
 	if err := s.SQL.QueryRow("SELECT count(*) FROM audit WHERE action='member.invitation.update' AND actor='editor'").Scan(&audits); err != nil || audits != 9 {
 		t.Fatalf("missing update audits: %d %v", audits, err)
 	}
-	i, err := s.CreateInvitation("保留备注", 1, "operator")
+	i, err := s.CreateInvitation("保留备注", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,11 +317,11 @@ func TestInvitationDeletion(t *testing.T) {
 			if status == "exhausted" {
 				quota = 1
 			}
-			i, err := s.CreateInvitation("删除测试", quota, "operator")
+			i, err := s.CreateInvitation("删除测试", quota, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			other, err := s.CreateInvitation("保留", 1, "operator")
+			other, err := s.CreateInvitation("保留", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -400,7 +401,7 @@ func TestInvitationDeletion(t *testing.T) {
 
 func TestInvitationDeletionRollsBackWithoutAudit(t *testing.T) {
 	s := testStore(t)
-	i, err := s.CreateInvitation("保留", 1, "operator")
+	i, err := s.CreateInvitation("保留", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +441,7 @@ func TestSchemaValidationAndConflicts(t *testing.T) {
 	_, err = s.SaveSchema(exampleSchema(), "operator")
 	expectError(t, err, 409)
 	for _, quota := range []int{-1, 0, 100001} {
-		_, err = s.CreateInvitation("", quota, "operator")
+		_, err = s.CreateInvitation("", quota, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 		expectError(t, err, 400)
 	}
 }
@@ -454,7 +455,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	}
 	defer second.SQL.Close()
 	stores := []*Store{s, {second}}
-	i, err := s.CreateInvitation("concurrent", 3, "operator")
+	i, err := s.CreateInvitation("concurrent", 3, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,7 +482,7 @@ func TestConcurrentQuotaAndTransactionalRollback(t *testing.T) {
 	if success != 3 {
 		t.Fatalf("registered %d, quota 3", success)
 	}
-	i, err = s.CreateInvitation("rollback", 1, "operator")
+	i, err = s.CreateInvitation("rollback", 1, "operator", NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -568,7 +569,7 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	for _, quota := range []any{nil, "invalid", 1.5} {
 		expect(400, call("POST", invitationPage+"/create", object{"quota": quota}, token, csrf, nil))
 	}
-	w := call("POST", invitationPage+"/create", object{"quota": 2, "label": "cohort"}, token, csrf, nil)
+	w := call("POST", invitationPage+"/create", object{"quota": 2, "label": "cohort", "node_permissions": `{"all_nodes":true,"node_ids":[]}`}, token, csrf, nil)
 	expect(200, w)
 	if !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
 		t.Fatal("invitation view is not HTML")
@@ -587,7 +588,7 @@ func TestHTTPAuthorizationRegistrationAndRateLimit(t *testing.T) {
 	if err = os.Rename(keyPath, keyPath+".saved"); err != nil {
 		t.Fatal(err)
 	}
-	w = call("POST", invitationPage+"/create", object{"quota": 1}, token, csrf, nil)
+	w = call("POST", invitationPage+"/create", object{"quota": 1, "node_permissions": `{"all_nodes":true,"node_ids":[]}`}, token, csrf, nil)
 	expect(500, w)
 	if !strings.Contains(w.Body.String(), "invitation-code.key 丢失") || !strings.Contains(w.Body.String(), "恢复原密钥") || strings.Contains(w.Body.String(), invitation.Code) {
 		t.Fatalf("missing actionable key error: %s", w.Body.String())

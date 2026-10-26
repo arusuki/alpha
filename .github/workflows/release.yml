@@ -64,7 +64,7 @@ jobs:
       - name: Go vet
         run: go vet ./...
       - name: Updater container update and rollback
-        run: ALPHA_UPDATER_DOCKER_TEST=1 go test ./internal/updater -run '^TestDockerContainerUpdate$' -count=1 -v
+        run: ALPHA_UPDATER_DOCKER_TEST=1 ALPHA_UPDATER_AGNO_TEST_IMAGE=project-alpha-agno:test go test ./internal/updater -run '^TestDocker(ContainerUpdate|AgnoUpdate)$' -count=1 -v
       - name: Frontend tests
         run: |
           for test in tests/test_*.js; do

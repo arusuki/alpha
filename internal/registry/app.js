@@ -63,7 +63,7 @@
     $('choiceSummary').textContent = nodeChoices?.length ? `已选择 ${selected} / ${nodeChoices.length} 个节点` : '';
     for (const card of $('nodeChoices').querySelectorAll('.choice-node')) {
       const input = card.querySelector('input:checked');
-      card.querySelector('.choice-state').textContent = input ? input.value === 'create' ? '将新建' : '将领养' : '待选择';
+      card.querySelector('.choice-state').textContent = input ? input.value === 'skip' ? '暂不创建' : input.value === 'create' ? '将新建' : '将领养' : '待选择';
       card.classList.toggle('has-choice', !!input);
     }
   }
@@ -84,19 +84,20 @@
         const number = document.createElement('span'); number.className = 'choice-index'; number.textContent = `NODE / ${String(index + 1).padStart(2, '0')}`;
         const status = document.createElement('span'); status.className = 'choice-state';
         heading.append(number, status); card.append(legend, heading);
+        card.append(choiceOption(node, 'skip', '暂不创建', '完成注册后，可随时在此授权节点申请容器'));
         card.append(choiceOption(node, 'create', '新建一个', '使用默认环境，创建专属容器'));
         const caption = document.createElement('p'); caption.className = 'candidate-heading';
         caption.textContent = `领养已有容器 · ${node.containers.filter(c => !c.claimed).length} 个可选`; card.append(caption);
         const list = document.createElement('div'); list.className = 'candidate-list';
         for (const c of [...node.containers].sort((a, b) => Number(a.claimed) - Number(b.claimed))) list.append(choiceOption(node, c.id, c.name, `${c.id.slice(0,12)}${(c.claimed_by||c.owner)?' · '+(c.claimed_by||c.owner):''}`, c.claimed));
-        if (!node.containers.length) { const empty = document.createElement('p'); empty.className = 'choice-empty'; empty.textContent = node.error ? '暂时无法读取已有容器' : '暂无已接管容器，可以选择新建'; list.append(empty); }
+        if (!node.containers.length) { const empty = document.createElement('p'); empty.className = 'choice-empty'; empty.textContent = node.error ? '暂时无法读取已有容器' : '暂无已接管容器，可新建或暂不创建'; list.append(empty); }
         card.append(list);
         const old = previous.get(node.node_id);
         for (const input of card.querySelectorAll('input')) input.checked = input.value === old && !input.disabled;
         if (node.error) {const hint=document.createElement('p'); hint.className='choice-error'; hint.textContent='暂不能查询已有容器：'+node.error+'。可选择新建并在节点恢复后重试。'; card.append(hint);}
         $('nodeChoices').append(card);
       }
-      if (!nodeChoices.length) $('nodeChoices').textContent='暂无计算节点；管理员添加节点后，可在状态页申请。';
+      if (!nodeChoices.length) $('nodeChoices').textContent='此邀请暂未授权可用的计算节点，可以直接完成注册。';
       updateChoiceSummary();
     } catch (error) { if(request===optionsRequest){nodeChoices=null; showError(error.message);} }
     finally {if(request===optionsRequest){optionsLoading=false; $('submit').disabled=nodeChoices===null; $('reloadNodes').disabled=false;}}
@@ -180,8 +181,8 @@
     const form = $('registration');
     if (form.elements.password.value !== form.elements.password_confirm.value) { showError('两次输入的密码不一致。', form.elements.password_confirm); return; }
     if (optionsLoading || nodeChoices === null) { showError('请先载入节点与容器列表。'); return; }
-    const containers = Array.from($('nodeChoices').querySelectorAll('input:checked')).map(input => ({node_id:input.dataset.node,mode:input.value==='create'?'create':'adopt',container_id:input.value==='create'?'':input.value}));
-    if (containers.length !== nodeChoices.length) {showError('请为每个节点选择领养或新建。');return;}
+    const containers = Array.from($('nodeChoices').querySelectorAll('input:checked')).map(input => ({node_id:input.dataset.node,mode:['create','skip'].includes(input.value)?input.value:'adopt',container_id:['create','skip'].includes(input.value)?'':input.value}));
+    if (containers.length !== nodeChoices.length) {showError('请为每个授权节点选择领养、新建或暂不创建。');return;}
     const profile = Object.create(null);
     for (const input of $('fields').querySelectorAll('[data-key]')) profile[input.dataset.key] = input.value;
     register({password:$('registration').elements.password.value, username:$('registration').elements.username.value, ssh_public_key:$('registration').elements.ssh_public_key.value, schema_revision:schema.revision, profile, containers});

@@ -1,12 +1,50 @@
 'use strict';
 (()=>{
-const state={schema:null,busy:false,epoch:0,deleting:null,resetting:null};
+const state={schema:null,busy:false,epoch:0,deleting:null,resetting:null,permissions:null,nodes:[],members:[]};
 const admin=()=>platform.user?.role==='admin';
 function controls(){
   $('memberSchemaEditor').disabled=state.busy||!state.schema;
-  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm','memberPasswordSubmit','memberPasswordCancel','memberPassword','memberPasswordConfirm'])$(id).disabled=state.busy;
-  document.querySelectorAll('[data-reset-member],[data-delete-member],[data-revoke-invitation] button,[data-edit-invitation],[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
+  for(const id of ['membersRefresh','memberReloadSchema','memberCreateInvitation','memberDeleteSubmit','memberDeleteCancel','memberDeleteConfirm','memberPasswordSubmit','memberPasswordCancel','memberPassword','memberPasswordConfirm','memberPermissionsSave','memberPermissionsCancel','memberAllNodes','invitationAllNodes'])$(id).disabled=state.busy;
+  document.querySelectorAll('[data-member-permissions],[data-reset-member],[data-delete-member],[data-revoke-invitation] button,[data-edit-invitation],[data-delete-invitation] button').forEach(el=>el.disabled=state.busy);
+  permissionControls();
 }
+function permissionSummary(p){
+  if(p.all_nodes)return '全部节点';
+  return p.node_ids.map(id=>state.nodes.find(n=>n.id===id)?.name||'已移除节点').join('、')||'未授权节点';
+}
+function readPermissions(prefix){
+  const all_nodes=$(prefix+'AllNodes').checked;
+  return {all_nodes,node_ids:all_nodes?[]:[...$(prefix+'NodeChoices').querySelectorAll('input:checked')].map(el=>el.value)};
+}
+function renderPermissionChoices(prefix,p){
+  $(prefix+'AllNodes').checked=p.all_nodes;
+  $(prefix+'NodeChoices').innerHTML=state.nodes.map(n=>`<label class="checkbox-label"><input type="checkbox" value="${esc(n.id)}" ${p.node_ids.includes(n.id)?'checked':''}>${esc(n.name)}</label>`).join('')||'<p class="form-note">暂无计算节点。</p>';
+  permissionControls();
+}
+function permissionControls(){
+  for(const prefix of ['member','invitation'])$(prefix+'NodeChoices').querySelectorAll('input').forEach(el=>el.disabled=state.busy||$(prefix+'AllNodes').checked);
+}
+for(const prefix of ['member','invitation'])$(prefix+'AllNodes').addEventListener('change',permissionControls);
+function openPermissions(id){
+  task(async epoch=>{
+    const [p,nodes]=await Promise.all([api(`/api/members/${id}/node-permissions`),api('/api/cluster/nodes')]);
+    if(epoch!==state.epoch)return;
+    state.nodes=nodes.nodes.filter(n=>n.kind==='worker');state.permissions={id};
+    $('memberPermissionsTitle').textContent='节点权限 · '+state.members.find(m=>m.id===id).username;
+    $('memberPermissionsError').textContent='';renderPermissionChoices('member',p);$('memberPermissionsDialog').showModal();
+  });
+}
+$('memberPermissionsCancel').addEventListener('click',()=>$('memberPermissionsDialog').close());
+$('memberPermissionsDialog').addEventListener('cancel',event=>{if(state.busy)event.preventDefault();});
+$('memberPermissionsDialog').addEventListener('close',()=>{state.permissions=null;});
+$('memberPermissionsForm').addEventListener('submit',event=>{
+  event.preventDefault();task(async epoch=>{
+    if(!state.permissions)return;
+    await api(`/api/members/${state.permissions.id}/node-permissions`,{method:'PUT',body:JSON.stringify(readPermissions('member'))});
+    if(epoch!==state.epoch)return;
+    $('memberPermissionsDialog').close();$('membersStatus').textContent='节点权限已保存。';await load(epoch);
+  });
+});
 function fields(){
   return [...$('memberSchemaFields').querySelectorAll('[data-member-field]')].map(row=>{
     const read=key=>row.querySelector(`[data-field-${key}]`);
@@ -29,19 +67,23 @@ function renderSchema(schema){
 }
 function changed(){ $('memberSchemaStatus').textContent='有未保存的修改';preview(fields()); }
 function renderMembers(members){
-  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(dateTime(m.created_at))}</td><td><button data-reset-member="${esc(m.id)}" data-username="${esc(m.username)}">重置密码</button> <button class="danger" data-delete-member="${esc(m.id)}" data-username="${esc(m.username)}">删除</button></td></tr>`).join('')||'<tr><td colspan="4" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
+  state.members=members;
+  $('membersBody').innerHTML=members.map(m=>`<tr><td><strong>${esc(m.username)}</strong><small class="sub mono">${esc(m.id)}</small><a class="sub" href="/status/${encodeURIComponent(m.username)}" target="_blank" rel="noopener">使用者状态页 ↗</a></td><td>${m.schema.fields.filter(f=>Object.hasOwn(m.profile,f.key)).map(f=>`<span class="sub">${esc(f.label)}：${esc(m.profile[f.key])}</span>`).join('')||'—'}</td><td>${esc(permissionSummary(m.node_permissions))}</td><td>${esc(dateTime(m.created_at))}</td><td><button data-member-permissions="${esc(m.id)}">节点权限</button> <button data-reset-member="${esc(m.id)}" data-username="${esc(m.username)}">重置密码</button> <button class="danger" data-delete-member="${esc(m.id)}" data-username="${esc(m.username)}">删除</button></td></tr>`).join('')||'<tr><td colspan="5" class="empty">暂无使用者。配置注册信息并发放邀请码后，可通过注册 API 登记。</td></tr>';
 
 }
 async function load(epoch,reloadSchema=false){
-  const [members,invitations,schema]=await Promise.all([api('/api/members'),invitationPage(),reloadSchema||!state.schema?api('/api/members/registration-schema'):null]);
+  const [members,invitations,schema,nodes]=await Promise.all([api('/api/members'),invitationPage(),reloadSchema||!state.schema?api('/api/members/registration-schema'):null,api('/api/cluster/nodes')]);
   if(epoch!==state.epoch)return;
+  const selected=readPermissions('invitation');
+  state.nodes=nodes.nodes.filter(n=>n.kind==='worker');
+  renderPermissionChoices('invitation',selected);
   renderMembers(members.members);$('memberInvitationsPanel').innerHTML=invitations;
   if(schema)renderSchema(schema);
 }
 async function task(fn){
   if(state.busy||!admin())return;
   const epoch=state.epoch;state.busy=true;controls();$('membersError').textContent='';
-  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$(state.resetting?'memberPasswordError':state.deleting?'memberDeleteError':'membersError').textContent=error.message;}
+  try{await fn(epoch);}catch(error){if(epoch===state.epoch)$(state.permissions?'memberPermissionsError':state.resetting?'memberPasswordError':state.deleting?'memberDeleteError':'membersError').textContent=error.message;}
   finally{if(epoch===state.epoch){state.busy=false;controls();}}
 }
 function clearCode(){ $('memberInvitationCode').value='';$('memberInvitationCopyStatus').textContent=''; }
@@ -63,7 +105,7 @@ window.MembersUI={
   },
   invitationOptions(){return invitationPage(null,'/admin/member-invitations/select');},
   reset(){
-    state.epoch++;state.schema=null;state.busy=false;state.deleting=null;state.resetting=null;$('memberDeleteDialog').close();$('memberPasswordDialog').close();$('memberPasswordForm').reset();
+    state.permissions=null;state.nodes=[];state.members=[];$('memberPermissionsDialog').close();$('invitationNodeChoices').replaceChildren();state.epoch++;state.schema=null;state.busy=false;state.deleting=null;state.resetting=null;$('memberDeleteDialog').close();$('memberPasswordDialog').close();$('memberPasswordForm').reset();
     if($('memberInvitationDialog').open)$('memberInvitationDialog').close();clearCode();
     for(const id of ['membersBody','memberInvitationsPanel','memberSchemaFields','memberSchemaPreview'])$(id).innerHTML='';
     for(const id of ['membersError','membersStatus','memberSchemaStatus'])$(id).textContent='';
@@ -71,6 +113,8 @@ window.MembersUI={
   }
 };
 $('membersBody').addEventListener('click',event=>{
+  const permissions=event.target.closest('[data-member-permissions]');
+  if(permissions){openPermissions(permissions.dataset.memberPermissions);return;}
   const reset=event.target.closest('[data-reset-member]');if(reset){window.MembersUI.resetPassword(reset.dataset.resetMember,reset.dataset.username);return;}
   const button=event.target.closest('[data-delete-member]');if(button)window.MembersUI.confirmDelete(button.dataset.deleteMember,button.dataset.username);
 });
@@ -153,6 +197,7 @@ async function invitationPage(form=null,path='/admin/member-invitations'){
 }
 function submitInvitation(event){
   const form=event.target;event.preventDefault();
+  if(form.id==='memberInvitationForm')$('invitationPermissionsValue').value=JSON.stringify(readPermissions('invitation'));
   task(async epoch=>{
     let html;
     try{html=await invitationPage(form);}

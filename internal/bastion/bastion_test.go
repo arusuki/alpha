@@ -58,7 +58,7 @@ func fixture(t *testing.T) (*Handler, *networkFake, members.Member) {
 		t.Fatal(e)
 	}
 	store := &members.Store{Database: db}
-	invite, e := store.CreateInvitation("test", 10, "test")
+	invite, e := store.CreateInvitation("test", 10, "test", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 	if e != nil {
 		t.Fatal(e)
 	}

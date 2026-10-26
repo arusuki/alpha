@@ -17,7 +17,7 @@ calls, writes = [], []
 unavailable = False
 has_records = True
 scan_settings = None
-model = dict(revision=1, value=dict(protocol='responses', endpoint='http://model.test/v1',
+model = dict(revision=1, value=dict(provider='openai', protocol='responses', endpoint='http://model.test/v1',
              model='example-model', timeout_seconds=180, has_api_key=True))
 
 

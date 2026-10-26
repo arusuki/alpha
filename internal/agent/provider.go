@@ -69,7 +69,10 @@ func (p agentProvider) complete(ctx context.Context, history []object) (modelRep
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("User-Agent", "project-alpha/0.1")
-	if p.SessionID != "" {
+	if p.Config.Provider == "opencode" {
+		if p.SessionID == "" {
+			return reply, fmt.Errorf("OpenCode 请求缺少会话 ID")
+		}
 		// OpenCode Go also accepts requests through proxies. Keep this routing
 		// header stable across tool rounds and followups for the same session.
 		req.Header.Set("X-Opencode-Session", p.SessionID)
@@ -95,7 +98,7 @@ func (p agentProvider) complete(ctx context.Context, history []object) (modelRep
 				Type string `json:"type"`
 			} `json:"error"`
 		}
-		if json.Unmarshal(data, &failure) == nil && failure.Error.Type == "MissingSessionID" {
+		if p.Config.Provider == "opencode" && json.Unmarshal(data, &failure) == nil && failure.Error.Type == "MissingSessionID" {
 			return reply, fmt.Errorf("模型接口返回 HTTP %d：服务要求 x-opencode-session 会话头，请检查客户端版本及代理是否转发该请求头", resp.StatusCode)
 		}
 		return reply, fmt.Errorf("模型接口返回 HTTP %d，请检查接口类型、模型、API Key 或服务配额", resp.StatusCode)

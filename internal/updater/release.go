@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -264,6 +265,8 @@ func extract(src io.Reader, directory, packageName string, names []string) error
 	for _, name := range names {
 		if name == serviceManifest {
 			wanted[packageName+"/deploy/updater-services.json"] = name
+		} else if slices.Contains(append([]string{agnoDockerfile}, agnoBuildFiles...), name) {
+			wanted[packageName+"/"+name] = name
 		} else {
 			wanted[packageName+"/bin/"+name] = name
 		}
@@ -291,6 +294,9 @@ func extract(src io.Reader, directory, packageName string, names []string) error
 		if h.Typeflag != tar.TypeReg || seen[name] || h.Size <= 0 || h.Size > maxBinary {
 			return fmt.Errorf("invalid binary entry %q", h.Name)
 		}
+		if e := os.MkdirAll(filepath.Dir(filepath.Join(directory, name)), 0700); e != nil {
+			return e
+		}
 		f, e := os.OpenFile(filepath.Join(directory, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0755)
 		if e != nil {
 			return e
@@ -315,7 +321,7 @@ func extract(src io.Reader, directory, packageName string, names []string) error
 	}
 	for _, name := range names {
 		if !seen[name] {
-			return fmt.Errorf("release package missing required file %s; use a release containing the node service update payload for worker updates", name)
+			return fmt.Errorf("release package missing required file %s; use a complete release containing the service update payload", name)
 		}
 	}
 	return nil

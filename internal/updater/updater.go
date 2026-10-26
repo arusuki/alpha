@@ -41,6 +41,11 @@ func releaseFiles(role string) []binary {
 	if role == "worker" {
 		files = append(files, binary{"dram-bwd", ""}, binary{serviceManifest, ""})
 	}
+	if role == "control" {
+		for _, name := range append([]string{agnoDockerfile}, agnoBuildFiles...) {
+			files = append(files, binary{name, ""})
+		}
+	}
 	return files
 }
 
@@ -106,10 +111,10 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	p.BoolVar(&o.check, "check", false, "仅查询最新版本和更新计划，不下载或修改文件")
 	p.BoolVar(&o.prerelease, "prerelease", false, "包括预发布，按发布时间查询最新 release")
 	p.BoolVar(&o.databaseOnly, "database-only", false, "离线备份并原地升级数据库，不更新二进制")
-	p.BoolVar(&o.servicesOnly, "services-only", false, "仅同步 worker 已部署的节点服务容器，目标 tag 必须与已安装主程序一致")
+	p.BoolVar(&o.servicesOnly, "services-only", false, "仅同步 control/worker 已部署的服务容器，目标 tag 必须与已安装主程序一致")
 	showVersion := p.Bool("version", false, "显示更新器版本")
 	p.Usage = func() {
-		fmt.Fprintf(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n离线数据库升级：alpha-updater --database-only --data-dir DIR\n目标数据库版本：%d；支持范围由构建时的 Git tag 升级窗口决定。\n先停止使用这些文件的主程序，以可写入数据和二进制目录的账号运行。worker 更新包含已部署的节点服务容器，要求 Docker socket 权限和 Compose；不调用 sudo。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。\n", platform.DatabaseVersion)
+		fmt.Fprintf(out, "用法：alpha-updater --data-dir DIR --bin-dir DIR [--role ROLE] [--check]\n离线数据库升级：alpha-updater --database-only --data-dir DIR\n目标数据库版本：%d；支持范围由构建时的 Git tag 升级窗口决定。\n先停止使用这些文件的主程序，以可写入数据和二进制目录的账号运行。control 更新包含已部署的 Agno，worker 更新包含已部署的节点服务容器，要求 Docker socket 权限和 Compose；不调用 sudo。GitHub 认证读取 GH_TOKEN 或 GITHUB_TOKEN。\n", platform.DatabaseVersion)
 		p.PrintDefaults()
 	}
 	if err := p.Parse(args); err != nil {
@@ -259,8 +264,8 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		fmt.Fprintf(out, "数据库已原地升级：%d → %d\n", schema, platform.DatabaseVersion)
 		return nil
 	}
-	if o.servicesOnly && o.role != "worker" {
-		return fmt.Errorf("--services-only requires the worker role")
+	if o.servicesOnly && o.role != "worker" && o.role != "control" {
+		return fmt.Errorf("--services-only requires the control or worker role")
 	}
 	// Serialize installations even when roles use distinct data directories.
 	if !o.check && !o.bootstrap {
@@ -327,7 +332,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		return fmt.Errorf("--services-only requires the installed version; use --tag %s", installed)
 	}
 	if next.compare(old) == 0 && !o.servicesOnly {
-		if o.role != "worker" {
+		if o.role != "worker" && o.role != "control" {
 			// Even a no-op must let the target validate its database window.
 			if !o.bootstrap {
 				fmt.Fprintln(out, "已是最新版本。仅升级数据库用 --database-only。")
@@ -335,7 +340,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			}
 		} else {
 			o.servicesOnly = true
-			fmt.Fprintln(out, "主程序已是最新版本，继续检查并同步节点服务容器。")
+			fmt.Fprintln(out, "主程序已是最新版本，继续检查并同步服务容器。")
 		}
 	}
 	if o.servicesOnly {
@@ -346,6 +351,9 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	}
 	if o.role == "worker" {
 		fmt.Fprintln(out, "更新已部署的节点服务容器：Tetragon、DRAM、Rootless Docker；保留部署参数和启停状态。")
+	}
+	if o.role == "control" {
+		fmt.Fprintln(out, "更新已部署的 Agno 容器；保留部署参数和启停状态，构建阶段需要获取基础镜像和 Python 依赖。")
 	}
 	if o.check {
 		return nil
@@ -424,13 +432,13 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 	}
 	var containers *containerPlan
-	if o.role == "worker" {
+	if o.role == "worker" || o.role == "control" {
 		if o.prepared != nil {
 			if err = json.Unmarshal(o.prepared.Containers, &containers); err != nil {
 				return fmt.Errorf("invalid prepared container plan: %w", err)
 			}
 			if containers == nil {
-				return fmt.Errorf("prepared worker update has no container plan; prepare again")
+				return fmt.Errorf("prepared service update has no container plan; prepare again")
 			}
 		} else {
 			containers, err = prepareContainers(ctx, db, stage, o.docker, out)
@@ -442,7 +450,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 			return err
 		}
 		if o.servicesOnly && len(containers.Updates) == 0 {
-			fmt.Fprintln(out, "节点服务已同步，无需停服或重建容器。")
+			fmt.Fprintln(out, "服务容器已同步，无需停服或重建容器。")
 			return servicesCompleted(o.directory, r.Tag)
 		}
 	}
@@ -527,7 +535,7 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 	if err = install(o.binDir, stage, files, backup, installCommit, out); err != nil {
 		return err
 	}
-	if o.role == "worker" {
+	if o.role == "worker" || o.role == "control" {
 		if err = servicesCompleted(o.directory, r.Tag); err != nil {
 			return fmt.Errorf("服务容器已更新，但保存同步结果失败：%w", err)
 		}

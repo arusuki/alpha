@@ -69,7 +69,7 @@ func TestDatabaseUpgradeCommand(t *testing.T) {
 				switch tc.role {
 				case "control":
 					store := &members.Store{Database: db}
-					invite, err := store.CreateInvitation("upgrade", 1, "admin")
+					invite, err := store.CreateInvitation("upgrade", 1, "admin", members.NodePermissions{AllNodes: true, NodeIDs: []string{}})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -97,6 +97,11 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
+				if tc.role == "control" && tc.version >= 41 && tc.version < 49 {
+					if _, err = db.SQL.Exec("DROP TABLE member_node_permissions; DROP TABLE invitation_node_permissions"); err != nil {
+						t.Fatal(err)
+					}
+				}
 				if tc.version >= 41 && tc.version < 47 {
 					schema := map[string]string{"control": "DROP TABLE member_cli_sync; DROP TABLE chat_cli_settings", "worker": "DROP TABLE container_cli_installs; DROP TABLE member_cli_configs"}[tc.role]
 					if schema != "" {

@@ -2,7 +2,9 @@ package members
 
 import (
 	"bytes"
+	"database/sql"
 	_ "embed"
+	"encoding/json"
 	"html/template"
 	"mime"
 	"net/http"
@@ -32,14 +34,14 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 		if err != nil || typ != "application/x-www-form-urlencoded" {
 			return 0, nil, httpapi.NewError(415, "请通过管理员页面提交邀请码表单")
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		r.Body = http.MaxBytesReader(w, r.Body, 16384)
 		if err = r.ParseForm(); err != nil {
 			return 0, nil, httpapi.NewError(400, "邀请码表单无效或过大")
 		}
 		create := r.URL.Path == invitationPage+"/create"
 		update := r.URL.Path == invitationPage+"/update"
 		for key, values := range r.PostForm {
-			if len(values) != 1 || (create && key != "label" && key != "quota") || (update && key != "id" && key != "label") || (!create && !update && key != "id") {
+			if len(values) != 1 || (create && key != "label" && key != "quota" && key != "node_permissions") || (update && key != "id" && key != "label") || (!create && !update && key != "id") {
 				return 0, nil, httpapi.NewError(400, "邀请码表单字段无效")
 			}
 		}
@@ -51,7 +53,11 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 			if err != nil {
 				return 0, nil, httpapi.NewError(400, "可注册人数必须是整数")
 			}
-			invitation, err := h.store.CreateInvitation(r.PostForm.Get("label"), quota, actor)
+			var permissions NodePermissions
+			if err := json.Unmarshal([]byte(r.PostForm.Get("node_permissions")), &permissions); err != nil {
+				return 0, nil, httpapi.NewError(400, "请指定邀请码的节点权限")
+			}
+			invitation, err := h.store.CreateInvitation(r.PostForm.Get("label"), quota, actor, permissions)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -79,6 +85,18 @@ func (h *Handler) invitationView(w http.ResponseWriter, r *http.Request, actor s
 	rows, err := h.store.Invitations()
 	if err != nil {
 		return 0, nil, err
+	}
+	for i := range rows {
+		for _, id := range rows[i].NodePermissions.NodeIDs {
+			var name string
+			err := h.store.SQL.QueryRow("SELECT name FROM cluster_nodes WHERE id=? AND kind='worker'", id).Scan(&name)
+			if err == sql.ErrNoRows {
+				name = "已移除节点"
+			} else if err != nil {
+				return 0, nil, err
+			}
+			rows[i].NodeNames = append(rows[i].NodeNames, name)
+		}
 	}
 	var body bytes.Buffer
 	view := "invitations"

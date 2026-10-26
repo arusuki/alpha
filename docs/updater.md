@@ -1,6 +1,6 @@
 # 测试环境更新器
 
-`alpha-updater` 是独立的一次性命令，用于 1.0 之前的本机测试环境升级：按角色安装发布包中的程序、同步 worker 已部署的节点服务容器，并原地升级数据库。支持 Linux amd64/arm64。`--database-only` 是仅升级数据库的独立选项；正常发布更新无需另行执行它。目标数据库版本见 `alpha-updater --help`，可升级范围见构建时生成的 `internal/platform/upgrade_history.json`。只更新执行命令的本机，每台 control、worker、registry、share node 分别运行。
+`alpha-updater` 是独立的一次性命令，用于 1.0 之前的本机测试环境升级：按角色安装发布包中的程序、同步 control 的 Agno 和 worker 已部署的节点服务容器，并原地升级数据库。支持 Linux amd64/arm64。`--database-only` 是仅升级数据库的独立选项；正常发布更新无需另行执行它。目标数据库版本见 `alpha-updater --help`，可升级范围见构建时生成的 `internal/platform/upgrade_history.json`。只更新执行命令的本机，每台 control、worker、registry、share node 分别运行。
 
 ## 获取与使用
 
@@ -20,11 +20,13 @@ go build -o bin/alpha-updater ./cmd/alpha-updater
   --bin-dir /opt/project-alpha/bin
 ```
 
-更新器不调用 sudo；常规命令行更新不负责主程序的启停。worker 的节点服务容器由更新器按下述流程重建。systemd 部署先停止主程序对应单元（例如 `project-alpha-worker.service`），完成后按原配置启动；终端运行的服务则先退出原进程。三种数据库服务必须释放数据目录的 `service.lock`，独立扫描等使用同一目录的任务也须结束。共享安装目录的所有服务都应停止。日常服务仍使用原有普通账号。
+更新器不调用 sudo；常规命令行更新不负责主程序的启停。control 的 Agno 和 worker 的节点服务容器由更新器按下述流程重建。systemd 部署先停止主程序对应单元（例如 `project-alpha-worker.service`），完成后按原配置启动；终端运行的服务则先退出原进程。三种数据库服务必须释放数据目录的 `service.lock`，独立扫描等使用同一目录的任务也须结束。共享安装目录的所有服务都应停止。日常服务仍使用原有普通账号。
 
 完整更新同时刷新更新设置中配置的 updater 路径；命令行更新同时刷新本次调用的 updater。路径与安装目录中的 `alpha-updater` 相同时只替换一次。外置路径在准备阶段检查目录写入和备份权限，并记录原文件哈希；安装前发生变化则要求重新准备。安装阶段锁定外置目录，在该文件系统内备份、暂存并原子替换，因此支持 updater 与主程序位于不同磁盘。外置 updater 与主程序均在数据库迁移提交前替换，迁移失败时一并恢复。恢复失败则保留 `.alpha-update-pending` 中的 `configured_updater` 和 `configured_updater_backup` 路径并拒绝重启。`--services-only` 不替换任何程序。
 
 worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器。运行账号须能访问节点配置中的本机 Docker socket、执行 Docker CLI / Compose v2，并读取原 Compose 文件及环境文件；不需要 sudo。普通业务容器和未部署的节点服务不在更新范围内。权限不足、同标签容器重复、非 Compose 部署或配置缺失时，在准备阶段明确失败，不停服安装。
+
+control 更新同步已部署的 Agno 容器。部署 Agno 的总控服务账号须有本机 Docker socket 与 Compose v2 权限，默认 socket 为 `unix:///var/run/docker.sock`，可通过 `DOCKER_HOST` 指定其他本机 Unix socket。updater 从目标发布包提取 `deploy/agno.Dockerfile` 和 `runtime/agno/` 所需文件，全部纳入准备结果的哈希校验；使用 Docker 构建 Python 镜像，构建阶段需要获取基础镜像及固定版本依赖，复用 Docker 层缓存。Agno 容器须由 Compose 管理并带有 `project-alpha.service=agno` 标签。已有 UID/GID 和 socket 目录从容器读取，用于恢复模板的 `AGNO_*` 变量；无需依赖首次部署时的交互 shell。挂载必须对应本总控的 `<data-dir>/agno/agno.sock` 或 `ALPHA_AGNO_SOCKET`，不匹配时拒绝更新。原部署参数和启停状态保留，运行中的新容器通过总控使用的相同健康握手验证协议及依赖。未部署时跳过，不自动初装。未安装 Docker CLI、Docker socket 不存在且本总控没有 Agno socket 或持久锁文件（`agno.sock.lock`）时，也可正常更新主程序；systemd 预先创建的空目录不算已部署。存在上述文件、路径不可读、Docker 权限不足或 daemon 不可用时仍明确报错，不将故障视为未部署。
 
 发布包提供静态 Rootless / DRAM 二进制和 `deploy/updater-services.json` 镜像描述。本地 updater 先下载发布包并验证 SHA-256，只提取目标版本的 `alpha-updater`，检查版本和引导协议后，由目标 updater 从同一份已校验的本地压缩包提取其余文件、解析服务清单和准备部署。不会二次下载，也不由旧 updater 解读新版本的清单或文件列表。准备阶段用发布包的二进制构建 scratch 镜像，拉取指定的 Tetragon 镜像，并固定镜像 ID；节点无需安装 Go 或 C 编译器。镜像拉取使用 Docker daemon 自身的网络和代理配置。原 Compose 参数（含 override、环境文件、授权 GID、挂载目录、命令、日志和网络）解析后保存到安装目录内权限受限的 `.alpha-service-deploy-*`，运行策略沿用容器当前值。运行的服务重建后恢复运行，停止的服务保持停止；Rootless 和更新后的 DRAM 均验证 `status` 和 `bindings` 接口。DRAM 镜像同时打包采集与独立挂载管理二进制，并补齐 host PID/user namespace 及管理、关联记录目录；已有采集目录和参数保留。不会删除 Docker 数据、卷或挂载关联。安装阶段检查容器身份和配置是否在准备期间改变；发生改变则要求重新准备。
 
@@ -32,18 +34,18 @@ worker 更新同时同步已部署的 Tetragon、DRAM 和 Rootless Docker 容器
 
 更新器保留旧镜像及部署文档。容器重建失败或数据库迁移事务失败时尝试恢复旧容器镜像和原启停状态。容器回滚失败时保留 `.alpha-update-pending` 及其中的 `container_plan` 路径，主程序保持停止；按部署计划和更新日志人工核对。中断恢复时可用计划目录内的 `*-before.json` 恢复旧服务，或 `*-after.json` 完成新服务部署，必须结合数据库提交状态决定。不要删除仍被容器 Compose 标签引用的 `.alpha-service-deploy-*` 目录；后续更新从这些文件读取当前部署参数，手动运行旧 Compose 文件可能重新部署旧镜像。
 
-主程序和容器版本不一致时，可在停止 worker 主程序后仅同步同版本容器，不替换程序或修改数据库：
+主程序和容器版本不一致时，可在停止 control 或 worker 主程序后仅同步同版本容器，不替换程序或修改数据库：
 
 ```bash
 ./bin/alpha-updater --data-dir /var/lib/project-alpha-worker \
   --bin-dir /opt/project-alpha/bin --services-only --tag <已安装的tag> --prerelease
 ```
 
-`--services-only` 仅支持 worker，目标必须与已安装主程序版本一致。发布包必须包含节点服务镜像描述和所需二进制，材料缺失时明确失败。手工重建步骤见[节点服务更新说明](node-services.md#更新与数据库)。
+`--services-only` 支持 control 和 worker，目标必须与已安装主程序版本一致。发布包必须包含该角色所需的镜像描述、二进制或 Agno 构建文件，材料缺失时明确失败。手工重建步骤见[节点服务更新说明](node-services.md#更新与数据库)。
 
-普通 worker 更新在主程序已经是目标版本时，也会继续同步服务容器，不替换二进制或迁移数据库。开启自动更新的 worker 启动时检查已收到的同版本 release：若数据目录中的 `update-services.json` 尚未记录该版本的同步尝试，则自动补齐。开始准备前持久记录尝试；同步失败后不会反复停服，可修复原因后从网页或命令行手动重试。完成同步后记录成功；全部服务已一致或未部署时无需停服。
+普通 control/worker 更新在主程序已经是目标版本时，也会继续同步服务容器，不替换二进制或迁移数据库。开启自动更新的 control/worker 启动时检查已收到的同版本 release：若数据目录中的 `update-services.json` 尚未记录该版本的同步尝试，则自动补齐。准备成功、交接安装前持久记录尝试；同步失败后不会反复停服，可修复原因后从网页或命令行手动重试。完成同步后记录成功；全部服务已一致或未部署时无需停服。
 
-安装进程负责容器部署和回滚。目标包中的 `_migrate` 继承服务锁，在数据库事务提交前校验 worker 容器：从暂存发布包提取镜像描述，匹配已安装程序的哈希，并核对本地镜像和部署配置。校验不构建或拉取镜像，不重建或启停容器；不匹配时回滚数据库事务并明确报错。`--database-only` 不执行容器校验或同步。
+安装进程负责容器部署和回滚。目标包中的 `_migrate` 继承服务锁，在数据库事务提交前校验 control/worker 容器：从暂存发布包提取对应角色的构建材料，匹配已安装程序的哈希，并核对本地镜像和部署配置。校验不构建或拉取镜像，不重建或启停容器；不匹配时回滚数据库事务并明确报错。`--database-only` 不执行容器校验或同步。
 
 旧 updater 不支持引导协议或当前服务清单时，先停止主程序，将已校验的目标发布包内 `bin/alpha-updater` 安装到更新设置指定的路径，再用它发起完整更新；`--bin-dir` 指向实际程序安装目录。成功后按原配置启动，存在 `.alpha-update-pending` 时先按故障恢复流程核对。
 
@@ -72,7 +74,7 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 
 默认查询 `arusuki/alpha` 的最新正式 GitHub release。`--prerelease` 同时查询预发布，选择发布时间最新的非草稿 release；`--repo owner/repo` 可指定测试仓库。 Webhook 自动更新已从认证通知获得目标 tag 和频道，未配置 GitHub token 时直接下载 `https://github.com/<owner>/<repo>/releases/download/<tag>/project-alpha_<tag>_linux_<arch>.tar.gz` 和同目录的 `SHA256SUMS`，不查询 GitHub API。手动“更新到最新版本”和 CLI 查询仍需通过 API 确定 release；公开附件使用 `browser_download_url`。配置 token 时保留通过 release/asset API 访问私有仓库的能力。GitHub API 的行为见 [官方 release 文档](https://docs.github.com/en/rest/releases/releases)。私有仓库或需要更高 API 配额时，可在 Web 更新设置中保存 GitHub Token，或在总控服务环境中设置 `GH_TOKEN` 或 `GITHUB_TOKEN`（独立 CLI 读取自身环境）；令牌只发送给 GitHub API，不传给下载重定向的其他主机。
 
-更新器拒绝降级、v0.3.1 之前的版本、1.0 及以上版本和无正式版本标记的本机程序。相同版本不重复替换主程序；worker 仍检查并同步服务容器。源码构建的更新器自身可以是 `dev`，被更新的主程序必须带 release 版本。目标包必须包含与 tag 同版本的 `project-alpha` 和 `alpha-updater`，以及根 release 附件 `SHA256SUMS`。缺少附件或角色所需程序、架构不匹配、校验失败时退出，不安装文件。
+更新器拒绝降级、v0.3.1 之前的版本、1.0 及以上版本和无正式版本标记的本机程序。相同版本不重复替换主程序；control/worker 仍检查并同步服务容器。源码构建的更新器自身可以是 `dev`，被更新的主程序必须带 release 版本。目标包必须包含与 tag 同版本的 `project-alpha` 和 `alpha-updater`，以及根 release 附件 `SHA256SUMS`。缺少附件或角色所需程序、架构不匹配、校验失败时退出，不安装文件。
 
 发布工作流自动将两个架构的更新器纳入包和校验文件。GitHub release 的构建与附件上传完成后，远端更新才能获取。
 
@@ -98,7 +100,7 @@ share node 更新保留账号、sshd 配置、公钥和代理配置；无需重�
 
 下载、SHA-256 校验和可执行性检查完成后，更新器用 SQLite `VACUUM INTO` 创建 `platform.sqlite3.backup-<时间>`，包含已提交的 WAL 数据。原二进制保存在安装目录的 `.alpha-backup-*` 中。保留的数据目录、密钥、令牌、快照和实例 ID 不变；磁盘需容纳下载包、解压程序和完整数据库备份。
 
-随后逐个原子替换程序；worker 先按准备的镜像 ID 重建节点服务容器，再由**目标 release 内的更新器**继承服务锁，执行 `_migrate`。该入口在单个事务内升级数据库并执行完整性与外键检查，提交前校验本次发布的容器部署；数据库版本已经一致时也执行容器检查。迁移事务失败时回滚数据库，安装状态确定后由调用方恢复旧二进制；数据库不会被删除或自动用备份覆盖。
+随后逐个原子替换程序；control/worker 先按准备的镜像 ID 重建 Agno 或节点服务容器，再由**目标 release 内的更新器**继承服务锁，执行 `_migrate`。该入口在单个事务内升级数据库并执行完整性与外键检查，提交前校验本次发布的容器部署；数据库版本已经一致时也执行容器检查。迁移事务失败时回滚数据库，安装状态确定后由调用方恢复旧二进制；数据库不会被删除或自动用备份覆盖。
 
 更新期间安装目录存在 `.alpha-update-pending`，记录备份位置和原文件是否存在。该记录存在时，下次更新会拒绝继续。断电、强制终止、迁移结果不确定或恢复失败后，必须先人工核对。保持服务停止，先检查数据库版本和记录：若迁移已提交，应保留目标版本二进制；若需要整体恢复，使用记录中的旧程序和数据库备份进行人工恢复，确保 SQLite 的 WAL/SHM 与数据库一致。核对程序与数据库版本匹配后，再移走恢复记录并启动服务。不要只恢复旧程序而保留新版数据库。
 
@@ -140,9 +142,9 @@ registry 按原始请求体校验 `X-Hub-Signature-256` 的 HMAC-SHA256 签名�
 
 worker、control 和 registry 均可在接受通知后按配置独立自动更新；所有角色启动、保存相关设置后都会重新判断已保存的目标，已有更新计划时不重复启动。所有目标使用同一个发布仓库；各自的自动更新和预发布开关独立设置。尚未交接安装的前置检查、下载或镜像准备失败，每个目标最多自动准备 3 次，失败后分别退避 1 分钟、5 分钟；预算和重试时间持久保存，重启和同 tag 重投不会重置。耗尽预算后需手动重试。已经交接安装、服务容器安装已尝试或存在恢复标记时，不自动重复安装。GitHub 不会自动重投失败的 webhook 请求；若 registry 当时不可达或队列已满，请在 GitHub Recent deliveries 中重投。
 
-Web 更新通过本地服务交接实现，要求主程序和 updater 同时更新到支持本地容器更新协议 v3 的版本；交接协议不匹配时明确报错，服务继续运行，需重新发起更新生成计划。接受请求后以原服务账号启动 updater 的后台准备进程，页面显示“正在后台下载并校验”，HTTP 和业务工作继续运行。准备阶段只读数据库身份和版本，不获取服务锁、不备份或迁移数据库、不替换运行中的程序；下载、SHA-256 校验、解压、版本及可执行性检查完成后，worker 还准备节点服务镜像和部署计划，然后保存本地安装计划。下载失败时不重启；主程序与节点服务均已同步时也不重启。失败结果可在页面查看，准备失败按上述有限退避策略重试，也可手动重试。服务正常退出时取消并等待准备进程结束。
+Web 更新通过本地服务交接实现，要求主程序和 updater 同时更新到支持本地容器更新协议 v3 的版本；交接协议不匹配时明确报错，服务继续运行，需重新发起更新生成计划。接受请求后以原服务账号启动 updater 的后台准备进程，页面显示“正在后台下载并校验”，HTTP 和业务工作继续运行。准备阶段只读数据库身份和版本，不获取服务锁、不备份或迁移数据库、不替换运行中的程序；下载、SHA-256 校验、解压、版本及可执行性检查完成后，control 准备 Agno 镜像，worker 准备节点服务镜像，并保存部署计划，然后保存本地安装计划。下载失败时不重启；主程序与节点服务均已同步时也不重启。失败结果可在页面查看，准备失败按上述有限退避策略重试，也可手动重试。服务正常退出时取消并等待准备进程结束。
 
-只有准备成功才停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为本地 updater 的固定交接入口；该入口复核暂存目标 updater 的哈希，然后 `exec` 为该目标版本执行安装。准备结果中的容器计划对旧主程序和引导器保持不透明，仅由目标版本解读。安装阶段不访问网络，重新获取安装锁和服务锁，校验本机版本、数据库版本和暂存程序哈希，然后备份数据库、替换程序、重建已部署的节点服务容器并原地升级；备份包含下载期间提交的新数据。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停止主程序；节点服务容器由更新器管理。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
+只有准备成功才停止 HTTP 服务并结束后台工作、释放数据库连接与服务锁，原进程再 `exec` 为本地 updater 的固定交接入口；该入口复核暂存目标 updater 的哈希，然后 `exec` 为该目标版本执行安装。准备结果中的容器计划对旧主程序和引导器保持不透明，仅由目标版本解读。安装阶段不访问网络，重新获取安装锁和服务锁，校验本机版本、数据库版本和暂存程序哈希，然后备份数据库、替换程序、重建已部署的 Agno 或节点服务容器并原地升级；备份包含下载期间提交的新数据。更新完成后以原来的启动参数、环境和工作目录 `exec` 回 `project-alpha`，保持同一 PID，适用于普通终端及 systemd。常规命令行更新仍要求先停止主程序；Agno 和节点服务容器由更新器管理。失败且安装状态确定时重启原程序并显示失败；存在 `.alpha-update-pending` 时拒绝重启，服务启动入口也拒绝带此标记启动，须先人工核对恢复。
 
 GitHub 的 403 不一定是限流。错误保留 GitHub 返回的 message、可用的 `X-RateLimit-*` / `Retry-After` 信息和是否携带认证的状态，不输出 token。只有响应提供限流证据时才标为限流，不会立即循环重试。未认证 REST API 请求按出口 IP 共享每小时 60 次额度，多台节点共用代理或 NAT 时会共用额度；如果仍需 API 查询，可在 Web 更新设置中保存统一 GitHub Token，或在总控服务环境中配置 `GH_TOKEN` 或 `GITHUB_TOKEN`，仅在交互 shell 中设置不会修改已运行的服务环境。详见 [GitHub 限流说明](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api)。公开仓库的 webhook 自动更新下载路径不使用这项 REST API 额度。
 

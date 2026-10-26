@@ -26,6 +26,7 @@ type dockerFixture struct {
 	compose            map[string]any
 	calls              [][]string
 	old, next          string
+	service, endpoint  string
 	fail, rollbackFail bool
 	duplicate, denied  bool
 	buildFail          bool
@@ -55,7 +56,7 @@ func newDockerFixture(t *testing.T) (*dockerFixture, *platform.Database, string)
 	writeFile(t, filepath.Join(stage, serviceManifest), manifest)
 	writeFile(t, filepath.Join(stage, "dram-bwd"), []byte("dram binary"))
 	writeFile(t, filepath.Join(stage, "rootless-docker"), []byte("rootless binary"))
-	f := &dockerFixture{t: t, old: "sha256:" + strings.Repeat("a", 64), next: "sha256:" + strings.Repeat("b", 64)}
+	f := &dockerFixture{t: t, service: "dram-bw", endpoint: "unix:///test/docker.sock", old: "sha256:" + strings.Repeat("a", 64), next: "sha256:" + strings.Repeat("b", 64)}
 	f.container = map[string]any{
 		"Id": strings.Repeat("c", 64), "Image": f.old, "Name": "/dram-bw",
 		"Config":     map[string]any{"Labels": map[string]string{"project-alpha.service": "dram-bw", "com.docker.compose.project": "node-services", "com.docker.compose.service": "dram-bw", "com.docker.compose.project.config_files": "/deploy/services.yaml,/deploy/override.yaml", "com.docker.compose.project.environment_file": "/deploy/.env", "com.docker.compose.project.working_dir": "/deploy"}, "Entrypoint": []string{"/old/dram"}, "Cmd": []string{"--backend", "mock"}, "Env": []string{"TOKEN=literal$secret"}, "User": "0:1005"},
@@ -72,7 +73,7 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, slices.Clone(args))
-	if endpoint != "unix:///test/docker.sock" {
+	if endpoint != f.endpoint {
 		f.t.Fatal(endpoint)
 	}
 	if f.denied {
@@ -80,7 +81,7 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 	}
 	marshal := func(value any) ([]byte, error) { return json.Marshal(value) }
 	if slices.Equal(args[:2], []string{"container", "ls"}) {
-		if !slices.Contains(args, "label=project-alpha.service=dram-bw") {
+		if !slices.Contains(args, "label=project-alpha.service="+f.service) {
 			return nil, nil
 		}
 		id := f.container["Id"].(string)
@@ -96,7 +97,7 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 		if f.buildFail {
 			return nil, errors.New("injected build failure")
 		}
-		if !bytes.Contains(input, []byte("FROM scratch")) || !bytes.Contains(input, []byte("dram binary")) {
+		if f.service == "dram-bw" && (!bytes.Contains(input, []byte("FROM scratch")) || !bytes.Contains(input, []byte("dram binary"))) {
 			f.t.Fatal("missing offline build context")
 		}
 		return nil, nil
@@ -132,7 +133,7 @@ func (f *dockerFixture) run(ctx context.Context, endpoint string, args []string,
 			if err = json.Unmarshal(raw, &config); err != nil {
 				return nil, err
 			}
-			spec := config["services"].(map[string]any)["dram-bw"].(map[string]any)
+			spec := config["services"].(map[string]any)[f.service].(map[string]any)
 			image := spec["image"].(string)
 			f.container["Image"] = image
 			f.container["Id"] = strings.Repeat("e", 64)
