@@ -14,40 +14,38 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{41, 42, 43} {
+			for _, version := range []int{42, 43} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
-					db := dramMountOldDatabase(t, role)
-					if version >= 42 {
-						// Upgrade through the shared chain, then remove only the new schema to
-						// reproduce the immediately preceding release for every role.
-						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
+					db := populatedOldDatabase(t, role)
+					// Upgrade through the shared chain, then remove only the new schema to
+					// reproduce the immediately preceding release for every role.
+					if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
+						t.Fatal(err)
+					}
+					dropNodePermissionsSchema(t, db, role)
+					dropChatCLISchema(t, db, role)
+					if role == "control" {
+						if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
 							t.Fatal(err)
 						}
-						dropNodePermissionsSchema(t, db, role)
-						dropChatCLISchema(t, db, role)
-						if role == "control" {
-							if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if role == "worker" {
-							if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if role == "control" {
-							if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
-								t.Fatal(err)
-							}
-							if version == 42 {
-								if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
-									t.Fatal(err)
-								}
-							}
-						}
-						if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+					}
+					if role == "worker" {
+						if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 							t.Fatal(err)
 						}
+					}
+					if role == "control" {
+						if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
+							t.Fatal(err)
+						}
+						if version == 42 {
+							if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
+								t.Fatal(err)
+							}
+						}
+					}
+					if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+						t.Fatal(err)
 					}
 					if version == 43 && role == "control" {
 						if _, err := db.SQL.Exec(`INSERT INTO assistant_sessions VALUES('kept-assistant','user','旧对话','{"kept":true}','[]',1,2); INSERT INTO assistant_memories VALUES('user','[{"memory":"先看 GPU"}]',2)`); err != nil {
@@ -93,7 +91,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			}
 		}
 		t.Run(entry+"/settings-rollback", func(t *testing.T) {
-			db := dramMountOldDatabase(t, "control")
+			db := populatedOldDatabase(t, "control")
 			if err := runScheduledMigration(t, binary, entry, "control", db); err != nil {
 				t.Fatal(err)
 			}
@@ -122,7 +120,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "control", db); err == nil {
 				t.Fatal("migration must fail")
 			}
-			assertVersion(t, db, 41)
+			assertVersion(t, db, 42)
 			var tables int
 			if err := db.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('assistant_sessions','assistant_memories','assistant_settings')").Scan(&tables); err != nil || tables != 0 {
 				t.Fatal("partial schema retained", tables, err)

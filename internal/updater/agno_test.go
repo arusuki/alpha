@@ -179,13 +179,13 @@ func TestAgnoPreparedControlInstallAndRollback(t *testing.T) {
 				if err == nil || prepared != nil {
 					t.Fatal("unsafe preparation accepted", err)
 				}
-				assertVersion(t, db, 41)
+				assertVersion(t, db, 42)
 				return
 			}
 			if err != nil || prepared == nil {
 				t.Fatal(err)
 			}
-			assertVersion(t, db, 41)
+			assertVersion(t, db, 42)
 			calls := len(f.recordedCalls())
 			if mode == "tampered-source" {
 				writeFile(t, filepath.Join(prepared.Stage, "runtime/agno/runtime.py"), []byte("tampered"))
@@ -209,7 +209,7 @@ func TestAgnoPreparedControlInstallAndRollback(t *testing.T) {
 				if err == nil {
 					t.Fatal("expected failed update", mode)
 				}
-				assertVersion(t, db, 41)
+				assertVersion(t, db, 42)
 				actual, _ := os.ReadFile(filepath.Join(bin, "project-alpha"))
 				if !bytes.Equal(actual, oldMain) || f.container["Image"] != f.old {
 					t.Fatal("failed update did not preserve binaries and Agno", err)
@@ -412,7 +412,7 @@ func TestControlUpdateWithoutDocker(t *testing.T) {
 			if err := run(context.Background(), o, github{}, io.Discard); err != nil {
 				t.Fatal("prepare", err)
 			}
-			assertVersion(t, db, 41)
+			assertVersion(t, db, 42)
 			if sameVersion {
 				if prepared != nil {
 					t.Fatal("undeployed same-version update scheduled downtime")

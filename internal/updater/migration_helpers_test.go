@@ -24,6 +24,12 @@ func populatedOldDatabase(t *testing.T, role string) *platform.Database {
 INSERT INTO jobs(id,status,trigger,created_by,created_at,config) SELECT 'kept-scan','completed','scheduled','scheduler',123,value FROM settings;`); err != nil {
 			t.Fatal(err)
 		}
+		if _, err := db.SQL.Exec(`INSERT INTO managed_containers VALUES('kept-container','unix:///test.sock','daemon','kept-name','alice','{}','kept-fingerprint','adopt','',1,123);
+INSERT INTO node_service_settings VALUES('dram-bw','{"restart_policy":"on-failure","stop_timeout":35,"control_socket":"/run/dram-bw-manager/control.sock","socket_path":"/run/dram-bw/control.sock","users":[],"dram":{"backend":"mock","interval_us":250000,"peak_gbps":256}}');
+INSERT INTO node_service_settings VALUES('rootless-docker','{"restart_policy":"always","stop_timeout":150,"control_socket":"/run/custom/control.sock","socket_path":"/run/custom/docker.sock","users":["alice"]}');
+INSERT INTO node_service_mounts(container_id,endpoint,daemon,owner,name,socket_path) VALUES('kept-container','unix:///test.sock','daemon','alice','kept-name','/run/kept.sock');`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if role == "control" {
 		if _, err := db.SQL.Exec(`INSERT INTO agent_sessions(id,user_id,node_id,title,status,created_at,updated_at,snapshot_id,provider,model,report_scope)

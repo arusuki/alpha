@@ -23,7 +23,7 @@ func TestNodePermissionsBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{41, 42, 43, 44, 45, 46, 47, 48} {
+			for _, version := range []int{42, 43, 44, 45, 46, 47, 48} {
 				for _, rollback := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/%s/%d/rollback=%v", entry, role, version, rollback), func(t *testing.T) {
 						db := memberAssistantOldDatabase(t, binary, entry, role, version)
@@ -49,10 +49,6 @@ INSERT INTO member_node_resources VALUES('kept-member','worker','ready','kept-co
 								continue
 							}
 							name := row["name"].(string)
-							// The retained DRAM migration intentionally changes these rows; its dedicated tests verify them.
-							if version == 41 && !rollback && (name == "node_service_mounts" || name == "node_service_settings") {
-								continue
-							}
 							before[name], err = platform.Rows(db.SQL, `SELECT * FROM "`+name+`"`)
 							if err != nil {
 								t.Fatal(err)

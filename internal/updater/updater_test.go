@@ -41,7 +41,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 		modules = append(modules, "registry")
 	}
 	for _, m := range modules {
-		b, e := os.ReadFile("testdata/v0.8.0-rc2/" + m + ".sql")
+		b, e := os.ReadFile("testdata/v0.8.0-rc4/" + m + ".sql")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -49,7 +49,7 @@ func oldDatabase(t *testing.T, role string) *platform.Database {
 			t.Fatal(m, e)
 		}
 	}
-	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=41", role); err != nil {
+	if _, err = raw.Exec("INSERT INTO service_identity VALUES(1,?,'persistent-instance'); PRAGMA user_version=42", role); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = raw.Exec("INSERT INTO users VALUES('user','admin','existing-password-hash','admin',1,123)"); err != nil {
@@ -230,7 +230,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer backup.Close()
-				assertVersion(t, &platform.Database{SQL: backup}, 41)
+				assertVersion(t, &platform.Database{SQL: backup}, 42)
 			}
 			got, err := executableVersion(context.Background(), filepath.Join(dir, binaries(role)[0].destination), "project-alpha")
 			if err != nil || got != "v0.6.0" {
@@ -265,7 +265,7 @@ func TestReleaseUpdatePreservesRoleData(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "previous binaries restored") {
 			t.Fatal(err)
 		}
-		assertVersion(t, db, 41)
+		assertVersion(t, db, 42)
 		for _, f := range binaries("worker") {
 			b, _ := os.ReadFile(filepath.Join(dir, f.destination))
 			if !bytes.Equal(b, script(f.source, "v0.5.4")) {
@@ -318,7 +318,7 @@ func TestRejectedUpdatesPreserveFiles(t *testing.T) {
 			} else if err == nil {
 				t.Fatal("expected rejection")
 			}
-			wantVersion := 41
+			wantVersion := 42
 			if scenario == "unsupported" {
 				wantVersion = 37
 				if err == nil || !strings.Contains(err.Error(), "unsupported database version") {

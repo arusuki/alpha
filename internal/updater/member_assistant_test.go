@@ -11,40 +11,38 @@ import (
 
 func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, version int) *platform.Database {
 	t.Helper()
-	db := dramMountOldDatabase(t, role)
-	if version >= 42 {
-		if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
-			t.Fatal(err)
-		}
-		dropNodePermissionsSchema(t, db, role)
-		if version < 47 {
-			dropChatCLISchema(t, db, role)
-		}
-		if role == "control" {
-			if version < 46 {
-				if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if version < 44 {
-				if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if version < 43 {
-				if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		if role == "worker" && version < 45 {
-			if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
+	db := populatedOldDatabase(t, role)
+	if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
+		t.Fatal(err)
+	}
+	dropNodePermissionsSchema(t, db, role)
+	if version < 47 {
+		dropChatCLISchema(t, db, role)
+	}
+	if role == "control" {
+		if version < 46 {
+			if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+		if version < 44 {
+			if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if version < 43 {
+			if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if role == "worker" && version < 45 {
+		if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+		t.Fatal(err)
 	}
 	if role == "control" {
 		if _, err := db.SQL.Exec(`INSERT INTO members VALUES('kept-member','alice','{}','{}','[]','hash','cipher','existing-public-key','resource-hash','active','invite','invite-hash',123);
@@ -65,7 +63,7 @@ func TestMemberAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{41, 42, 43, 44, 45} {
+			for _, version := range []int{42, 43, 44, 45} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := memberAssistantOldDatabase(t, binary, entry, role, version)
 					tables := []string{"users"}

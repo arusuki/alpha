@@ -115,7 +115,7 @@ func TestMigrateValidatesInstallerContainers(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			f, db, payload := newDockerFixture(t)
 			syncDocker := useDockerProcessFixture(t, f.run)
-			oldSchema := 41
+			oldSchema := 42
 			if strings.HasPrefix(mode, "current-schema") {
 				if err := platform.UpgradeDatabase(db.Directory, "worker", nil, nil); err != nil {
 					t.Fatal(err)

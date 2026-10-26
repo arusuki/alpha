@@ -15,38 +15,36 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"worker", "control", "registry"} {
-			for _, version := range []int{41, 42, 43, 44} {
+			for _, version := range []int{42, 43, 44} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
-					db := dramMountOldDatabase(t, role)
-					if version >= 42 {
-						if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
+					db := populatedOldDatabase(t, role)
+					if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
+						t.Fatal(err)
+					}
+					dropNodePermissionsSchema(t, db, role)
+					dropChatCLISchema(t, db, role)
+					if role == "control" {
+						if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
 							t.Fatal(err)
 						}
-						dropNodePermissionsSchema(t, db, role)
-						dropChatCLISchema(t, db, role)
-						if role == "control" {
-							if _, err := db.SQL.Exec("DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if role == "worker" {
-							if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if role == "control" && version < 44 {
-							if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if role == "control" && version < 43 {
-							if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
-								t.Fatal(err)
-							}
-						}
-						if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+					}
+					if role == "worker" {
+						if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
 							t.Fatal(err)
 						}
+					}
+					if role == "control" && version < 44 {
+						if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if role == "control" && version < 43 {
+						if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
+						t.Fatal(err)
 					}
 					if role == "worker" {
 						if _, err := db.SQL.Exec(`INSERT INTO gpu_intervals VALUES('GPU-kept','GPU',100,115,45,'["alice"]')`); err != nil {
@@ -100,7 +98,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 			}
 		}
 		t.Run(entry+"/rollback", func(t *testing.T) {
-			db := dramMountOldDatabase(t, "worker")
+			db := populatedOldDatabase(t, "worker")
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err != nil {
 				t.Fatal(err)
 			}

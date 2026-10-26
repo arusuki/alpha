@@ -1,4 +1,4 @@
--- Source: v0.8.0-rc2 internal/platform/node_service_settings.sql (schema 41).
+-- Source: v0.8.0-rc4 internal/platform/node_service_settings.sql (schema 42).
 CREATE TABLE node_service_settings (
  name TEXT PRIMARY KEY CHECK(name IN ('tetragon','dram-bw','rootless-docker')),
  config TEXT NOT NULL CHECK(json_valid(config)),
