@@ -15,7 +15,10 @@ func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, versio
 	if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 		t.Fatal(err)
 	}
-	dropNodePermissionsSchema(t, db, role)
+	dropLinkSchema(t, db, role)
+	if version < 49 {
+		dropNodePermissionsSchema(t, db, role)
+	}
 	if version < 47 {
 		dropChatCLISchema(t, db, role)
 	}

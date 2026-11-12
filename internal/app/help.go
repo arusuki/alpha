@@ -12,6 +12,7 @@ func printHelp(out io.Writer) {
 
 子命令：
   serve              启动总控（默认）、worker 或公网 registry
+  interconnect       初始化或卸载容器互联 helper
   share-node         初始化分享节点；status 查看服务状态，log 查看日志；--uninstall 卸载
   containers import  导入已有 Docker 容器
   containers rootless-owner  管理 rootless 子容器的独立归属

@@ -20,6 +20,7 @@ import (
 	"project-alpha/internal/assistant"
 	"project-alpha/internal/bastion"
 	"project-alpha/internal/httpapi"
+	link "project-alpha/internal/interconnect"
 	"project-alpha/internal/members"
 	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
@@ -28,6 +29,11 @@ import (
 )
 
 type Control struct {
+	linkRetries     map[string]bool // protected by linkMu
+	linkWake        chan struct{}
+	linkMu          sync.Mutex
+	linkCancel      context.CancelFunc
+	linkDone        chan struct{}
 	Assistant       *assistant.Handler
 	analysisCancel  context.CancelFunc
 	analysisDone    chan struct{}
@@ -114,10 +120,20 @@ func NewControl(db *platform.Database) (*Control, error) {
 		}
 		return h.call(ctx, n, method, path, body, platform.User{ID: h.identity, Username: "mihomo-control", Role: "admin"}, out)
 	})
+	ctx, cancel := context.WithCancel(context.Background())
+	h.linkCancel = cancel
+	h.linkDone = make(chan struct{})
+	h.linkRetries = make(map[string]bool)
+	h.linkWake = make(chan struct{}, 1)
+	go h.linkRecovery(ctx)
 	h.initScheduledAnalysis()
 	return h, nil
 }
 func (h *Control) Close() {
+	if h.linkCancel != nil {
+		h.linkCancel()
+		<-h.linkDone
+	}
 	h.agentMu.Lock()
 	if h.closed {
 		h.agentMu.Unlock()
@@ -243,6 +259,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	if r.Method != "GET" && user.Role != "admin" {
 		return fail(httpapi.NewError(403, "此操作需要管理员权限"))
 	}
+	if r.URL.Path == link.ControlPath {
+		return h.linkDispatch(w, r, user)
+	}
 	if r.URL.Path == "/api/cluster/overview" && r.Method == "GET" {
 		return h.overview(r, user)
 	}
@@ -277,6 +296,9 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 					return fail(httpapi.NewError(503, "总控正在关闭"))
 				}
 				err = h.DB.Transaction(func(tx *sql.Tx) error {
+					if err := checkLinkNode(tx, n.ID); err != nil {
+						return err
+					}
 					var count int
 					if err := tx.QueryRow("SELECT count(*) FROM member_node_resources WHERE node_id=?", n.ID).Scan(&count); err != nil {
 						return err
@@ -328,11 +350,21 @@ func (h *Control) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 			if r.Method == "DELETE" && strings.HasPrefix(path, "/api/jobs/") && identifier.MatchString(strings.TrimPrefix(path, "/api/jobs/")) {
 				return h.deleteRecord(r, user, n, strings.TrimPrefix(path, "/api/jobs/"))
 			}
+			if path == link.WorkerPath {
+				return fail(httpapi.NewError(403, "请使用总控容器互联 API"))
+			}
 			if strings.HasPrefix(path, "/api/containers/members/") {
 				return fail(httpapi.NewError(403, "请使用使用者资源 API"))
 			}
 			if !operational(path) {
 				return fail(httpapi.NewError(404, "此接口不属于节点操作 API"))
+			}
+			if r.Method == "POST" && len(parts) == 5 && parts[2] == "containers" && (parts[4] == "delete" || parts[4] == "release") {
+				h.linkMu.Lock()
+				defer h.linkMu.Unlock()
+				if err := h.checkLinkEndpoint(n.ID, parts[3]); err != nil {
+					return fail(err)
+				}
 			}
 			release, err := h.validateOwner(w, r, path, n.ID)
 			if err != nil {
@@ -396,6 +428,15 @@ func (h *Control) saveNode(w http.ResponseWriter, r *http.Request, user platform
 			_, err = tx.Exec("INSERT INTO cluster_nodes VALUES(?,?,?,?,?,?,?)", n.ID, n.Name, n.URL, n.Token, n.CreatedAt, n.Kind, n.InternalIP)
 			action = "cluster.node.add"
 		} else {
+			if previous.InternalIP != n.InternalIP {
+				if err := checkLinkNode(tx, id); err != nil {
+					return err
+				}
+				// No endpoint remains. Retire the old address binding before using the new NIC.
+				if _, err := tx.Exec("DELETE FROM link_nodes WHERE node=?", id); err != nil {
+					return err
+				}
+			}
 			result, e := tx.Exec("UPDATE cluster_nodes SET name=?,url=?,token=?,internal_ip=? WHERE id=?", n.Name, n.URL, n.Token, n.InternalIP, id)
 			err = e
 			if err == nil {
@@ -450,6 +491,11 @@ func (h *Control) validateOwner(w http.ResponseWriter, r *http.Request, path, no
 	value, err := httpapi.RequestBody(w, r)
 	if err != nil {
 		return release, err
+	}
+	if path == "/api/owners" {
+		if err := h.checkLinkEndpoint(nodeID, httpapi.FieldString(value, "container_id")); err != nil {
+			return release, err
+		}
 	}
 	owner := httpapi.FieldString(value, "owner")
 	if owner != "" {

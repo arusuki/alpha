@@ -11,7 +11,7 @@ function configure(){
     const nodePage=['dashboard','overview','containers','services','processes','gpus'].includes(e.dataset.page);
     e.hidden=(e.hasAttribute('data-control-only')?!central:nodePage?central:!!platform.nodeID)||(e.hasAttribute('data-admin')&&!admin());
   });
-  document.querySelectorAll('[data-page="agent-settings"],[data-page="members"],[data-page="bastion"]').forEach(e=>e.hidden=!!platform.nodeID||!admin());
+  document.querySelectorAll('[data-page="agent-settings"],[data-page="members"],[data-page="bastion"],[data-page="interconnect"]').forEach(e=>e.hidden=!!platform.nodeID||!admin());
   $('agentGuideStorage').hidden=central;
   $('agentGuideNodes').hidden=!central;
   $('nodeContext').hidden=!platform.nodeID;

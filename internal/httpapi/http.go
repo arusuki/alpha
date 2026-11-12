@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -20,15 +21,18 @@ func (e *Error) Error() string                  { return e.Message }
 func NewError(status int, message string) error { return &Error{status, message} }
 
 func RequestBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, error) {
+	return requestBody(w, r, 65536)
+}
+func requestBody(w http.ResponseWriter, r *http.Request, limit int64) (map[string]json.RawMessage, error) {
 	typ, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || typ != "application/json" {
 		return nil, NewError(415, "请使用 application/json 请求")
 	}
-	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 65536))
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	defer clear(raw)
 	var max *http.MaxBytesError
 	if errors.As(err, &max) || len(raw) == 0 {
-		return nil, NewError(413, "请求体需在 1–65536 字节之间")
+		return nil, NewError(413, fmt.Sprintf("请求体需在 1–%d 字节之间", limit))
 	}
 	if err != nil {
 		return nil, NewError(400, "无法读取请求体")
@@ -42,7 +46,12 @@ func RequestBody(w http.ResponseWriter, r *http.Request) (map[string]json.RawMes
 
 // DecodeBody applies the shared JSON request checks and rejects unknown fields.
 func DecodeBody(w http.ResponseWriter, r *http.Request, target any) error {
-	value, err := RequestBody(w, r)
+	return DecodeBodyLimit(w, r, target, 65536)
+}
+
+// DecodeBodyLimit also accepts larger, bounded internal worker snapshots.
+func DecodeBodyLimit(w http.ResponseWriter, r *http.Request, target any, limit int64) error {
+	value, err := requestBody(w, r, limit)
 	if err != nil {
 		return err
 	}

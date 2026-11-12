@@ -19,6 +19,7 @@ import (
 	"project-alpha/internal/cluster"
 	"project-alpha/internal/containers"
 	"project-alpha/internal/gpu"
+	"project-alpha/internal/linkhost"
 	"project-alpha/internal/mihomo"
 	"project-alpha/internal/platform"
 	"project-alpha/internal/process"
@@ -37,6 +38,9 @@ func Run(ctx context.Context, args []string) error {
 			return fmt.Errorf("container-permissions-helper does not accept arguments")
 		}
 		return containers.ServePermissionsHelper(ctx, os.Stdin, os.Stdout)
+	}
+	if len(args) > 0 && args[0] == "interconnect" {
+		return linkhost.Init(ctx, args[1:], os.Stdout)
 	}
 	if len(args) > 0 && args[0] == "share-node" {
 		return bastion.InitializeCLI(ctx, args[1:], os.Stdout)
@@ -241,6 +245,10 @@ func Run(ctx context.Context, args []string) error {
 			return value, err
 		}}
 		containerHandler := newContainerHandler(db)
+		linkCtx, stopLinks := context.WithCancel(ctx)
+		linksDone := make(chan struct{})
+		go func() { defer close(linksDone); containerHandler.WatchLinks(linkCtx) }()
+		defer func() { stopLinks(); <-linksDone }()
 		recoverCtx, recoverCancel := context.WithTimeout(ctx, 30*time.Second)
 		if err := containerHandler.ReconcileServices(recoverCtx); err != nil {
 			log.Printf("节点服务挂载恢复未完成：%v", err)

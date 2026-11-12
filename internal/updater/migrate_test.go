@@ -99,12 +99,13 @@ func migrationArchive(t *testing.T, target []byte) []byte {
 	}
 	prefix := "project-alpha_v0.6.0_linux_" + runtime.GOARCH
 	return makeArchive(t, map[string][]byte{
-		prefix + "/bin/project-alpha":            script("project-alpha", "v0.6.0"),
-		prefix + "/bin/alpha-updater":            target,
-		prefix + "/bin/alpha-chat":               script("alpha-chat", "v0.6.0"),
-		prefix + "/bin/rootless-docker":          []byte("rootless binary"),
-		prefix + "/bin/dram-bwd":                 []byte("dram binary"),
-		prefix + "/deploy/updater-services.json": manifest,
+		prefix + "/bin/project-alpha":             script("project-alpha", "v0.6.0"),
+		prefix + "/bin/alpha-updater":             target,
+		prefix + "/bin/alpha-chat":                script("alpha-chat", "v0.6.0"),
+		prefix + "/bin/alpha-interconnect-helper": script("alpha-interconnect-helper", "v0.6.0"),
+		prefix + "/bin/rootless-docker":           []byte("rootless binary"),
+		prefix + "/bin/dram-bwd":                  []byte("dram binary"),
+		prefix + "/deploy/updater-services.json":  manifest,
 	})
 }
 

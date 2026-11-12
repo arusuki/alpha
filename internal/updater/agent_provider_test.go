@@ -50,7 +50,7 @@ func TestAgentProviderBuiltUpdater(t *testing.T) {
 								t.Fatal(err)
 							}
 						}
-						schema, err := platform.Rows(db.SQL, "SELECT type,name,sql FROM sqlite_master ORDER BY type,name")
+						schema, err := platform.Rows(db.SQL, "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'link_*' AND tbl_name NOT GLOB 'link_*' ORDER BY type,name")
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -74,7 +74,7 @@ func TestAgentProviderBuiltUpdater(t *testing.T) {
 							assertVersion(t, db, platform.DatabaseVersion)
 						}
 						if version == 47 && (role != "control" || rollback) {
-							after, e := platform.Rows(db.SQL, "SELECT type,name,sql FROM sqlite_master ORDER BY type,name")
+							after, e := platform.Rows(db.SQL, "SELECT type,name,sql FROM sqlite_master WHERE name NOT GLOB 'link_*' AND tbl_name NOT GLOB 'link_*' ORDER BY type,name")
 							if e != nil || !reflect.DeepEqual(schema, after) {
 								t.Fatal("provider migration changed table structure", e)
 							}

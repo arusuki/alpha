@@ -21,6 +21,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 					if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 						t.Fatal(err)
 					}
+					dropLinkSchema(t, db, role)
 					dropNodePermissionsSchema(t, db, role)
 					dropChatCLISchema(t, db, role)
 					if role == "control" {
@@ -102,6 +103,7 @@ func TestRootlessOwnersBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "worker", db); err != nil {
 				t.Fatal(err)
 			}
+			dropLinkSchema(t, db, "worker")
 			dropChatCLISchema(t, db, "worker")
 			if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners; PRAGMA user_version=44; CREATE TRIGGER fail_rootless BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'failure'); END"); err != nil {
 				t.Fatal(err)

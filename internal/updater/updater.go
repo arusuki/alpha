@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"project-alpha/internal/buildinfo"
+	link "project-alpha/internal/interconnect"
 	"project-alpha/internal/platform"
 )
 
@@ -55,7 +56,7 @@ func binaries(role string) []binary {
 		result[0].destination = "project-alpha-jump"
 	}
 	if role == "worker" {
-		result = append(result, binary{"rootless-docker", "rootless-docker"}, binary{"alpha-chat", "alpha-chat"})
+		result = append(result, binary{"rootless-docker", "rootless-docker"}, binary{"alpha-chat", "alpha-chat"}, binary{"alpha-interconnect-helper", "alpha-interconnect-helper"})
 	}
 	return append(result, binary{"alpha-updater", "alpha-updater"})
 }
@@ -263,6 +264,12 @@ func run(ctx context.Context, o options, g github, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "数据库已原地升级：%d → %d\n", schema, platform.DatabaseVersion)
 		return nil
+	}
+	if o.role == "worker" {
+		dir, e := filepath.EvalSymlinks(o.binDir)
+		if e == nil && dir == filepath.Dir(link.Helper) {
+			return fmt.Errorf("互联 helper 的 root 安装目录只由 interconnect init 更新")
+		}
 	}
 	if o.servicesOnly && o.role != "worker" && o.role != "control" {
 		return fmt.Errorf("--services-only requires the control or worker role")

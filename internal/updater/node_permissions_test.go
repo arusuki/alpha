@@ -23,7 +23,7 @@ func TestNodePermissionsBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{42, 43, 44, 45, 46, 47, 48} {
+			for _, version := range []int{42, 43, 44, 45, 46, 47, 48, 49} {
 				for _, rollback := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/%s/%d/rollback=%v", entry, role, version, rollback), func(t *testing.T) {
 						db := memberAssistantOldDatabase(t, binary, entry, role, version)
@@ -31,6 +31,11 @@ func TestNodePermissionsBuiltUpdater(t *testing.T) {
 							if _, err := db.SQL.Exec(`INSERT INTO member_invitations VALUES('kept-invite','code-hash','cipher','cohort',10,1,0,'admin',123);
 INSERT INTO cluster_nodes VALUES('worker','kept-worker','http://worker','token',1,'worker','10.0.0.1');
 INSERT INTO member_node_resources VALUES('kept-member','worker','ready','kept-container','workspace',2222,'',123,'create','');`); err != nil {
+								t.Fatal(err)
+							}
+						}
+						if role == "control" && version == 49 {
+							if _, err := db.SQL.Exec(`INSERT INTO member_node_permissions VALUES('kept-member','{"all_nodes":true,"node_ids":[]}');INSERT INTO invitation_node_permissions VALUES('kept-invite','{"all_nodes":true,"node_ids":[]}');`); err != nil {
 								t.Fatal(err)
 							}
 						}
@@ -72,6 +77,7 @@ INSERT INTO member_node_resources VALUES('kept-member','worker','ready','kept-co
 								t.Fatal("repeat", err)
 							}
 							assertVersion(t, db, platform.DatabaseVersion)
+							checkLinkSchema(t, db, role)
 							var count int
 							if err = db.SQL.QueryRow("SELECT count(*) FROM sqlite_master WHERE name IN ('member_node_permissions','invitation_node_permissions')").Scan(&count); err != nil {
 								t.Fatal(err)

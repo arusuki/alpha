@@ -22,6 +22,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 					if err := runScheduledMigration(t, binary, entry, role, db); err != nil {
 						t.Fatal(err)
 					}
+					dropLinkSchema(t, db, role)
 					dropNodePermissionsSchema(t, db, role)
 					dropChatCLISchema(t, db, role)
 					if role == "control" {
@@ -95,6 +96,7 @@ func TestAssistantBuiltUpdater(t *testing.T) {
 			if err := runScheduledMigration(t, binary, entry, "control", db); err != nil {
 				t.Fatal(err)
 			}
+			dropLinkSchema(t, db, "control")
 			dropChatCLISchema(t, db, "control")
 			if _, err := db.SQL.Exec(`DROP TABLE member_node_permissions; DROP TABLE invitation_node_permissions; DROP TABLE member_assistant_sessions; DROP TABLE member_assistant_memories; DROP TABLE assistant_settings; PRAGMA user_version=43; INSERT INTO assistant_memories VALUES('user','[{"memory":"preserved"}]',2); CREATE TRIGGER fail_settings BEFORE INSERT ON audit WHEN NEW.action='database.upgrade' BEGIN SELECT RAISE(ABORT,'failure'); END`); err != nil {
 				t.Fatal(err)

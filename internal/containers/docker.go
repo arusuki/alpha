@@ -110,6 +110,11 @@ func (h *Handler) inspect(ctx context.Context, endpoint, ref string) (inspection
 	if err != nil {
 		return c, err
 	}
+	return parseInspection(out, ref)
+}
+func parseInspection(out, ref string) (inspection, error) {
+	var c inspection
+	var err error
 	var rows []json.RawMessage
 	if json.Unmarshal([]byte(out), &rows) != nil || len(rows) != 1 {
 		return c, fmt.Errorf("Docker inspect 未返回唯一容器")
@@ -149,4 +154,16 @@ func fingerprint(c inspection) string {
 	raw, _ = json.Marshal(canonical)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+// VerifyLinkInspection binds privileged network changes to the same immutable record as lifecycle management.
+func VerifyLinkInspection(raw, id, expected string) error {
+	c, err := parseInspection(raw, id)
+	if err != nil {
+		return err
+	}
+	if fingerprint(c) != expected {
+		return fmt.Errorf("已接管容器配置指纹不匹配")
+	}
+	return nil
 }

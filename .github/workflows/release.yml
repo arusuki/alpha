@@ -138,6 +138,7 @@ jobs:
           mkdir -p "$stage/bin" release
           go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/project-alpha" ./cmd/project-alpha
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X project-alpha/internal/buildinfo.Version=$version -X project-alpha/internal/buildinfo.Revision=$GITHUB_SHA" -o "$stage/bin/alpha-chat" ./cmd/alpha-chat
+          go build -trimpath -ldflags="-s -w" -o "$stage/bin/alpha-interconnect-helper" ./cmd/alpha-interconnect-helper
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$stage/bin/rootless-docker" ./cmd/rootless-docker
           # Offline scratch image contexts need no compiler or image download on workers.
           make -C ctools/dram-bw -j2 BUILD="$RUNNER_TEMP/dram-static" LDFLAGS=-static "$RUNNER_TEMP/dram-static/dram-bwd"
@@ -171,6 +172,8 @@ jobs:
           "$RUNNER_TEMP/package-check/$package/bin/project-alpha" --help
           "$RUNNER_TEMP/package-check/$package/bin/project-alpha" serve --help
           "$RUNNER_TEMP/package-check/$package/bin/project-alpha" share-node --help
+          "$RUNNER_TEMP/package-check/$package/bin/project-alpha" interconnect init --help
+          "$RUNNER_TEMP/package-check/$package/bin/alpha-interconnect-helper" --help
           binary_version="$("$RUNNER_TEMP/package-check/$package/bin/project-alpha" --version)"
           [[ "$binary_version" == "project-alpha $version (commit ${GITHUB_SHA:0:12}, "* ]]
           printf '%s\n' "$binary_version"

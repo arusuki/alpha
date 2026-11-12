@@ -38,6 +38,9 @@ func (h *Control) reconnectNode(r *http.Request, user platform.User, id string) 
 	if err := h.call(ctx, n, "GET", "/api/worker/inventory", nil, user, &inventory); err != nil {
 		return 0, nil, err
 	}
+	if err := h.recoverLinks(r.Context(), n.ID); err != nil {
+		return 0, nil, err
+	}
 	if err := h.queueChatCLI("", n.ID); err != nil {
 		return 0, nil, err
 	}

@@ -9,13 +9,19 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"project-alpha/internal/httpapi"
+	link "project-alpha/internal/interconnect"
 	"project-alpha/internal/platform"
 )
 
 type Handler struct {
+	linkHelper        func(context.Context, link.Request) (link.Status, error)
+	linkWake          chan struct{}
+	linkApplying      atomic.Int64
+	stopLinkEvents    context.CancelFunc // protected by mu
 	db                *platform.Database
 	run               command
 	serviceRun        command
@@ -32,7 +38,7 @@ type Handler struct {
 }
 
 func NewHandler(db *platform.Database) *Handler {
-	return &Handler{db: db, run: runDocker, serviceRun: runServiceDocker, mountControl: callServiceControl}
+	return &Handler{linkHelper: runLinkHelper, linkWake: make(chan struct{}, 1), db: db, run: runDocker, serviceRun: runServiceDocker, mountControl: callServiceControl}
 }
 func IsRoute(path string) bool {
 	return path == "/api/containers" || strings.HasPrefix(path, "/api/containers/")
@@ -41,6 +47,9 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 	fail := func(err error) (int, any, error) { return 0, nil, httpapi.NewError(409, err.Error()) }
 	if r.Method != "GET" && user.Role != "admin" {
 		return 0, nil, httpapi.NewError(403, "此操作需要管理员权限")
+	}
+	if r.URL.Path == link.WorkerPath {
+		return h.linkDispatch(w, r, user)
 	}
 	if !h.mu.TryLock() {
 		return 0, nil, httpapi.NewError(409, "容器管理正在执行其他操作，请稍后刷新或重试")
@@ -154,6 +163,13 @@ func (h *Handler) Dispatch(w http.ResponseWriter, r *http.Request, user platform
 				return fail(fmt.Errorf("请填写完整容器名 %s 确认操作", record.Name))
 			}
 			if action == "delete" || action == "release" {
+				var linked bool
+				if err := h.db.SQL.QueryRow("SELECT EXISTS(SELECT 1 FROM link_claims WHERE container=?)", record.ID).Scan(&linked); err != nil {
+					return fail(err)
+				}
+				if linked {
+					return fail(fmt.Errorf("请先退出容器互联"))
+				}
 				if err := h.checkServiceMounts(record.ID); err != nil {
 					return fail(err)
 				}

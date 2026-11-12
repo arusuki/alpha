@@ -13,7 +13,7 @@
   <script src="/auth.js" defer></script>
   <script src="/usage.js" defer></script><script src="/snapshot.js" defer></script><script src="/app.js" defer></script><script src="/snapshot-loader.js" defer></script><script src="/platform.js" defer></script><script src="/settings.js" defer></script><script src="/updates.js" defer></script><script src="/mihomo.js" defer></script><script src="/agent.js" defer></script><script src="/assistant.js" defer></script><link rel="stylesheet" href="/assistant.css">
   <link rel="stylesheet" href="/gpu.css"><script src="/gpu.js" defer></script>
-  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/services.js" defer></script><script src="/members.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script><script src="/scan-schedule.js" defer></script>
+  <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/services.js" defer></script><script src="/members.js" defer></script><script src="/interconnect.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script><script src="/scan-schedule.js" defer></script>
   <link rel="stylesheet" href="/cluster.css">
 </head>
 <body>
@@ -70,6 +70,7 @@
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
       <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
       <button data-page="services" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>节点服务</button>
+      <button data-page="interconnect" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器互联</button>
       <button data-page="bastion" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>Share node 管理</button>
       <button data-page="members" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="gpus"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor"/><circle cx="9" cy="12" r="3" fill="none" stroke="currentColor"/><path d="M15 10h3m-3 4h3M6 18v3m4-3v3" fill="none" stroke="currentColor"/></svg>GPU 管理</button>
@@ -148,6 +149,29 @@
       <div class="allocation-searchbar"><label class="cluster-search"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><span class="sr-only">查找使用者或容器</span><input id="allocationSearch" type="search" placeholder="搜索使用者、节点、容器名或 ID"></label><p id="allocationStatus" role="status"></p></div>
       <div id="allocationRows" class="allocation-rows"></div>
       <p class="resource-footnote">同一节点按容器 ID 去重 · 容器状态取自最近一次扫描</p>
+    </section>
+    <section id="page-interconnect" class="platform-page" hidden>
+      <div class="link-toolbar"><button id="linkRefresh">检查节点</button><button id="linkRetry">重试应用</button><span id="linkVersion"></span></div>
+      <p id="linkMessage" role="status" aria-live="polite"></p>
+      <section class="panel"><h2>节点准备状态</h2>
+        <form id="linkPoolForm" class="link-toolbar"><label>IPv4 地址池<input id="linkPool" required></label><button>保存地址池</button></form>
+        <div id="linkNodes" class="link-list"></div>
+      </section>
+      <section class="panel"><h2>接入容器</h2>
+        <form id="linkAttachForm" class="link-toolbar"><label>已接管的 bridge 容器<select id="linkCandidate" required></select></label><button>接入</button></form>
+        <div id="linkEndpoints" class="link-list"></div>
+      </section>
+      <section class="panel"><h2>连接规则</h2><div id="linkConnections" class="link-list"></div>
+        <form id="linkEditor"><div class="form-grid"><label>端点 A<select id="linkA" required></select></label><label>端点 B<select id="linkB" required></select></label></div>
+          <div id="linkRules"></div><div class="link-toolbar"><button type="button" id="linkAddRule">添加允许规则</button><label><input type="checkbox" id="linkEnabled" checked>启用连接</label></div>
+          <p id="linkEditorVersion" role="status" aria-live="polite"></p>
+          <div class="link-toolbar"><button id="linkSave">保存并应用</button><button type="button" id="linkNew">新建连接</button></div>
+        </form>
+      </section>
+      <section class="panel"><h2>服务可达性诊断</h2>
+        <form id="linkProbeForm" class="link-toolbar"><label>已启用的连接方向<select id="linkProbePair" required></select></label><label>TCP 目的端口<input id="linkProbePort" required type="number" min="1" max="65535"></label><button>测试连接</button></form>
+        <p id="linkProbeResult" role="status">尚未测试</p>
+      </section>
     </section>
     <section id="page-bastion" class="platform-page" hidden>
       <div class="resource-toolbar bastion-toolbar"><p>按 share node 管理账号、公钥授权和使用者。</p><button id="bastionRefresh">刷新资源 ↻</button></div>

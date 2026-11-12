@@ -123,13 +123,14 @@ func futureArchiveVersion(t *testing.T, target []byte, tag string) []byte {
 	prefix := "project-alpha_" + tag + "_linux_" + runtime.GOARCH
 	main := []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'project-alpha " + tag + "'; else printf '%s\\n' \"$@\" > \"$ALPHA_TEST_RESTART\"; fi\n")
 	return makeArchive(t, agnoArchiveEntries(t, prefix, map[string][]byte{
-		prefix + "/bin/alpha-updater":            target,
-		prefix + "/bin/project-alpha":            main,
-		prefix + "/bin/alpha-chat":               script("alpha-chat", tag),
-		prefix + "/bin/rootless-docker":          script("rootless-docker", "v0.6.0"),
-		prefix + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
-		prefix + "/bin/future-helper":            []byte("new release payload"),
-		prefix + "/deploy/updater-services.json": manifest,
+		prefix + "/bin/alpha-updater":             target,
+		prefix + "/bin/project-alpha":             main,
+		prefix + "/bin/alpha-chat":                script("alpha-chat", tag),
+		prefix + "/bin/alpha-interconnect-helper": script("alpha-interconnect-helper", tag),
+		prefix + "/bin/rootless-docker":           script("rootless-docker", "v0.6.0"),
+		prefix + "/bin/dram-bwd":                  script("dram-bwd", "v0.6.0"),
+		prefix + "/bin/future-helper":             []byte("new release payload"),
+		prefix + "/deploy/updater-services.json":  manifest,
 	}))
 }
 

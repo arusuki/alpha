@@ -97,6 +97,14 @@ INSERT INTO snapshot_records VALUES('saved-scan',1,'/','{}');`)
 					}
 				}
 
+				if tc.version >= 42 && tc.version < 50 {
+					schema := map[string]string{"control": "DROP TRIGGER link_guard_node_ip; DROP TRIGGER link_guard_node_delete; DROP TABLE link_endpoints; DROP TABLE link_nodes; DROP TABLE link_connections; DROP TABLE link_settings", "worker": "DROP TRIGGER link_guard_owner; DROP TRIGGER link_guard_release; DROP TABLE link_claims; DROP TABLE link_operations; DROP TABLE link_local"}[tc.role]
+					if schema != "" {
+						if _, err = db.SQL.Exec(schema); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
 				if tc.role == "control" && tc.version >= 42 && tc.version < 49 {
 					if _, err = db.SQL.Exec("DROP TABLE member_node_permissions; DROP TABLE invitation_node_permissions"); err != nil {
 						t.Fatal(err)

@@ -114,12 +114,13 @@ func releaseServer(t *testing.T, target []byte, badHash bool) github {
 	}
 	packageName := "project-alpha_v0.6.0_linux_" + runtime.GOARCH
 	archive := makeArchive(t, agnoArchiveEntries(t, packageName, map[string][]byte{
-		packageName + "/bin/project-alpha":            script("project-alpha", "v0.6.0"),
-		packageName + "/bin/alpha-updater":            target,
-		packageName + "/bin/alpha-chat":               script("alpha-chat", "v0.6.0"),
-		packageName + "/bin/rootless-docker":          script("rootless-docker", "v0.6.0"),
-		packageName + "/bin/dram-bwd":                 script("dram-bwd", "v0.6.0"),
-		packageName + "/deploy/updater-services.json": manifest,
+		packageName + "/bin/project-alpha":             script("project-alpha", "v0.6.0"),
+		packageName + "/bin/alpha-updater":             target,
+		packageName + "/bin/alpha-chat":                script("alpha-chat", "v0.6.0"),
+		packageName + "/bin/alpha-interconnect-helper": script("alpha-interconnect-helper", "v0.6.0"),
+		packageName + "/bin/rootless-docker":           script("rootless-docker", "v0.6.0"),
+		packageName + "/bin/dram-bwd":                  script("dram-bwd", "v0.6.0"),
+		packageName + "/deploy/updater-services.json":  manifest,
 	}))
 	return archiveServer(t, archive, badHash)
 }

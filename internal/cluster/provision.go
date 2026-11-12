@@ -431,6 +431,13 @@ func (h *Control) dispatchMemberResource(w http.ResponseWriter, r *http.Request,
 	}
 	err := h.DB.Transaction(func(tx *sql.Tx) error {
 		if remove {
+			var linked bool
+			if err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM link_endpoints WHERE owner=(SELECT username FROM members WHERE id=?))", id).Scan(&linked); err != nil {
+				return err
+			}
+			if linked {
+				return httpapi.NewError(409, "请先退出使用者的互联端点")
+			}
 			if _, e := tx.Exec("UPDATE members SET status='deleting' WHERE id=?", id); e != nil {
 				return e
 			}

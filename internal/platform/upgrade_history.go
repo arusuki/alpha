@@ -41,6 +41,7 @@ var databaseUpgrades = []databaseUpgrade{
 	{From: 46, To: 47, Apply: upgradeChatCLI},
 	{From: 47, To: 48, Apply: upgradeAgentProvider},
 	{From: 48, To: 49, Apply: upgradeMemberNodePermissions},
+	{From: 49, To: 50, Apply: upgradeInterconnect},
 }
 
 func databaseUpgradePlan(version int) ([]databaseUpgrade, error) {

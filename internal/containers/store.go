@@ -68,6 +68,9 @@ func Initialize(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	if err = platform.InstallInterconnect(tx, "worker"); err != nil {
+		return err
+	}
 	if err = platform.InstallNodeServices(tx); err != nil {
 		return err
 	}

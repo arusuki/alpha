@@ -34,6 +34,9 @@ func Initialize(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
+	if err = platform.InstallInterconnect(tx, "control"); err != nil {
+		return err
+	}
 	if err = initializeProvision(tx); err != nil {
 		return err
 	}
