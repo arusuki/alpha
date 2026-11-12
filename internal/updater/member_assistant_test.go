@@ -28,21 +28,6 @@ func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, versio
 				t.Fatal(err)
 			}
 		}
-		if version < 44 {
-			if _, err := db.SQL.Exec("DROP TABLE assistant_settings"); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if version < 43 {
-			if _, err := db.SQL.Exec("DROP TABLE assistant_sessions; DROP TABLE assistant_memories"); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if role == "worker" && version < 45 {
-		if _, err := db.SQL.Exec("DROP TABLE rootless_container_owners"); err != nil {
-			t.Fatal(err)
-		}
 	}
 	if _, err := db.SQL.Exec(fmt.Sprintf("PRAGMA user_version=%d", version)); err != nil {
 		t.Fatal(err)
@@ -52,10 +37,8 @@ func memberAssistantOldDatabase(t *testing.T, binary, entry, role string, versio
 INSERT INTO member_sessions VALUES('session-hash','kept-member',9999999999);`); err != nil {
 			t.Fatal(err)
 		}
-		if version >= 43 {
-			if _, err := db.SQL.Exec(`INSERT INTO assistant_sessions VALUES('old-chat','user','title','{}','[]',1,2);INSERT INTO assistant_memories VALUES('user','[{"memory":"kept"}]',1)`); err != nil {
-				t.Fatal(err)
-			}
+		if _, err := db.SQL.Exec(`INSERT INTO assistant_sessions VALUES('old-chat','user','title','{}','[]',1,2);INSERT INTO assistant_memories VALUES('user','[{"memory":"kept"}]',1)`); err != nil {
+			t.Fatal(err)
 		}
 	}
 	return db
@@ -66,15 +49,12 @@ func TestMemberAssistantBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{42, 43, 44, 45} {
+			for _, version := range []int{45} {
 				t.Run(fmt.Sprintf("%s/%s/%d", entry, role, version), func(t *testing.T) {
 					db := memberAssistantOldDatabase(t, binary, entry, role, version)
 					tables := []string{"users"}
 					if role == "control" {
-						tables = append(tables, "members", "member_sessions", "agent_messages")
-						if version >= 43 {
-							tables = append(tables, "assistant_sessions", "assistant_memories")
-						}
+						tables = append(tables, "members", "member_sessions", "agent_messages", "assistant_sessions", "assistant_memories")
 					}
 					before := map[string][]map[string]any{}
 					// JSON rows retain all existing values, including password hashes and sessions.

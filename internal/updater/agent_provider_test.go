@@ -16,7 +16,7 @@ func TestAgentProviderBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, kind := range []string{"control", "worker", "worker-legacy", "registry"} {
-			for _, version := range []int{42, 43, 44, 45, 46, 47} {
+			for _, version := range []int{45, 46, 47} {
 				for _, rollback := range []bool{false, true} {
 					if rollback && version != 47 {
 						continue

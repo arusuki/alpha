@@ -19,14 +19,3 @@ func InstallRootlessOwners(tx *sql.Tx) error {
 	_, err := tx.Exec(rootlessOwnersSchema)
 	return err
 }
-
-func upgradeRootlessOwners(tx *sql.Tx) error {
-	var role string
-	if err := tx.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
-		return err
-	}
-	if role == "worker" {
-		return InstallRootlessOwners(tx)
-	}
-	return nil
-}

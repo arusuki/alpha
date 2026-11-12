@@ -36,27 +36,3 @@ func upgradeMemberAssistant(tx *sql.Tx) error {
 	}
 	return nil
 }
-
-func upgradeAssistant(tx *sql.Tx) error {
-	var role string
-	if err := tx.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
-		return err
-	}
-	if role == "control" {
-		_, err := tx.Exec(assistantSchema)
-		return err
-	}
-	return nil
-}
-
-func upgradeAssistantSettings(tx *sql.Tx) error {
-	var role string
-	if err := tx.QueryRow("SELECT mode FROM service_identity WHERE id=1").Scan(&role); err != nil {
-		return err
-	}
-	if role == "control" {
-		_, err := tx.Exec(assistantSettingsSchema)
-		return err
-	}
-	return nil
-}

@@ -23,7 +23,7 @@ func TestNodePermissionsBuiltUpdater(t *testing.T) {
 	writeFile(t, binary, buildTarget(t))
 	for _, entry := range []string{"--database-only", "_migrate"} {
 		for _, role := range []string{"control", "worker", "registry"} {
-			for _, version := range []int{42, 43, 44, 45, 46, 47, 48, 49} {
+			for _, version := range []int{45, 46, 47, 48, 49} {
 				for _, rollback := range []bool{false, true} {
 					t.Run(fmt.Sprintf("%s/%s/%d/rollback=%v", entry, role, version, rollback), func(t *testing.T) {
 						db := memberAssistantOldDatabase(t, binary, entry, role, version)

@@ -1,4 +1,4 @@
--- Source: v0.8.0-rc4 internal/platform/node_services.sql (schema 42).
+-- Source: v0.8.3 internal/platform/node_services.sql (schema 45).
 CREATE TABLE node_service_mounts (
  service TEXT NOT NULL DEFAULT 'rootless-docker' CHECK(service IN ('rootless-docker','dram-bw')),
  container_id TEXT NOT NULL, endpoint TEXT NOT NULL, daemon TEXT NOT NULL,

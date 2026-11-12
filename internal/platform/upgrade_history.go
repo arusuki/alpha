@@ -34,9 +34,6 @@ type databaseUpgrade struct {
 // groups all steps since the preceding changed tag into ONE update. Steps below
 // the generated BaseSchema can be removed when that retention window advances.
 var databaseUpgrades = []databaseUpgrade{
-	{From: 42, To: 43, Apply: upgradeAssistant},
-	{From: 43, To: 44, Apply: upgradeAssistantSettings},
-	{From: 44, To: 45, Apply: upgradeRootlessOwners},
 	{From: 45, To: 46, Apply: upgradeMemberAssistant},
 	{From: 46, To: 47, Apply: upgradeChatCLI},
 	{From: 47, To: 48, Apply: upgradeAgentProvider},
