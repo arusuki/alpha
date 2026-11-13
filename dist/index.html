@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/gpu.css"><script src="/gpu.js" defer></script>
   <script src="/cleanup.js" defer></script><script src="/dashboard.js" defer></script><script src="/process.js" defer></script><script src="/containers.js" defer></script><script src="/services.js" defer></script><script src="/members.js" defer></script><script src="/interconnect.js" defer></script><script src="/bastion.js" defer></script><script src="/cluster.js" defer></script><script src="/scan-schedule.js" defer></script>
   <link rel="stylesheet" href="/cluster.css">
+  <link rel="stylesheet" href="/interconnect.css">
 </head>
 <body>
 <section id="authPanel" class="auth-panel" data-phase="ready" aria-label="project alpha 登录" hidden>
@@ -70,7 +71,7 @@
       <button data-page="overview"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>存储</button>
       <button data-page="containers"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器管理</button>
       <button data-page="services" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-process"/></svg>节点服务</button>
-      <button data-page="interconnect" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>容器互联</button>
+      <button data-page="interconnect" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#ic-link"/></svg>容器互联</button>
       <button data-page="bastion" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>Share node 管理</button>
       <button data-page="members" data-admin hidden><svg class="ui-icon" aria-hidden="true"><use href="#icon-user"/></svg>集群使用者</button>
       <button data-page="gpus"><svg class="ui-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2" fill="none" stroke="currentColor"/><circle cx="9" cy="12" r="3" fill="none" stroke="currentColor"/><path d="M15 10h3m-3 4h3M6 18v3m4-3v3" fill="none" stroke="currentColor"/></svg>GPU 管理</button>
@@ -151,27 +152,77 @@
       <p class="resource-footnote">同一节点按容器 ID 去重 · 容器状态取自最近一次扫描</p>
     </section>
     <section id="page-interconnect" class="platform-page" hidden>
-      <div class="link-toolbar"><button id="linkRefresh">检查节点</button><button id="linkRetry">重试应用</button><span id="linkVersion"></span></div>
-      <p id="linkMessage" role="status" aria-live="polite"></p>
-      <section class="panel"><h2>节点准备状态</h2>
-        <form id="linkPoolForm" class="link-toolbar"><label>IPv4 地址池<input id="linkPool" required></label><button>保存地址池</button></form>
-        <div id="linkNodes" class="link-list"></div>
-      </section>
-      <section class="panel"><h2>接入容器</h2>
-        <form id="linkAttachForm" class="link-toolbar"><label>已接管的 bridge 容器<select id="linkCandidate" required></select></label><button>接入</button></form>
-        <div id="linkEndpoints" class="link-list"></div>
-      </section>
-      <section class="panel"><h2>连接规则</h2><div id="linkConnections" class="link-list"></div>
-        <form id="linkEditor"><div class="form-grid"><label>端点 A<select id="linkA" required></select></label><label>端点 B<select id="linkB" required></select></label></div>
-          <div id="linkRules"></div><div class="link-toolbar"><button type="button" id="linkAddRule">添加允许规则</button><label><input type="checkbox" id="linkEnabled" checked>启用连接</label></div>
-          <p id="linkEditorVersion" role="status" aria-live="polite"></p>
-          <div class="link-toolbar"><button id="linkSave">保存并应用</button><button type="button" id="linkNew">新建连接</button></div>
+      <header class="ic-hero">
+        <div class="ic-hero-copy">
+          <h1 id="linkTitle" tabindex="-1">容器互联</h1>
+          <p>为容器分配专用 IPv4 地址，按方向和端口开放访问。</p>
+          <dl class="ic-metrics"><div><dt>节点</dt><dd id="linkNodeCount">—</dd></div><div><dt>已接入容器</dt><dd id="linkEndpointCount">—</dd></div><div><dt>连接</dt><dd id="linkConnectionCount">—</dd></div></dl>
+        </div>
+        <figure class="ic-blueprint">
+          <svg viewBox="0 0 395 162" fill="none" aria-hidden="true">
+            <defs>
+              <g id="ic-crate" stroke-linejoin="round">
+                <path d="m0 0 37-21 48 27-37 22Z" fill="#d9ddbd" stroke="#f1eed4"/>
+                <path d="m0 0 48 28v30L0 30Z" fill="#898f70" stroke="#d6d9bc"/>
+                <path d="m48 28 37-22v30L48 58Z" fill="#4c5846" stroke="#b4bda0"/>
+                <path d="m7 8 0 21m7-17v21m7-17v21m7-17v21m7-17v21m7-17v21" stroke="#d6d9bc" stroke-width="2"/>
+                <path d="m54 31 25-15v17L54 48Zm12-7v16" stroke="#929d80"/>
+                <path d="m10 0 27-15m-19 20 27-16m-19 21 27-16m-19 21 27-16m-19 21 27-16" stroke="#abb192"/>
+              </g>
+              <g id="ic-platform"><path d="m-9 30 46-27 58 34-47 27Z" fill="#344138" stroke="#85927b"/><path d="m-9 30 0 4 57 34 47-27v-4" stroke="#647664"/></g>
+            </defs>
+            <g stroke="#82917b" stroke-width=".8" stroke-dasharray="3 5" opacity=".6"><path d="m18 84 123 71 208-120M110 37l202 117M102 142l227-131"/></g>
+            <g stroke="#e99b69" stroke-width="2.2" stroke-linejoin="round"><path d="m93 94 50 29 53-31 47 27 52-30"/><path d="m196 92 41-24"/></g>
+            <g fill="#ffbf85" stroke="#384738" stroke-width="2"><circle cx="143" cy="123" r="3.8"/><circle cx="196" cy="92" r="4.5"/><circle cx="243" cy="119" r="3.8"/></g>
+            <g transform="translate(38 45)"><use href="#ic-platform"/><use href="#ic-crate"/></g>
+            <g transform="translate(198 21) scale(.8)"><use href="#ic-platform"/><use href="#ic-crate"/></g>
+            <g transform="translate(263 63) scale(.82)"><use href="#ic-platform"/><use href="#ic-crate"/></g>
+          </svg>
+          <figcaption><span>IPv4 地址池</span><b id="linkHeroPool">—</b></figcaption>
+        </figure>
+      </header>
+      <div class="ic-nav">
+        <nav aria-label="互联视图" class="ic-tabs">
+          <button type="button" data-link-tab="build" aria-current="page"><svg class="ui-icon" aria-hidden="true"><use href="#ic-link"/></svg>连接编排</button>
+          <button type="button" data-link-tab="connections"><svg class="ui-icon" aria-hidden="true"><use href="#ic-routes"/></svg>已有连接</button>
+          <button type="button" data-link-tab="network"><svg class="ui-icon" aria-hidden="true"><use href="#icon-storage"/></svg>节点与接入</button>
+        </nav>
+        <div class="ic-nav-tools"><span id="linkVersion"></span><button id="linkRefresh" aria-label="刷新节点状态" title="刷新节点状态"><svg class="ui-icon" aria-hidden="true"><use href="#ic-refresh"/></svg></button></div>
+      </div>
+      <p id="linkMessage" class="ic-message" role="status"></p>
+      <div id="linkBuild" class="ic-workbench">
+        <section class="ic-panel ic-directory" aria-labelledby="linkDirectoryTitle">
+          <header class="ic-panel-head"><div><h2 id="linkDirectoryTitle">容器目录</h2><p id="linkPickHint">选择两个容器作为连接端点。</p></div><span class="ic-tally" id="linkDirectoryCount"></span></header>
+          <div id="linkPicker"></div>
+        </section>
+        <form id="linkEditor" class="ic-panel">
+          <header class="ic-panel-head"><div><h2 id="linkEditorTitle">新建连接</h2><p>选择两端容器，并设置允许通过的流量。</p></div><button type="button" id="linkNew" hidden>新建连接</button></header>
+          <div class="ic-route"><div id="linkA" class="ic-slot" data-side="a"></div><span class="ic-join" aria-hidden="true"><svg class="ui-icon"><use href="#ic-link"/></svg></span><div id="linkB" class="ic-slot" data-side="b"></div></div>
+          <div class="ic-rule-head"><h3>访问规则</h3><button type="button" id="linkAddRule" class="ic-text">＋ 添加规则</button></div>
+          <div id="linkRules"></div>
+          <p class="ic-rule-note">仅允许匹配已启用规则的流量，单向规则允许回包。</p>
+          <div class="ic-save"><label class="ic-check"><input type="checkbox" id="linkEnabled" checked>启用连接</label><button class="ic-primary" id="linkSave" disabled>保存并应用</button></div>
+          <p id="linkSaveHint" class="ic-save-hint"></p>
+          <div id="linkConflict" hidden><p id="linkEditorVersion"></p><button type="button" id="linkReload">重载最新规则</button></div>
         </form>
+      </div>
+      <section id="linkSaved" class="ic-panel" hidden>
+        <header class="ic-panel-head"><div><h2>已有连接</h2><p>查看访问方向、应用状态，或从容器内测试 TCP 服务。</p></div><button type="button" id="linkCreate" class="ic-primary">＋ 新建连接</button></header>
+        <div id="linkConnections"></div>
       </section>
-      <section class="panel"><h2>服务可达性诊断</h2>
-        <form id="linkProbeForm" class="link-toolbar"><label>已启用的连接方向<select id="linkProbePair" required></select></label><label>TCP 目的端口<input id="linkProbePort" required type="number" min="1" max="65535"></label><button>测试连接</button></form>
-        <p id="linkProbeResult" role="status">尚未测试</p>
-      </section>
+      <div id="linkNetwork" hidden>
+        <section class="ic-panel"><header class="ic-panel-head"><div><h2>节点状态</h2><p>核对内网接口、helper 和各节点已应用的配置版本。</p></div><button id="linkRetry">重试应用</button></header><div id="linkNodes"></div></section>
+        <section class="ic-panel"><header class="ic-panel-head"><div><h2>已接入容器</h2><p>退出接入会释放容器的专用 IPv4 地址。</p></div><button id="linkAttach" class="ic-primary">＋ 接入容器</button></header><div id="linkEndpoints"></div></section>
+        <section class="ic-panel ic-pool"><div><h2>IPv4 地址池</h2><p id="linkPoolHint">在接入第一个容器前可以更改。</p></div><form id="linkPoolForm"><label class="sr-only" for="linkPool">IPv4 地址池</label><input id="linkPool" required spellcheck="false"><button>保存地址池</button></form></section>
+      </div>
+      <dialog id="linkAttachDialog" class="ic-dialog" aria-labelledby="linkAttachTitle">
+        <header class="ic-panel-head"><div><h2 id="linkAttachTitle">接入容器</h2><p>选择一个容器，为它分配专用 IPv4 地址。</p></div><button type="button" data-ic-close aria-label="关闭">×</button></header>
+        <div id="linkAttachPicker"></div><p id="linkAttachMessage" role="status" class="ic-feedback"></p>
+      </dialog>
+      <dialog id="linkProbeDialog" class="ic-dialog" aria-labelledby="linkProbeTitle">
+        <header class="ic-panel-head"><div><h2 id="linkProbeTitle">服务可达性诊断</h2><p>从源容器测试目标容器正在监听的 TCP 端口。</p></div><button type="button" data-ic-close aria-label="关闭">×</button></header>
+        <form id="linkProbeForm"><label>测试方向<select id="linkProbePair"></select></label><label>TCP 目的端口<input id="linkProbePort" type="number" required min="1" max="65535" placeholder="1–65535"></label><p id="linkProbeResult" role="status" class="ic-feedback">尚未测试</p><button class="ic-primary">测试连接</button></form>
+      </dialog>
     </section>
     <section id="page-bastion" class="platform-page" hidden>
       <div class="resource-toolbar bastion-toolbar"><p>按 share node 管理账号、公钥授权和使用者。</p><button id="bastionRefresh">刷新资源 ↻</button></div>
@@ -487,6 +538,11 @@ proxy-groups:
 <symbol id="icon-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
 <symbol id="icon-storage" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M15 6.5h3M15 17.5h3"/></symbol>
 <symbol id="icon-process" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="5" rx="1"/><rect x="2" y="17" width="6" height="5" rx="1"/><rect x="16" y="17" width="6" height="5" rx="1"/><path d="M12 7v5M5 17v-5h14v5"/></symbol>
+<symbol id="ic-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-4-2 2-2a4.2 4.2 0 0 1 6 6l-3 3m-3 3-2 2a4.2 4.2 0 0 1-6-6l3-3"/></symbol>
+<symbol id="ic-routes" viewBox="0 0 24 24"><circle cx="5" cy="6" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 6h2c4 0 3 6 7 6h1M7 18h2c4 0 3-6 7-6"/></symbol>
+<symbol id="ic-refresh" viewBox="0 0 24 24"><path d="M20 10a8 8 0 1 0-1 7m1-12v5h-5"/></symbol>
+<symbol id="ic-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol>
+<symbol id="ic-box" viewBox="0 0 24 24"><path d="m12 2 9 5v10l-9 5-9-5V7Zm0 10v10M3 7l9 5 9-5M7.5 4.5l9 5"/></symbol>
 <symbol id="icon-agent" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4m-2-2h4"/></symbol>
 <symbol id="icon-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
 </defs></svg>

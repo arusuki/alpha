@@ -370,7 +370,7 @@ function showPage(page,navigate=true) {
 
   $('storageNav').hidden=!storage;$('storageMonitor').hidden=!['overview','history'].includes(page);
   $('scanActions').hidden=!['overview','history'].includes(page);$('hostInfo').hidden=!storage;$('dashboardRefresh').hidden=page!=='dashboard';
-  if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$(page==='cluster'?'clusterTitle':'pageTitle').focus?.({preventScroll:true});}
+  if(navigate && changed){window.history?.pushState(null,'',`#${page}`);window.scrollTo?.({top:0,behavior:'instant'});$(page==='cluster'?'clusterTitle':page==='interconnect'?'linkTitle':'pageTitle').focus?.({preventScroll:true});}
   if(page==='overview' && changed)syncState().catch(e=>{if(platform.user)message(e.message);});
   if(page==='scan-settings' && !platform.config) loadSettings().catch(e=>message(e.message));
   if(page==='settings')window.SettingsUI.open();
@@ -382,7 +382,7 @@ function showPage(page,navigate=true) {
   if(page==='containers')window.ContainersUI?.open();
   if(page==='services')window.ServicesUI?.open();
   if(page==='members')window.MembersUI?.open();
-  if(page==='interconnect')window.InterconnectUI?.open();
+  if(page==='interconnect')window.InterconnectUI?.open();else window.InterconnectUI?.leave();
   if(page==='bastion')window.BastionUI?.open();else window.BastionUI?.leave();
   if(['cluster','allocations'].includes(page))window.ClusterUI?.refresh();
   if(page==='gpus')window.GPUUI?.open();else window.GPUUI?.close();
